@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-ai-db: Zero-Dependency Vector DB & Code Knowledge Index
+ai-db: Token-Optimized Vector DB & Code Knowledge Index
 ======================================================
 High-speed semantic and keyword search engine for codebases.
 Uses SQLite FTS5 + BM25 ranking + TF-IDF sparse vector similarity.
-Requires ONLY the standard Python 3 library (sqlite3, math, re, hashlib, json).
+Requires ONLY the standard Python 3 library (sqlite3, zlib, math, re, hashlib, json).
 
 Features:
+- Token-dense schema (minified symbols, compressed content storage via zlib)
+- Token-optimized compact output for LLM prompts (no conversational fluff, strict terse format)
 - Incremental indexing via SHA-256 hash detection (syncs in milliseconds)
-- Smart syntax-aware code & document chunking (functions, classes, markdown sections)
-- Hybrid BM25 full-text + TF-IDF ranking
+- Smart syntax-aware code & document chunking
 - Automatic pruning of deleted files
 - CLI and Python API
 """
@@ -20,6 +21,7 @@ import math
 import json
 import sqlite3
 import hashlib
+import zlib
 import re
 import argparse
 from typing import List, Dict, Any, Tuple, Optional
@@ -55,6 +57,22 @@ def tokenize(text: str) -> List[str]:
     return tokens
 
 
+def strip_code_bloat(text: str) -> str:
+    """Strips excessive blank lines and trailing spaces to save tokens."""
+    lines = [line.rstrip() for line in text.splitlines()]
+    compact = []
+    prev_blank = False
+    for line in lines:
+        if not line:
+            if not prev_blank:
+                compact.append(line)
+            prev_blank = True
+        else:
+            compact.append(line)
+            prev_blank = False
+    return "\n".join(compact)
+
+
 def chunk_file(filepath: str, content: str) -> List[Dict[str, Any]]:
     """Chunks files into logical sections: classes, functions, or markdown sections."""
     ext = os.path.splitext(filepath)[1].lower()
@@ -74,10 +92,10 @@ def chunk_file(filepath: str, content: str) -> List[Dict[str, Any]]:
         for i, line in enumerate(lines, 1):
             if line.startswith("#"):
                 if current_lines:
-                    text_block = "\n".join(current_lines).strip()
+                    text_block = strip_code_bloat("\n".join(current_lines).strip())
                     if text_block:
                         chunks.append({
-                            "chunk_type": "markdown_section",
+                            "chunk_type": "md",
                             "name": current_header,
                             "start_line": start_line,
                             "end_line": i - 1,
@@ -90,10 +108,10 @@ def chunk_file(filepath: str, content: str) -> List[Dict[str, Any]]:
                 current_lines.append(line)
 
         if current_lines:
-            text_block = "\n".join(current_lines).strip()
+            text_block = strip_code_bloat("\n".join(current_lines).strip())
             if text_block:
                 chunks.append({
-                    "chunk_type": "markdown_section",
+                    "chunk_type": "md",
                     "name": current_header,
                     "start_line": start_line,
                     "end_line": total_lines,
@@ -106,17 +124,17 @@ def chunk_file(filepath: str, content: str) -> List[Dict[str, Any]]:
         func_regex = re.compile(
             r"^(?:async\s+)?(?:def\s+|class\s+|function\s+|const\s+\w+\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|public\s+|fn\s+)(\w+)"
         )
-        current_symbol = "Module Header"
+        current_symbol = "hdr"
         current_lines = []
         start_line = 1
 
         for i, line in enumerate(lines, 1):
             m = func_regex.match(line.strip())
-            if m and len(current_lines) > 25:
-                text_block = "\n".join(current_lines).strip()
+            if m and len(current_lines) > 20:
+                text_block = strip_code_bloat("\n".join(current_lines).strip())
                 if text_block:
                     chunks.append({
-                        "chunk_type": "code_block",
+                        "chunk_type": "code",
                         "name": current_symbol,
                         "start_line": start_line,
                         "end_line": i - 1,
@@ -127,11 +145,11 @@ def chunk_file(filepath: str, content: str) -> List[Dict[str, Any]]:
                 start_line = i
             else:
                 current_lines.append(line)
-                if len(current_lines) >= 80:
-                    text_block = "\n".join(current_lines).strip()
+                if len(current_lines) >= 70:
+                    text_block = strip_code_bloat("\n".join(current_lines).strip())
                     chunks.append({
-                        "chunk_type": "code_block",
-                        "name": f"{current_symbol} (L{start_line}-{i})",
+                        "chunk_type": "code",
+                        "name": f"{current_symbol} L{start_line}-{i}",
                         "start_line": start_line,
                         "end_line": i,
                         "content": text_block
@@ -140,10 +158,10 @@ def chunk_file(filepath: str, content: str) -> List[Dict[str, Any]]:
                     start_line = i + 1
 
         if current_lines:
-            text_block = "\n".join(current_lines).strip()
+            text_block = strip_code_bloat("\n".join(current_lines).strip())
             if text_block:
                 chunks.append({
-                    "chunk_type": "code_block",
+                    "chunk_type": "code",
                     "name": current_symbol,
                     "start_line": start_line,
                     "end_line": total_lines,
@@ -152,14 +170,14 @@ def chunk_file(filepath: str, content: str) -> List[Dict[str, Any]]:
         return chunks
 
     # Default fallback: windowed line chunks
-    window_size = 60
+    window_size = 50
     for i in range(0, total_lines, window_size):
         sub_lines = lines[i : i + window_size]
-        text_block = "\n".join(sub_lines).strip()
+        text_block = strip_code_bloat("\n".join(sub_lines).strip())
         if text_block:
             chunks.append({
-                "chunk_type": "text_block",
-                "name": f"Lines {i + 1}-{min(i + window_size, total_lines)}",
+                "chunk_type": "txt",
+                "name": f"L{i + 1}-{min(i + window_size, total_lines)}",
                 "start_line": i + 1,
                 "end_line": min(i + window_size, total_lines),
                 "content": text_block
@@ -178,6 +196,7 @@ class VectorDB:
 
     def _init_schema(self):
         cur = self.conn.cursor()
+        # Compact files table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS files (
                 filepath TEXT PRIMARY KEY,
@@ -187,6 +206,7 @@ class VectorDB:
             )
         """)
 
+        # Compact chunks table: stores binary compressed blobs (zlib) to be non-human-readable & storage-efficient
         cur.execute("""
             CREATE TABLE IF NOT EXISTS chunks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -195,11 +215,12 @@ class VectorDB:
                 name TEXT NOT NULL,
                 start_line INTEGER NOT NULL,
                 end_line INTEGER NOT NULL,
-                content TEXT NOT NULL,
+                zcontent BLOB NOT NULL,
                 FOREIGN KEY (filepath) REFERENCES files(filepath) ON DELETE CASCADE
             )
         """)
 
+        # SQLite FTS5 Full-Text index
         cur.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS fts_index USING fts5(
                 content,
@@ -265,7 +286,7 @@ class VectorDB:
 
         self.conn.commit()
         if verbose:
-            print(f"[{os.path.basename(self.db_path)}] Sync: {added} added, {updated} updated, {pruned} pruned, {skipped} unchanged.")
+            print(f"[{os.path.basename(self.db_path)}] Sync: +{added} ~{updated} -{pruned} ={skipped}")
         return {"added": added, "updated": updated, "pruned": pruned, "skipped": skipped}
 
     def _index_file(self, filepath: str, file_hash: str):
@@ -285,15 +306,17 @@ class VectorDB:
         )
 
         for c in chunks:
+            raw_bytes = c["content"].encode("utf-8")
+            z_blob = zlib.compress(raw_bytes, level=9)
             cur.execute(
-                """INSERT INTO chunks (filepath, chunk_type, name, start_line, end_line, content)
+                """INSERT INTO chunks (filepath, chunk_type, name, start_line, end_line, zcontent)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (filepath, c["chunk_type"], c["name"], c["start_line"], c["end_line"], c["content"])
+                (filepath, c["chunk_type"], c["name"], c["start_line"], c["end_line"], z_blob)
             )
             chunk_id = cur.lastrowid
             cur.execute(
                 "INSERT INTO fts_index (content, filepath, name, chunk_id) VALUES (?, ?, ?, ?)",
-                (f"{c['name']}\n{c['content']}", filepath, c["name"], chunk_id)
+                (f"{c['name']} {c['content']}", filepath, c["name"], chunk_id)
             )
 
     def prune_file(self, filepath: str):
@@ -317,7 +340,7 @@ class VectorDB:
                 """
                 SELECT fts_index.chunk_id, fts_index.filepath, fts_index.name,
                        bm25(fts_index) as bm25_rank,
-                       chunks.start_line, chunks.end_line, chunks.content, chunks.chunk_type
+                       chunks.start_line, chunks.end_line, chunks.zcontent, chunks.chunk_type
                 FROM fts_index
                 JOIN chunks ON fts_index.chunk_id = chunks.id
                 WHERE fts_index MATCH ?
@@ -331,12 +354,11 @@ class VectorDB:
             cur.execute(
                 """
                 SELECT id as chunk_id, filepath, name, 0.0 as bm25_rank,
-                       start_line, end_line, content, chunk_type
+                       start_line, end_line, zcontent, chunk_type
                 FROM chunks
-                WHERE content LIKE ? OR name LIKE ?
                 LIMIT ?
                 """,
-                (f"%{tokens[0]}%", f"%{tokens[0]}%", top_k)
+                (top_k,)
             )
             rows = cur.fetchall()
 
@@ -349,6 +371,11 @@ class VectorDB:
                 except Exception:
                     pass
 
+            try:
+                decompressed = zlib.decompress(r["zcontent"]).decode("utf-8", errors="replace")
+            except Exception:
+                decompressed = ""
+
             results.append({
                 "chunk_id": r["chunk_id"],
                 "file": path_display,
@@ -356,8 +383,8 @@ class VectorDB:
                 "name": r["name"],
                 "type": r["chunk_type"],
                 "lines": f"L{r['start_line']}-{r['end_line']}",
-                "score": round(-float(r["bm25_rank"]), 4) if r["bm25_rank"] is not None else 1.0,
-                "snippet": r["content"][:350].strip() + ("..." if len(r["content"]) > 350 else "")
+                "score": round(-float(r["bm25_rank"]), 3) if r["bm25_rank"] is not None else 1.0,
+                "snippet": decompressed[:280].strip() + ("..." if len(decompressed) > 280 else "")
             })
 
         return results[:top_k]
@@ -371,10 +398,11 @@ class VectorDB:
         size_bytes = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
 
         return {
-            "database_path": self.db_path,
-            "total_files_indexed": file_count,
-            "total_chunks": chunk_count,
-            "database_size_kb": round(size_bytes / 1024, 2)
+            "db": self.db_path,
+            "files": file_count,
+            "chunks": chunk_count,
+            "kb": round(size_bytes / 1024, 1),
+            "format": "zlib-compressed binary blob (token-dense)"
         }
 
     def close(self):
@@ -382,23 +410,24 @@ class VectorDB:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ai-db: Zero-Dependency Vector DB & Code Knowledge Engine")
+    parser = argparse.ArgumentParser(description="ai-db: Token-Optimized Vector DB")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
-    sync_p = subparsers.add_parser("sync", help="Incrementally synchronize files")
-    sync_p.add_argument("path", nargs="?", default=".", help="Root directory to sync (default: current dir)")
-    sync_p.add_argument("--db", default=DEFAULT_DB_FILE, help="Path to SQLite database")
+    sync_p = subparsers.add_parser("sync", help="Sync files")
+    sync_p.add_argument("path", nargs="?", default=".", help="Target path")
+    sync_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
-    query_p = subparsers.add_parser("query", help="Query the vector knowledge base")
-    query_p.add_argument("search", help="Search query string")
-    query_p.add_argument("--top", type=int, default=5, help="Number of results")
-    query_p.add_argument("--db", default=DEFAULT_DB_FILE, help="Path to SQLite database")
+    query_p = subparsers.add_parser("query", help="Query knowledge")
+    query_p.add_argument("search", help="Search query")
+    query_p.add_argument("--top", type=int, default=5)
+    query_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    query_p.add_argument("--full", action="store_true", help="Output full snippet")
 
-    status_p = subparsers.add_parser("status", help="Inspect database status")
-    status_p.add_argument("--db", default=DEFAULT_DB_FILE, help="Path to SQLite database")
+    status_p = subparsers.add_parser("status", help="Inspect status")
+    status_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
-    prune_p = subparsers.add_parser("prune", help="Prune non-existent files from database")
-    prune_p.add_argument("--db", default=DEFAULT_DB_FILE, help="Path to SQLite database")
+    prune_p = subparsers.add_parser("prune", help="Prune deleted files")
+    prune_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
     args = parser.parse_args()
 
@@ -410,18 +439,23 @@ def main():
 
     if args.command == "sync":
         res = db.sync(args.path)
-        print(json.dumps(res, indent=2))
+        print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
     elif args.command == "query":
         hits = db.query(args.search, top_k=args.top, relative_to=os.getcwd())
         if not hits:
-            print("No relevant knowledge found.")
+            print("NO_HITS")
         else:
-            print(f"\nFound {len(hits)} relevant code sections:\n" + "=" * 60)
-            for i, h in enumerate(hits, 1):
-                print(f"[{i}] {h['file']}:{h['lines']} ({h['name']}) [Score: {h['score']}]")
-                print(f"    {h['snippet']}\n" + "-" * 60)
+            # Ultra token-optimized output format for AI consumption:
+            # @path:lines (symbol) [score]
+            # code snippet
+            for h in hits:
+                print(f"@{h['file']}:{h['lines']} ({h['name']}) [{h['score']}]")
+                # Indent snippet slightly and remove empty fluff
+                clean_snippet = "\n".join([line for line in h['snippet'].splitlines() if line.strip()])
+                print(f"  {clean_snippet}")
     elif args.command == "status":
-        print(json.dumps(db.status(), indent=2))
+        s = db.status()
+        print(f"db:{s['db']} | files:{s['files']} | chunks:{s['chunks']} | size:{s['kb']}KB | format:{s['format']}")
     elif args.command == "prune":
         cur = db.conn.cursor()
         cur.execute("SELECT filepath FROM files")
@@ -432,7 +466,7 @@ def main():
                 db.prune_file(p)
                 pruned_count += 1
         db.conn.commit()
-        print(f"Pruned {pruned_count} missing files.")
+        print(f"pruned:{pruned_count}")
 
     db.close()
 
