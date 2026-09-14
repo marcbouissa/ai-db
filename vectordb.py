@@ -7,12 +7,13 @@ Uses SQLite FTS5 + BM25 ranking + TF-IDF sparse vector similarity.
 Requires ONLY the standard Python 3 library (sqlite3, zlib, math, re, hashlib, json).
 
 Features:
-- Token-dense schema (minified symbols, compressed content storage via zlib)
-- Token-optimized compact output for LLM prompts (no conversational fluff, strict terse format)
-- Incremental indexing via SHA-256 hash detection (syncs in milliseconds)
-- Smart syntax-aware code & document chunking
+- Smart Environment & Library Indexing (.venv, node_modules, .vscode, .git)
+  Indexes package manifests, versions, type stubs (.d.ts, .pyi), public API definitions,
+  and configurations while filtering out minified bundles and internal noise.
+- Token-dense schema (zlib-compressed binary blobs)
+- Token-optimized compact output for LLM prompts
+- Incremental indexing via SHA-256 hash detection
 - Automatic pruning of deleted files
-- CLI and Python API
 """
 
 import os
@@ -29,16 +30,20 @@ from typing import List, Dict, Any, Tuple, Optional
 DEFAULT_DB_FILE = os.environ.get("AI_DB_PATH", os.path.expanduser("~/GitRepos/ai-db/codebase_knowledge.db"))
 
 INDEXABLE_EXTENSIONS = {
-    ".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css", ".scss",
+    ".py", ".pyi", ".js", ".ts", ".d.ts", ".jsx", ".tsx", ".html", ".css", ".scss",
     ".json", ".md", ".yaml", ".yml", ".toml", ".sh", ".bash",
     ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".java", ".sql",
     ".txt", ".rst"
 }
 
-IGNORE_DIRS = {
-    ".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache",
-    "build", "dist", ".next", ".nuxt", "coverage", ".idea", ".vscode",
-    "target", ".turbo"
+# Directories completely ignored (raw binary or runtime garbage)
+HARD_IGNORE_DIRS = {
+    "__pycache__", ".pytest_cache", "coverage", ".turbo", ".next/cache"
+}
+
+# Subpaths to filter out inside node_modules and .venv to prevent noise & bloat
+VENDOR_NOISE_EXTENSIONS = {
+    ".map", ".min.js", ".min.css", ".bundle.js", ".chunk.js", ".wasm", ".lock"
 }
 
 
@@ -73,15 +78,81 @@ def strip_code_bloat(text: str) -> str:
     return "\n".join(compact)
 
 
+def should_index_path(rel_path: str, filename: str) -> bool:
+    """Smart filter to include high-value library files while rejecting vendor bloat."""
+    parts = rel_path.split(os.sep)
+    ext = os.path.splitext(filename)[1].lower()
+
+    # Reject hard ignored directories
+    if any(p in HARD_IGNORE_DIRS for p in parts):
+        return False
+
+    # Git metadata: index config, HEAD, and description, but not binary object blobs
+    if ".git" in parts:
+        return filename in ("config", "HEAD", "description")
+
+    # Node modules smart filter
+    if "node_modules" in parts:
+        if any(filename.endswith(ne) for ne in VENDOR_NOISE_EXTENSIONS):
+            return False
+        # High value: package metadata, typescript declarations, and main exports
+        if filename == "package.json":
+            return True
+        if filename.endswith(".d.ts") or ext in (".ts", ".pyi"):
+            return True
+        if filename in ("index.js", "main.js", "README.md"):
+            return True
+        return False
+
+    # Python virtual environment smart filter
+    if any(p in (".venv", "venv") for p in parts):
+        if any(filename.endswith(ne) for ne in VENDOR_NOISE_EXTENSIONS):
+            return False
+        # High value: package metadata and type definitions / top-level interfaces
+        if filename in ("METADATA", "RECORD", "py.typed", "pyproject.toml"):
+            return True
+        if filename.endswith(".pyi"):
+            return True
+        if filename == "__init__.py":
+            return True
+        return False
+
+    # IDE configs (.vscode, .idea)
+    if any(p in (".vscode", ".idea") for p in parts):
+        return ext in (".json", ".xml", ".yaml", ".yml")
+
+    # Standard source file
+    if ext in INDEXABLE_EXTENSIONS:
+        if any(filename.endswith(ne) for ne in VENDOR_NOISE_EXTENSIONS):
+            return False
+        return True
+
+    return False
+
+
 def chunk_file(filepath: str, content: str) -> List[Dict[str, Any]]:
     """Chunks files into logical sections: classes, functions, or markdown sections."""
     ext = os.path.splitext(filepath)[1].lower()
+    filename = os.path.basename(filepath)
     lines = content.splitlines()
     total_lines = len(lines)
     chunks = []
 
     if total_lines == 0:
         return []
+
+    # Package metadata files (package.json, METADATA)
+    if filename in ("package.json", "METADATA", "pyproject.toml"):
+        text_block = strip_code_bloat(content)
+        if text_block:
+            chunks.append({
+                "chunk_type": "lib_meta",
+                "name": f"pkg:{filename}",
+                "start_line": 1,
+                "end_line": total_lines,
+                "content": text_block[:1500]  # Cap metadata to avoid excessive JSON junk
+            })
+        return chunks
 
     # Markdown chunking by headers
     if ext in (".md", ".rst"):
@@ -119,10 +190,10 @@ def chunk_file(filepath: str, content: str) -> List[Dict[str, Any]]:
                 })
         return chunks
 
-    # Code chunking (Python / JS / TS / C++)
-    if ext in (".py", ".js", ".ts", ".jsx", ".tsx", ".c", ".cpp", ".rs", ".go"):
+    # Code and Typings chunking (Python / JS / TS / C++ / D.TS / PYI)
+    if ext in (".py", ".pyi", ".js", ".ts", ".jsx", ".tsx", ".c", ".cpp", ".rs", ".go") or filepath.endswith(".d.ts"):
         func_regex = re.compile(
-            r"^(?:async\s+)?(?:def\s+|class\s+|function\s+|const\s+\w+\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|public\s+|fn\s+)(\w+)"
+            r"^(?:async\s+)?(?:def\s+|class\s+|function\s+|interface\s+|type\s+|declare\s+|export\s+|const\s+\w+\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|public\s+|fn\s+)(\w+)"
         )
         current_symbol = "hdr"
         current_lines = []
@@ -196,7 +267,6 @@ class VectorDB:
 
     def _init_schema(self):
         cur = self.conn.cursor()
-        # Compact files table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS files (
                 filepath TEXT PRIMARY KEY,
@@ -206,7 +276,6 @@ class VectorDB:
             )
         """)
 
-        # Compact chunks table: stores binary compressed blobs (zlib) to be non-human-readable & storage-efficient
         cur.execute("""
             CREATE TABLE IF NOT EXISTS chunks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -220,7 +289,6 @@ class VectorDB:
             )
         """)
 
-        # SQLite FTS5 Full-Text index
         cur.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS fts_index USING fts5(
                 content,
@@ -237,11 +305,12 @@ class VectorDB:
         candidates = []
         root_dir = os.path.abspath(root_dir)
         for root, dirs, files in os.walk(root_dir):
-            dirs[:] = [d for d in dirs if d not in IGNORE_DIRS and not d.startswith(".")]
+            dirs[:] = [d for d in dirs if d not in HARD_IGNORE_DIRS]
             for f in files:
-                ext = os.path.splitext(f)[1].lower()
-                if ext in INDEXABLE_EXTENSIONS and not f.startswith("."):
-                    candidates.append(os.path.join(root, f))
+                full_path = os.path.join(root, f)
+                rel_path = os.path.relpath(full_path, root_dir)
+                if should_index_path(rel_path, f):
+                    candidates.append(full_path)
         return candidates
 
     def sync(self, root_dir: str, verbose: bool = True) -> Dict[str, int]:
@@ -421,7 +490,6 @@ def main():
     query_p.add_argument("search", help="Search query")
     query_p.add_argument("--top", type=int, default=5)
     query_p.add_argument("--db", default=DEFAULT_DB_FILE)
-    query_p.add_argument("--full", action="store_true", help="Output full snippet")
 
     status_p = subparsers.add_parser("status", help="Inspect status")
     status_p.add_argument("--db", default=DEFAULT_DB_FILE)
@@ -445,12 +513,8 @@ def main():
         if not hits:
             print("NO_HITS")
         else:
-            # Ultra token-optimized output format for AI consumption:
-            # @path:lines (symbol) [score]
-            # code snippet
             for h in hits:
                 print(f"@{h['file']}:{h['lines']} ({h['name']}) [{h['score']}]")
-                # Indent snippet slightly and remove empty fluff
                 clean_snippet = "\n".join([line for line in h['snippet'].splitlines() if line.strip()])
                 print(f"  {clean_snippet}")
     elif args.command == "status":
