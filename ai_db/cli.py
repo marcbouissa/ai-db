@@ -1,0 +1,604 @@
+import os
+import sys
+import json
+import argparse
+import subprocess
+from typing import List, Dict, Any, Optional
+
+from ai_db import (
+    DEFAULT_DB_FILE,
+    DEFAULT_CONFIG_FILE,
+    DEFAULT_SKILL_DIRS,
+    VectorDB,
+    load_config,
+    detect_project_name,
+    run_watch,
+    extract_file_outline
+)
+
+def main():
+    parser = argparse.ArgumentParser(description="ai-db: Token-Optimized Vector DB & Code Index")
+    subparsers = parser.add_subparsers(dest="command", help="Commands")
+
+    # sync
+    sync_p = subparsers.add_parser("sync", help="Sync files in a directory")
+    sync_p.add_argument("path", nargs="?", default=".", help="Target path")
+    sync_p.add_argument("--project", default=None, help="Target project scope (default: auto-detected)")
+    sync_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # query
+    query_p = subparsers.add_parser("query", help="Query knowledge chunks (BM25)")
+    query_p.add_argument("search", help="Search query")
+    query_p.add_argument("--top", type=int, default=5)
+    query_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
+    query_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
+    query_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # check / lint
+    check_p = subparsers.add_parser("check", aliases=["lint"], help="Check AST code validation and syntax errors")
+    check_p.add_argument("path", nargs="?", default=None, help="Target path or file to check")
+    check_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
+    check_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
+    check_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # symbol
+    symbol_p = subparsers.add_parser("symbol", help="Exact symbol resolution (class, def, interface)")
+    symbol_p.add_argument("name", help="Symbol name to find")
+    symbol_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
+    symbol_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
+    symbol_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # outline
+    outline_p = subparsers.add_parser("outline", help="File outline / skeleton extraction")
+    outline_p.add_argument("path", help="Filepath to extract outline from")
+
+    # watch
+    watch_p = subparsers.add_parser("watch", help="Watch directory and auto-sync on changes")
+    watch_p.add_argument("path", nargs="?", default=".", help="Target directory to watch")
+    watch_p.add_argument("--daemon", action="store_true", help="Run watcher in background daemon mode")
+    watch_p.add_argument("--interval", type=float, default=2.0, help="Polling/check interval in seconds")
+    watch_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # sync-all
+    syncall_p = subparsers.add_parser("sync-all", help="Sync all repositories registered in config.json")
+    syncall_p.add_argument("--config", default=DEFAULT_CONFIG_FILE, help="Path to config file")
+    syncall_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # route-skill
+    route_p = subparsers.add_parser("route-skill", aliases=["suggest-skills", "route"], help="Analyze prompt and route to best matching skill(s)")
+    route_p.add_argument("prompt", help="User prompt or task description to match against skills")
+    route_p.add_argument("--top", type=int, default=3, help="Maximum number of skills to return")
+    route_p.add_argument("--format", choices=["dense", "json", "path"], default="dense", help="Output format")
+    route_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
+    route_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
+    route_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # sync-skills
+    syncskills_p = subparsers.add_parser("sync-skills", help="Index all installed skills into the knowledge base")
+    syncskills_p.add_argument("--project", default="global", help="Project scope for skills (default: global)")
+    syncskills_p.add_argument("--dir", action="append", default=None, help="Skill directory to index")
+    syncskills_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # context (chat / session memory)
+    ctx_p = subparsers.add_parser("context", aliases=["ctx"], help="Manage session context and chat memory")
+    ctx_sub = ctx_p.add_subparsers(dest="ctx_action", help="Context action")
+
+    ctx_save = ctx_sub.add_parser("save", help="Save or update current chat context")
+    ctx_save.add_argument("session_id", nargs="?", default="main", help="Session ID / conversation name")
+    ctx_save.add_argument("--summary", "-s", required=True, help="Summary of session state, goals, and decisions")
+    ctx_save.add_argument("--title", "-t", default=None, help="Title for this session context")
+    ctx_save.add_argument("--files", "-f", action="append", default=[], help="Active files in session (repeatable)")
+    ctx_save.add_argument("--tasks", action="append", default=[], help="Open pending tasks (repeatable)")
+    ctx_save.add_argument("--notes", default=None, help="Detailed markdown notes/decisions (defaults to summary)")
+    ctx_save.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
+    ctx_save.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    ctx_get = ctx_sub.add_parser("get", help="Retrieve latest or specified session context")
+    ctx_get.add_argument("session_id", nargs="?", default=None, help="Session ID (default: most recent)")
+    ctx_get.add_argument("--format", choices=["dense", "json", "markdown"], default="markdown", help="Output format")
+    ctx_get.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
+    ctx_get.add_argument("--allow-project", action="append", default=[], help="Allowed project (repeatable)")
+    ctx_get.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    ctx_list = ctx_sub.add_parser("list", help="List stored session contexts")
+    ctx_list.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
+    ctx_list.add_argument("--allow-project", action="append", default=[], help="Allowed project (repeatable)")
+    ctx_list.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    ctx_query = ctx_sub.add_parser("query", help="Search session contexts with BM25")
+    ctx_query.add_argument("search", help="Search query")
+    ctx_query.add_argument("--top", type=int, default=3, help="Max results")
+    ctx_query.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
+    ctx_query.add_argument("--allow-project", action="append", default=[], help="Allowed project (repeatable)")
+    ctx_query.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # remember shortcut command
+    remember_p = subparsers.add_parser("remember", help="Recall current project context memory")
+    remember_p.add_argument("session_id", nargs="?", default=None, help="Optional session ID")
+    remember_p.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
+    remember_p.add_argument("--allow-project", action="append", default=[], help="Allowed project (repeatable)")
+    remember_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # analyze (RFC: tokenopt-analyzer v2)
+    analyze_p = subparsers.add_parser("analyze", help="Token-optimized code analysis (F1-F15)")
+    analyze_p.add_argument("targets", nargs="*", default=[], help="File(s) or glob pattern to analyze")
+    analyze_p.add_argument("--depth", choices=["summary", "structure", "targeted", "full"], default="structure", help="Analysis depth (default: structure)")
+    analyze_p.add_argument("--span", default=None, help="Range target START:END (e.g. 50:120)")
+    analyze_p.add_argument("--ctx", type=int, default=10, help="Context lines around span (default: 10)")
+    analyze_p.add_argument("--focus", default=None, help="Symbol or token focus filter")
+    analyze_p.add_argument("-q", "--question", default=None, help="Question-driven filter query")
+    analyze_p.add_argument("--since", default=None, help="Diff mode: inspect changes since hash or timestamp")
+    analyze_p.add_argument("--max-out", type=int, default=None, help="Token budget ceiling for response")
+    analyze_p.add_argument("--cursor", default=None, help="Continuation cursor handle")
+    analyze_p.add_argument("--format", "--fmt", dest="format", choices=["json", "stub", "sexp", "outline", "prose"], default=None, help="Output format (default: active DB default, initially 'stub')")
+    analyze_p.add_argument("--no-cache", action="store_true", help="Bypass semantic cache")
+    analyze_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # expand (F7 progressive disclosure)
+    expand_p = subparsers.add_parser("expand", help="Expand progressive disclosure ref handle (pay-per-section)")
+    expand_p.add_argument("ref", help="Opaque ref handle (e.g. ref:a8f9c1)")
+    expand_p.add_argument("--depth", choices=["targeted", "full"], default="full", help="Expansion depth")
+    expand_p.add_argument("--span", default=None, help="Sub-span START:END within ref")
+    expand_p.add_argument("--format", choices=["json", "raw"], default="json", help="Output format")
+    expand_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # locate (F10 relevance rank)
+    locate_p = subparsers.add_parser("locate", help="Locate top-k target files/snippets by question")
+    locate_p.add_argument("query", help="Question or concept to locate")
+    locate_p.add_argument("--scope", default=".", help="Repository or directory scope (default: .)")
+    locate_p.add_argument("-k", type=int, default=5, help="Number of results to return (default: 5)")
+    locate_p.add_argument("--format", "--fmt", dest="format", choices=["json", "stub", "sexp"], default=None, help="Output format (default: active DB default, initially 'stub')")
+    locate_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # mcp server runner
+    mcp_p = subparsers.add_parser("mcp", help="Run JSON-RPC 2.0 stdio MCP server for agent tool calls")
+    mcp_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # status
+    status_p = subparsers.add_parser("status", help="Inspect database health and status")
+    status_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # prune
+    prune_p = subparsers.add_parser("prune", help="Prune deleted files")
+    prune_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # optimize
+    opt_p = subparsers.add_parser("optimize", aliases=["vacuum"], help="Optimize DB: merge FTS5 index, run PRAGMA optimize, and vacuum")
+    opt_p.add_argument("--no-prune", action="store_true", help="Skip pruning missing files before vacuum")
+    opt_p.add_argument("--default-format", "--fmt", dest="default_format", choices=["stub", "sexp", "json", "outline", "prose"], default=None, help="Configure and persist default output format for future queries")
+    opt_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    # Handle outline (pure file inspection without requiring DB)
+    if args.command == "outline":
+        target_path = os.path.abspath(args.path)
+        if not os.path.exists(target_path):
+            print(f"Error: File not found: {args.path}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            with open(target_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except Exception as e:
+            print(f"Error reading file {args.path}: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        total_lines = len(content.splitlines())
+        outline = extract_file_outline(target_path, content)
+        rel_disp = os.path.relpath(target_path, os.getcwd())
+        print(f"File: {rel_disp} ({total_lines} lines)")
+        if not outline:
+            print("  (no top-level symbols identified)")
+        else:
+            for lineno, label in outline:
+                print(f"  L{lineno}: {label}")
+        return
+
+    # Handle watch daemon mode
+    if args.command == "watch":
+        if args.daemon:
+            if os.fork() > 0:
+                print(f"[ai-db watch] Daemon started in background for '{args.path}'")
+                sys.exit(0)
+            os.setsid()
+            if os.fork() > 0:
+                sys.exit(0)
+            sys.stdout.flush()
+            sys.stderr.flush()
+            devnull = open(os.devnull, "wb+")
+            os.dup2(devnull.fileno(), sys.stdin.fileno())
+            os.dup2(devnull.fileno(), sys.stdout.fileno())
+            os.dup2(devnull.fileno(), sys.stderr.fileno())
+
+        run_watch(args.db, args.path, interval=args.interval)
+        return
+
+    # Handle sync-all
+    if args.command == "sync-all":
+        cfg = load_config(args.config)
+        paths = cfg.get("auto_sync_paths", [])
+        if not paths:
+            print(f"No paths configured in {args.config}. Example format:")
+            print(json.dumps({"auto_sync_paths": ["~/GitRepos/my-project"]}, indent=2))
+            sys.exit(0)
+
+        db = VectorDB(args.db)
+        total_added = total_updated = total_pruned = total_skipped = 0
+        for p in paths:
+            expanded = os.path.abspath(os.path.expanduser(p))
+            if not os.path.exists(expanded):
+                print(f"Skipping non-existent path: {p}")
+                continue
+            print(f"Syncing: {p}...")
+            res = db.sync(expanded, verbose=True)
+            total_added += res["added"]
+            total_updated += res["updated"]
+            total_pruned += res["pruned"]
+            total_skipped += res["skipped"]
+
+        db.close()
+        print(f"Total: +{total_added} ~{total_updated} -{total_pruned} ={total_skipped}")
+        return
+
+    db = VectorDB(args.db)
+
+    # Auto-detect project scope from CWD if not provided
+    active_proj = getattr(args, "project", None) or detect_project_name(os.getcwd())
+    allowed_projs = getattr(args, "allow_project", []) or []
+
+    if args.command == "sync":
+        target_path = os.path.abspath(args.path)
+        proj_name = args.project or detect_project_name(target_path)
+        if os.path.isdir(target_path):
+            res = db.sync(target_path, project=proj_name)
+            print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
+        elif os.path.isfile(target_path):
+            current_sha = compute_sha256(target_path)
+            db.prune_file(target_path)
+            db._index_file(target_path, current_sha, project=proj_name)
+            db.conn.commit()
+            print(f"+1 ~0 -0 =0")
+        else:
+            res = db.sync(target_path, project=proj_name)
+            print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
+
+    elif args.command == "query":
+        hits = db.query(args.search, top_k=args.top, relative_to=os.getcwd(),
+                        project=active_proj, allowed_projects=allowed_projs)
+        if not hits:
+            print("NO_HITS")
+        else:
+            for h in hits:
+                print(f"@{h['file']}:{h['lines']} ({h['name']}) [{h['project']}] [{h['score']}]")
+                clean_snippet = "\n".join([line for line in h['snippet'].splitlines() if line.strip()])
+                print(f"  {clean_snippet}")
+
+    elif args.command in ("check", "lint"):
+        if args.path:
+            target_path = os.path.abspath(args.path)
+            if os.path.exists(target_path):
+                if os.path.isdir(target_path):
+                    db.sync(target_path, project=active_proj, verbose=False)
+                elif os.path.isfile(target_path):
+                    db.prune_file(target_path)
+                    db._index_file(target_path, compute_sha256(target_path), project=active_proj)
+                    db.conn.commit()
+
+        errors = db.check_syntax(args.path, relative_to=os.getcwd(),
+                                 project=active_proj, allowed_projects=allowed_projs)
+        if not errors:
+            print("No syntax errors detected.")
+            db.close()
+            sys.exit(0)
+        else:
+            for err in errors:
+                print(f"SYNTAX_ERROR: {err['file']}:{err['line']}:{err['col']} [{err['project']}] {err['message']}")
+            print(f"Total errors: {len(errors)}")
+            db.close()
+            sys.exit(1)
+
+    elif args.command == "symbol":
+        symbols = db.query_symbol(args.name, relative_to=os.getcwd(),
+                                  project=active_proj, allowed_projects=allowed_projs)
+        if not symbols:
+            print(f"NO_SYMBOLS_FOUND: {args.name}")
+        else:
+            for s in symbols:
+                print(f"@{s['file']}:L{s['line']} ({s['symbol_type']} {s['name']}) [{s['project']}]")
+
+    elif args.command in ("route-skill", "suggest-skills", "route"):
+        matches = db.route_skills(args.prompt, top_k=args.top,
+                                  project=active_proj, allowed_projects=allowed_projs)
+        if not matches:
+            if args.format == "json":
+                print("[]")
+            else:
+                print("NO_SKILL_MATCH")
+        else:
+            if args.format == "json":
+                print(json.dumps(matches, indent=2))
+            elif args.format == "path":
+                for m in matches:
+                    print(m["filepath"])
+            else:
+                for idx, m in enumerate(matches, 1):
+                    prefix = "PRIMARY" if idx == 1 else f"SECONDARY #{idx}"
+                    rel_p = os.path.relpath(m["filepath"], os.getcwd())
+                    reasons_str = "; ".join(m["reasons"])
+                    print(f"[{prefix}] {m['name']} (conf: {m['confidence']}) [{m.get('project', 'global')}] -> {rel_p}")
+                    print(f"  Reason: {reasons_str}")
+                    if m["description"]:
+                        print(f"  Desc: {m['description'][:140]}...")
+
+    elif args.command == "sync-skills":
+        res = db.sync_skills(skill_dirs=args.dir, project=args.project, verbose=True)
+        print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
+
+    elif args.command in ("context", "ctx"):
+        if args.ctx_action == "save":
+            # Flatten file and task lists in case comma-separated values are used
+            files_list = []
+            for f in args.files:
+                files_list.extend([x.strip() for x in f.split(",") if x.strip()])
+            tasks_list = []
+            for t in args.tasks:
+                tasks_list.extend([x.strip() for x in t.split(",") if x.strip()])
+
+            res = db.save_context(
+                session_id=args.session_id,
+                summary=args.summary,
+                project=active_proj,
+                title=args.title,
+                active_files=files_list,
+                open_tasks=tasks_list,
+                full_notes=args.notes
+            )
+            print(f"[ai-db context] Saved session '{res['session_id']}' for project '{res['project']}'")
+
+        elif args.ctx_action == "get":
+            ctx = db.get_context(session_id=args.session_id, project=active_proj, allowed_projects=allowed_projs)
+            if not ctx:
+                print("NO_CONTEXT_FOUND")
+            else:
+                if args.format == "json":
+                    print(json.dumps(ctx, indent=2))
+                elif args.format == "dense":
+                    print(f"[{ctx['project']}:{ctx['session_id']}] {ctx['title']} | Files: {len(ctx['active_files'])} | Tasks: {len(ctx['open_tasks'])}")
+                    print(f"Summary: {ctx['summary']}")
+                else:
+                    # Markdown format optimized for LLM /remeber injection
+                    print(f"### [Context Memory: {ctx['project']} / {ctx['session_id']}]")
+                    print(f"**Title**: {ctx['title']}")
+                    print(f"**Summary**: {ctx['summary']}")
+                    if ctx['active_files']:
+                        print("\n**Active Files**:")
+                        for f in ctx['active_files']:
+                            print(f"- {f}")
+                    if ctx['open_tasks']:
+                        print("\n**Pending Tasks**:")
+                        for idx, t in enumerate(ctx['open_tasks'], 1):
+                            print(f"{idx}. {t}")
+                    if ctx['full_notes'] and ctx['full_notes'] != ctx['summary']:
+                        print(f"\n**Notes & Decisions**:\n{ctx['full_notes']}")
+
+        elif args.ctx_action == "list":
+            contexts = db.list_contexts(project=active_proj, allowed_projects=allowed_projs)
+            if not contexts:
+                print("NO_SAVED_CONTEXTS")
+            else:
+                for c in contexts:
+                    date_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(c["timestamp"]))
+                    print(f"[{c['project']}] {c['session_id']} ({date_str}) - {c['title']} ({c['active_files_count']} files, {c['open_tasks_count']} tasks)")
+
+        elif args.ctx_action == "query":
+            hits = db.query_contexts(args.search, project=active_proj, allowed_projects=allowed_projs, top_k=args.top)
+            if not hits:
+                print("NO_HITS")
+            else:
+                for h in hits:
+                    print(f"[{h['project']}:{h['session_id']}] {h['title']}")
+                    print(f"  {h['summary']}")
+        else:
+            ctx_p.print_help()
+
+    elif args.command == "remember":
+        ctx = db.get_context(session_id=args.session_id, project=active_proj, allowed_projects=allowed_projs)
+        if not ctx:
+            print("NO_CONTEXT_FOUND")
+        else:
+            print(f"### [ai-db Context Memory: {ctx['project']} / {ctx['session_id']}]")
+            print(f"**Title**: {ctx['title']}")
+            print(f"**Summary**: {ctx['summary']}")
+            if ctx['active_files']:
+                print("\n**Active Files**:")
+                for f in ctx['active_files']:
+                    print(f"- {f}")
+            if ctx['open_tasks']:
+                print("\n**Pending Tasks**:")
+                for idx, t in enumerate(ctx['open_tasks'], 1):
+                    print(f"{idx}. {t}")
+            if ctx['full_notes'] and ctx['full_notes'] != ctx['summary']:
+                print(f"\n**Notes & Decisions**:\n{ctx['full_notes']}")
+
+    elif args.command == "analyze":
+        parsed_span = None
+        if args.span:
+            parts = args.span.split(":")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                parsed_span = (int(parts[0]), int(parts[1]))
+            else:
+                print(f"Error: Invalid --span format '{args.span}'. Expected START:END (e.g. 50:120)", file=sys.stderr)
+                db.close()
+                sys.exit(1)
+
+        targets = args.targets
+        if not targets:
+            # If no target specified, check if last session had targets
+            last_analysis = db.get_session_state("last_analysis")
+            if last_analysis and "targets" in last_analysis:
+                targets = last_analysis["targets"]
+            else:
+                targets = ["."]
+
+        if len(targets) == 1 and not any(c in targets[0] for c in ["*", "?", "["]) and os.path.isfile(os.path.expanduser(targets[0])):
+            res = db.analyze_file(
+                targets[0],
+                depth=args.depth,
+                span=parsed_span,
+                focus=args.focus,
+                q=args.question,
+                since=args.since,
+                ctx_lines=args.ctx,
+                no_cache=args.no_cache
+            )
+            # Wrap in batch-like structure if max_out budgeting was requested
+            if args.max_out and res["meta"]["tokens_out"] > args.max_out:
+                res["meta"]["truncated"] = True
+                res["symbols"] = res["symbols"][:max(1, len(res["symbols"]) // 2)]
+            output_data = res
+        else:
+            output_data = db.analyze_batch(
+                targets=targets,
+                depth=args.depth,
+                q=args.question,
+                focus=args.focus,
+                span=parsed_span,
+                since=args.since,
+                max_out=args.max_out,
+                cursor=args.cursor,
+                ctx_lines=args.ctx
+            )
+
+        # Dynamic format resolution: CLI --fmt override > DB persistent default > 'stub'
+        effective_fmt = args.format or db.get_session_state("default_format") or "stub"
+
+        if effective_fmt == "json":
+            print(json.dumps(output_data, indent=2))
+        elif effective_fmt == "stub":
+            print(VectorDB.format_as_stub(output_data))
+        elif effective_fmt == "sexp":
+            print(VectorDB.format_as_sexp(output_data))
+        elif effective_fmt == "outline":
+            # Compact outline format
+            items = output_data.get("symbols", []) if "symbols" in output_data else []
+            if not items and "results" in output_data:
+                for fpath, fres in output_data["results"].items():
+                    print(f"=== {fpath} ({fres['meta']['tokens_out']} tokens) ===")
+                    for s in fres.get("symbols", []):
+                        sig = s.get("sig", s["name"])
+                        span_str = f"L{s['span'][0]}-L{s['span'][1]}" if "span" in s else ""
+                        print(f"  [{s.get('ref', '')}] {span_str:10} {sig}")
+            else:
+                for s in items:
+                    sig = s.get("sig", s["name"])
+                    span_str = f"L{s['span'][0]}-L{s['span'][1]}" if "span" in s else ""
+                    print(f"[{s.get('ref', '')}] {span_str:10} {sig}")
+        else:
+            # Prose / markdown format
+            meta = output_data.get("meta", {})
+            print(f"### Analysis Result ({meta.get('tokens_out', 0)} tokens, cached={meta.get('cached', False)})")
+            if "symbols" in output_data:
+                for s in output_data["symbols"]:
+                    print(f"- **{s['name']}** ({s['kind']}) `{s.get('ref', '')}`: {s.get('sig', '')}")
+                    if s.get("body"):
+                        print(f"```\n{s['body']}\n```")
+            elif "results" in output_data:
+                for fpath, fres in output_data["results"].items():
+                    print(f"\n#### {fpath}")
+                    for s in fres.get("symbols", []):
+                        print(f"- **{s['name']}** `{s.get('ref', '')}`: {s.get('sig', '')}")
+                        if s.get("body"):
+                            print(f"```\n{s['body']}\n```")
+
+    elif args.command == "expand":
+        parsed_span = None
+        if args.span:
+            parts = args.span.split(":")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                parsed_span = (int(parts[0]), int(parts[1]))
+            else:
+                print(f"Error: Invalid --span format '{args.span}'. Expected START:END", file=sys.stderr)
+                db.close()
+                sys.exit(1)
+
+        exp = db.expand_ref(args.ref, depth=args.depth, span=parsed_span)
+        if not exp:
+            print(f"Error: Ref '{args.ref}' not found or expired", file=sys.stderr)
+            db.close()
+            sys.exit(1)
+
+        if args.format == "json":
+            print(json.dumps(exp, indent=2))
+        else:
+            print(exp.get("body", ""))
+
+    elif args.command == "locate":
+        hits = db.locate_targets(args.query, scope=args.scope, k=args.k)
+        if not hits:
+            print("NO_LOCATE_HITS")
+        else:
+            effective_fmt = args.format or db.get_session_state("default_format") or "stub"
+            if effective_fmt == "stub":
+                for h in hits:
+                    span_str = f"L{h['span'][0]}-{h['span'][1]}" if h.get("span") else ""
+                    print(f"# {h['file']}:{span_str} (score:{h.get('score', 0)})")
+                    snippet = h.get("snippet", "").strip()
+                    if snippet:
+                        for s_line in snippet.splitlines()[:4]:
+                            print(f"  {s_line}")
+                    print()
+            elif effective_fmt == "sexp":
+                def sexp_esc(val):
+                    return f'"{str(val).replace(chr(34), chr(92)+chr(34)).replace(chr(10), " ")}"'
+                hit_sexps = []
+                for h in hits:
+                    span_s = f"({h['span'][0]} {h['span'][1]})" if h.get("span") else "nil"
+                    hit_sexps.append(f"(:hit :file {sexp_esc(h['file'])} :name {sexp_esc(h.get('name'))} :span {span_s} :score {h.get('score', 0)})")
+                print(f"(:locate :query {sexp_esc(args.query)} :hits ({' '.join(hit_sexps)}))")
+            else:
+                print(json.dumps(hits, indent=2))
+
+    elif args.command == "mcp":
+        # Launch stdio JSON-RPC MCP server
+        db.close()
+        import mcp_server
+        mcp_server.run_stdio(DEFAULT_DB_FILE if args.db == DEFAULT_DB_FILE else args.db)
+        return
+
+    elif args.command == "status":
+        s = db.status()
+        active_fmt = db.get_session_state("default_format") or "stub"
+        skills_str = f" | skills:{s.get('skills', 0)}" if "skills" in s else ""
+        contexts_str = f" | contexts:{s.get('contexts', 0)}" if "contexts" in s else ""
+        print(f"db:{s['db']} | files:{s['files']} | chunks:{s['chunks']} | symbols:{s['symbols']} | syntax_errors:{s['syntax_errors']}{skills_str}{contexts_str} | size:{s['kb']}KB | default_format:{active_fmt}")
+
+    elif args.command == "prune":
+        cur = db.conn.cursor()
+        cur.execute("SELECT filepath FROM files")
+        all_paths = [r["filepath"] for r in cur.fetchall()]
+        pruned_count = 0
+        for p in all_paths:
+            if not os.path.exists(p):
+                db.prune_file(p)
+                pruned_count += 1
+        db.conn.commit()
+        print(f"pruned:{pruned_count}")
+
+    elif args.command in ("optimize", "vacuum"):
+        prune_flag = not getattr(args, "no_prune", False)
+        def_fmt = getattr(args, "default_format", None)
+        res = db.optimize(prune_missing=prune_flag, default_format=def_fmt)
+        print(f"[ai-db optimize] Merged FTS indexes, updated planner stats & vacuumed.")
+        print(f"Size: {res['initial_kb']}KB -> {res['final_kb']}KB (reclaimed: {res['reclaimed_kb']}KB, pruned_files: {res['pruned_files']})")
+        print(f"Active default output format: '{res['default_format']}'")
+
+    db.close()
+
+
+if __name__ == "__main__":
+    main()
+

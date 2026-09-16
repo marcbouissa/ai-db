@@ -1,0 +1,406 @@
+import os
+import ast
+import re
+import glob
+import json
+import time
+import zlib
+import hashlib
+import sqlite3
+from typing import List, Dict, Any, Tuple, Optional
+from ai_db.utils import compute_sha256, tokenize
+from ai_db.analyzer.references import ReferenceStore
+
+class AnalyzerEngine:
+    def __init__(self, db):
+        self.db = db
+        self.conn = db.conn
+        self.ref_store = ReferenceStore(self.conn)
+
+    def _store_analysis_ref(self, filepath: str, name: str, start_line: int, end_line: int, kind: str, body_text: str) -> str:
+        return self.ref_store._store_analysis_ref(filepath, name, start_line, end_line, kind, body_text)
+
+    def expand_ref(self, ref_id: str, depth: str = "full", span: Optional[Tuple[int, int]] = None) -> Optional[Dict[str, Any]]:
+        return self.ref_store.expand_ref(ref_id, depth, span)
+
+    def _diff_spans(self, filepath: str, current_content: str, since: Optional[str]) -> Dict[str, Any]:
+        return self.ref_store._diff_spans(filepath, current_content, since)
+
+    def get_session_state(self, key: str) -> Optional[Any]:
+        return self.db.get_session_state(key)
+
+    def set_session_state(self, key: str, value: Any):
+        return self.db.set_session_state(key, value)
+
+    def analyze_file(self, filepath: str, depth: str = "structure",
+                     span: Optional[Tuple[int, int]] = None,
+                     focus: Optional[str] = None,
+                     q: Optional[str] = None,
+                     since: Optional[str] = None,
+                     ctx_lines: int = 10,
+                     bypass_cache: bool = False,
+                     no_cache: bool = False) -> Dict[str, Any]:
+        """Analyzes a single file according to RFC tokenopt-analyzer v2."""
+        bypass_cache = bypass_cache or no_cache
+        abs_path = os.path.abspath(os.path.expanduser(filepath))
+        if not os.path.exists(abs_path):
+            return {
+                "file": filepath,
+                "error": f"File not found: {filepath}",
+                "symbols": [],
+                "notes": ["File not found"],
+                "meta": {"tokens_in": 0, "tokens_out": 0, "cached": False, "truncated": False, "conf": 0.0}
+            }
+
+        try:
+            with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except Exception as e:
+            return {
+                "file": filepath,
+                "error": str(e),
+                "symbols": [],
+                "notes": [f"Error reading file: {e}"],
+                "meta": {"tokens_in": 0, "tokens_out": 0, "cached": False, "truncated": False, "conf": 0.0}
+            }
+
+        file_hash = compute_sha256(abs_path)
+        tokens_in = max(1, len(content) // 4)
+        ext = os.path.splitext(abs_path)[1].lower()
+        all_lines = content.splitlines()
+        total_lines = len(all_lines)
+
+        # F9 Semantic Cache check
+        norm_q = (q or "").strip().lower()
+        cache_key_raw = f"{abs_path}:{file_hash}:{depth}:{span}:{focus}:{norm_q}:{since}:{ctx_lines}"
+        cache_key = hashlib.sha256(cache_key_raw.encode("utf-8")).hexdigest()
+
+        if not bypass_cache:
+            cur = self.conn.cursor()
+            cur.execute("SELECT result_json, file_hash FROM semantic_cache WHERE cache_key = ?", (cache_key,))
+            cached_row = cur.fetchone()
+            if cached_row and cached_row["file_hash"] == file_hash:
+                try:
+                    res = json.loads(cached_row["result_json"])
+                    res["meta"]["cached"] = True
+                    return res
+                except Exception:
+                    pass
+
+        # F8 Diff Mode check
+        diff_info = self._diff_spans(abs_path, content, since) if since else None
+
+        # F2 Range Target extraction
+        if span:
+            start_req, end_req = span
+            start_bounded = max(1, start_req - ctx_lines)
+            end_bounded = min(total_lines, end_req + ctx_lines)
+            snippet_lines = all_lines[start_bounded - 1 : end_bounded]
+            snippet_text = "\n".join(snippet_lines)
+            ref_id = self._store_analysis_ref(abs_path, f"span:{start_bounded}-{end_bounded}", start_bounded, end_bounded, "range", snippet_text)
+            symbols = [{
+                "name": f"L{start_bounded}-{end_bounded}",
+                "kind": "range",
+                "span": [start_bounded, end_bounded],
+                "ref": ref_id,
+                "body": snippet_text
+            }]
+            tokens_out = max(1, len(snippet_text) // 4)
+            res = {
+                "file": filepath,
+                "symbols": symbols,
+                "diff": diff_info,
+                "notes": [f"Extracted span L{start_bounded}-{end_bounded} (ctx={ctx_lines})"],
+                "meta": {"tokens_in": tokens_in, "tokens_out": tokens_out, "cached": False, "truncated": False, "conf": 0.99}
+            }
+            self._save_to_semantic_cache(cache_key, file_hash, res)
+            return res
+
+        # Extract symbols using AST or regex
+        symbols_found = []
+        notes = []
+        q_tokens = set(tokenize(q or "")) if q else set()
+
+        if ext in (".py", ".pyi"):
+            try:
+                tree = ast.parse(content, filename=abs_path)
+                for node in tree.body:
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        end_ln = getattr(node, "end_lineno", node.lineno)
+                        prefix = "async def " if isinstance(node, ast.AsyncFunctionDef) else "def "
+                        sig_line = all_lines[node.lineno - 1].strip() if 0 <= node.lineno - 1 < total_lines else f"{prefix}{node.name}(...)"
+                        body_block = "\n".join(all_lines[node.lineno - 1 : end_ln])
+                        ref_id = self._store_analysis_ref(abs_path, node.name, node.lineno, end_ln, "def", body_block)
+                        symbols_found.append({
+                            "name": node.name,
+                            "kind": "def",
+                            "sig": sig_line.rstrip(":"),
+                            "span": [node.lineno, end_ln],
+                            "ref": ref_id,
+                            "body": body_block
+                        })
+                    elif isinstance(node, ast.ClassDef):
+                        end_ln = getattr(node, "end_lineno", node.lineno)
+                        sig_line = all_lines[node.lineno - 1].strip() if 0 <= node.lineno - 1 < total_lines else f"class {node.name}"
+                        body_block = "\n".join(all_lines[node.lineno - 1 : end_ln])
+                        ref_id = self._store_analysis_ref(abs_path, node.name, node.lineno, end_ln, "class", body_block)
+                        class_entry = {
+                            "name": node.name,
+                            "kind": "class",
+                            "sig": sig_line.rstrip(":"),
+                            "span": [node.lineno, end_ln],
+                            "ref": ref_id,
+                            "body": body_block,
+                            "methods": []
+                        }
+                        for sub in node.body:
+                            if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                sub_end = getattr(sub, "end_lineno", sub.lineno)
+                                sub_prefix = "async def " if isinstance(sub, ast.AsyncFunctionDef) else "def "
+                                sub_sig = all_lines[sub.lineno - 1].strip() if 0 <= sub.lineno - 1 < total_lines else f"{sub_prefix}{sub.name}(...)"
+                                sub_body = "\n".join(all_lines[sub.lineno - 1 : sub_end])
+                                sub_ref = self._store_analysis_ref(abs_path, f"{node.name}.{sub.name}", sub.lineno, sub_end, "method", sub_body)
+                                class_entry["methods"].append({
+                                    "name": sub.name,
+                                    "kind": "method",
+                                    "sig": sub_sig.rstrip(":"),
+                                    "span": [sub.lineno, sub_end],
+                                    "ref": sub_ref,
+                                    "body": sub_body
+                                })
+                        symbols_found.append(class_entry)
+            except Exception as e:
+                notes.append(f"AST fallback: {e}")
+
+        # Fallback to regex symbol extraction if AST returned nothing
+        if not symbols_found:
+            for i, line in enumerate(all_lines, 1):
+                stripped = line.strip()
+                if not stripped or stripped.startswith(("#", "//", "/*", "*")):
+                    continue
+                m = re.match(r"^(?:export\s+|public\s+|private\s+|protected\s+|static\s+|async\s+)*(class|interface|type|struct|def|function|fn)\s+([A-Za-z0-9_$]+)", stripped)
+                if m:
+                    kind = m.group(1)
+                    sname = m.group(2)
+                    symbols_found.append({
+                        "name": sname,
+                        "kind": kind,
+                        "sig": stripped[:120].rstrip("{:;"),
+                        "span": [i, min(total_lines, i + 15)],
+                        "ref": f"ref:{hashlib.sha1(f'{abs_path}:{i}:{sname}'.encode()).hexdigest()[:8]}",
+                        "body": stripped
+                    })
+
+        # F1 Depth Control & F3 Question-Driven Filtering
+        filtered_symbols = []
+        conf = 0.95
+
+        for sym in symbols_found:
+            is_match = True
+            if q_tokens:
+                combined_text = f"{sym['name']} {sym.get('sig', '')} {sym.get('body', '')}".lower()
+                matched_q = any(tok in combined_text for tok in q_tokens if len(tok) > 2)
+                if not matched_q:
+                    is_match = False
+
+            if focus:
+                if focus.lower() not in sym["name"].lower():
+                    is_match = False
+
+            item = {
+                "name": sym["name"],
+                "kind": sym["kind"],
+                "sig": sym.get("sig", sym["name"]),
+                "span": sym["span"],
+                "ref": sym["ref"]
+            }
+
+            if depth == "summary":
+                # Signatures only, strictly no body
+                pass
+            elif depth == "structure":
+                # Structure: signature + submethods if any
+                if "methods" in sym:
+                    item["methods"] = [{
+                        "name": m["name"],
+                        "kind": m["kind"],
+                        "sig": m["sig"],
+                        "span": m["span"],
+                        "ref": m["ref"]
+                    } for m in sym["methods"]]
+            elif depth == "targeted":
+                # Bodies included only if matched filter/question
+                if is_match:
+                    item["body"] = sym.get("body", "")
+                if "methods" in sym:
+                    item["methods"] = []
+                    for m in sym["methods"]:
+                        m_item = {
+                            "name": m["name"],
+                            "kind": m["kind"],
+                            "sig": m["sig"],
+                            "span": m["span"],
+                            "ref": m["ref"]
+                        }
+                        if q_tokens and any(tok in f"{m['name']} {m['sig']} {m['body']}".lower() for tok in q_tokens if len(tok) > 2):
+                            m_item["body"] = m["body"]
+                        item["methods"].append(m_item)
+            elif depth == "full":
+                item["body"] = sym.get("body", "")
+                if "methods" in sym:
+                    item["methods"] = sym["methods"]
+
+            if q_tokens or focus:
+                if is_match or (depth != "targeted" and depth != "summary"):
+                    filtered_symbols.append(item)
+            else:
+                filtered_symbols.append(item)
+
+        if not filtered_symbols and (q_tokens or focus):
+            conf = 0.4
+            notes.append("No symbols matched filter; suggest depth=full or widening query")
+
+        # Compute token estimates
+        rendered_json = json.dumps(filtered_symbols)
+        tokens_out = max(1, len(rendered_json) // 4)
+
+        result = {
+            "file": filepath,
+            "symbols": filtered_symbols,
+            "diff": diff_info,
+            "notes": notes,
+            "meta": {
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "cached": False,
+                "truncated": False,
+                "conf": conf
+            }
+        }
+        self._save_to_semantic_cache(cache_key, file_hash, result)
+        return result
+
+    def _save_to_semantic_cache(self, cache_key: str, file_hash: str, result: Dict[str, Any]):
+        """Saves result to semantic cache table."""
+        try:
+            cur = self.conn.cursor()
+            cur.execute(
+                """INSERT OR REPLACE INTO semantic_cache (cache_key, file_hash, result_json, timestamp)
+                   VALUES (?, ?, ?, ?)""",
+                (cache_key, file_hash, json.dumps(result), time.time())
+            )
+            self.conn.commit()
+        except Exception:
+            pass
+
+    def analyze_batch(self, targets: List[str], depth: str = "structure",
+                      q: Optional[str] = None, focus: Optional[str] = None,
+                      span: Optional[Tuple[int, int]] = None,
+                      since: Optional[str] = None,
+                      max_out: Optional[int] = None,
+                      cursor: Optional[str] = None,
+                      ctx_lines: int = 10) -> Dict[str, Any]:
+        """F4 Batching + F5 Token Budgeting: Analyzes multiple targets up to n<=32 with cursor continuation."""
+        expanded_targets = []
+        import glob
+        for t in targets:
+            if any(char in t for char in ["*", "?", "["]):
+                matched = glob.glob(os.path.expanduser(t), recursive=True)
+                expanded_targets.extend([m for m in matched if os.path.isfile(m)])
+            else:
+                expanded_targets.append(t)
+
+        expanded_targets = list(dict.fromkeys(expanded_targets))[:32]  # Cap n<=32
+
+        # F13 Session State: Save targets and query
+        self.set_session_state("last_analysis", {
+            "targets": expanded_targets,
+            "depth": depth,
+            "q": q,
+            "focus": focus,
+            "since": since
+        })
+
+        results = {}
+        total_tokens_out = 0
+        total_tokens_in = 0
+        is_truncated = False
+        next_cursor = None
+
+        # Check continuation cursor
+        start_index = 0
+        if cursor:
+            cur_data = self.get_session_state(f"cursor:{cursor}")
+            if cur_data:
+                start_index = cur_data.get("next_index", 0)
+
+        for idx in range(start_index, len(expanded_targets)):
+            target = expanded_targets[idx]
+            file_res = self.analyze_file(target, depth=depth, span=span, focus=focus, q=q, since=since, ctx_lines=ctx_lines)
+            tokens_this = file_res["meta"]["tokens_out"]
+            total_tokens_in += file_res["meta"]["tokens_in"]
+
+            # F5 Token Budget Enforcement
+            if max_out and (total_tokens_out + tokens_this > max_out) and results:
+                is_truncated = True
+                cursor_id = f"cur_{int(time.time()*1000)}"
+                self.set_session_state(f"cursor:{cursor_id}", {"next_index": idx, "targets": expanded_targets})
+                next_cursor = cursor_id
+                break
+
+            results[target] = file_res
+            total_tokens_out += tokens_this
+
+        return {
+            "results": results,
+            "meta": {
+                "tokens_in": total_tokens_in,
+                "tokens_out": total_tokens_out,
+                "truncated": is_truncated,
+                "cursor": next_cursor,
+                "targets_count": len(results)
+            }
+        }
+
+    def locate_targets(self, q: str, scope: str = ".", k: int = 5) -> List[Dict[str, Any]]:
+        """F10 Relevance Rank: Finds top-k matching files/snippets without dumping entire directory scans."""
+        cur = self.conn.cursor()
+        tokens = tokenize(q)
+        if not tokens:
+            return []
+
+        fts_query = " OR ".join(tokens)
+        scope_abs = os.path.abspath(os.path.expanduser(scope))
+
+        try:
+            cur.execute(
+                """
+                SELECT fts_index.filepath, fts_index.name, bm25(fts_index) as rank,
+                       chunks.start_line, chunks.end_line, chunks.zcontent, chunks.chunk_type
+                FROM fts_index
+                JOIN chunks ON fts_index.chunk_id = chunks.id
+                WHERE fts_index MATCH ? AND fts_index.filepath LIKE ?
+                ORDER BY rank ASC
+                LIMIT ?
+                """,
+                (fts_query, f"{scope_abs}%", k)
+            )
+            rows = cur.fetchall()
+        except Exception:
+            rows = []
+
+        hits = []
+        for r in rows:
+            try:
+                txt = zlib.decompress(r["zcontent"]).decode("utf-8", errors="replace")
+            except Exception:
+                txt = ""
+            hits.append({
+                "file": os.path.relpath(r["filepath"], os.getcwd()),
+                "name": r["name"],
+                "span": [r["start_line"], r["end_line"]],
+                "score": round(-float(r["rank"]), 3) if r["rank"] is not None else 1.0,
+                "snippet": txt[:180].strip()
+            })
+        return hits
+
