@@ -108,8 +108,10 @@ class SkillRouter:
         return {"added": added, "updated": updated, "pruned": pruned, "skipped": skipped}
 
     def route_skills(self, prompt: str, top_k: int = 3,
-                     project: Optional[str] = None, allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+                     project: Optional[str] = None, allowed_projects: Optional[List[str]] = None,
+                     min_confidence: Optional[float] = None) -> List[Dict[str, Any]]:
         """Analyzes prompt intent and returns ranked matching skills within allowed project scopes."""
+        _min_confidence = min_confidence if min_confidence is not None else 0.15
         allowed = get_allowed_projects(project or "global", allowed_projects)
         placeholders = ",".join("?" for _ in allowed)
 
@@ -222,9 +224,9 @@ class SkillRouter:
         if max_score > 0:
             sorted_skills = sorted(scores.items(), key=lambda x: x[1], reverse=True)
             for name, score in sorted_skills[:top_k]:
-                if score < 2.0:
-                    continue
                 confidence = min(0.99, round(score / (max_score + 2.0), 2))
+                if confidence < _min_confidence:
+                    continue
                 sk = all_skills[name]
                 results.append({
                     "name": name,

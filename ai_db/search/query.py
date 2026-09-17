@@ -155,3 +155,65 @@ class QueryEngine:
             })
         return results
 
+    def query_callers(self, symbol_name: str, relative_to: Optional[str] = None,
+                      project: Optional[str] = None,
+                      allowed_projects: Optional[List[str]] = None,
+                      top_k: int = 100) -> List[Dict[str, Any]]:
+        """F2: Find all call sites, imports, and inheritance refs to a given symbol name."""
+        allowed = get_allowed_projects(project or "global", allowed_projects)
+        placeholders = ",".join("?" for _ in allowed)
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                f"""SELECT caller_filepath, caller_name, caller_line, ref_type, project
+                    FROM symbol_refs
+                    WHERE callee_name = ? AND project IN ({placeholders})
+                    ORDER BY caller_filepath, caller_line
+                    LIMIT ?""",
+                [symbol_name] + allowed + [top_k]
+            )
+        except Exception:
+            return []
+        results = []
+        for r in cur.fetchall():
+            path = os.path.relpath(r["caller_filepath"], relative_to) if relative_to else r["caller_filepath"]
+            results.append({
+                "file": path,
+                "caller": r["caller_name"],
+                "line": r["caller_line"],
+                "ref_type": r["ref_type"],
+                "project": r["project"],
+            })
+        return results
+
+    def query_annotations(self, kind: Optional[str] = None,
+                          filepath: Optional[str] = None,
+                          project: Optional[str] = None,
+                          allowed_projects: Optional[List[str]] = None,
+                          top_k: int = 200) -> List[Dict[str, Any]]:
+        """F10: List TODO/FIXME/HACK tags and docstrings, optionally filtered by kind or file."""
+        allowed = get_allowed_projects(project or "global", allowed_projects)
+        placeholders = ",".join("?" for _ in allowed)
+        params: List[Any] = list(allowed)
+        where_clauses = [f"project IN ({placeholders})"]
+        if kind:
+            where_clauses.append("kind = ?")
+            params.append(kind.lower())
+        if filepath:
+            where_clauses.append("filepath = ?")
+            params.append(filepath)
+        params.append(top_k)
+        where_sql = " AND ".join(where_clauses)
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                f"""SELECT filepath, line, kind, symbol, content, project
+                    FROM annotations
+                    WHERE {where_sql}
+                    ORDER BY filepath, line
+                    LIMIT ?""",
+                params
+            )
+        except Exception:
+            return []
+        return [dict(r) for r in cur.fetchall()]

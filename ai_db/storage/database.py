@@ -204,6 +204,48 @@ class Database:
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_analysis_refs_file ON analysis_refs(filepath)")
 
+        # F2: Symbol cross-reference table (call sites, imports, inheritance)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS symbol_refs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                caller_filepath TEXT NOT NULL,
+                caller_name TEXT NOT NULL,
+                caller_line INTEGER NOT NULL,
+                callee_name TEXT NOT NULL,
+                ref_type TEXT NOT NULL,
+                project TEXT DEFAULT 'global'
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_symrefs_callee ON symbol_refs(callee_name)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_symrefs_caller ON symbol_refs(caller_filepath, caller_name)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_symrefs_project ON symbol_refs(project)")
+
+        # F10: Annotations table (TODO/FIXME/HACK tags and docstrings)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS annotations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filepath TEXT NOT NULL,
+                line INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                symbol TEXT,
+                content TEXT NOT NULL,
+                project TEXT DEFAULT 'global'
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_annotations_filepath ON annotations(filepath)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_annotations_kind ON annotations(kind, project)")
+
+        # Schema version tracking — bump SCHEMA_VERSION whenever tables change
+        # to automatically invalidate the semantic cache for all existing installs.
+        SCHEMA_VERSION = "4"
+        stored_ver = get_session_state(self.conn, "schema_version")
+        if stored_ver != SCHEMA_VERSION:
+            try:
+                cur.execute("DELETE FROM semantic_cache")
+            except Exception:
+                pass
+            set_session_state(self.conn, "schema_version", SCHEMA_VERSION)
+
         self.conn.commit()
 
 
@@ -252,7 +294,11 @@ class Database:
             for row in cur.fetchall():
                 fp = row["filepath"]
                 if not os.path.exists(fp):
-                    cur.execute("DELETE FROM files WHERE filepath = ?", (fp,)); cur.execute("DELETE FROM chunks WHERE filepath = ?", (fp,)); cur.execute("DELETE FROM symbols WHERE filepath = ?", (fp,))
+                    cur.execute("DELETE FROM fts_index WHERE filepath = ?", (fp,))
+                    cur.execute("DELETE FROM chunks WHERE filepath = ?", (fp,))
+                    cur.execute("DELETE FROM symbols WHERE filepath = ?", (fp,))
+                    cur.execute("DELETE FROM analysis_refs WHERE filepath = ?", (fp,))
+                    cur.execute("DELETE FROM files WHERE filepath = ?", (fp,))
                     pruned_files += 1
 
         # 2. Merge FTS5 indexes
@@ -277,7 +323,14 @@ class Database:
         except Exception:
             pass
 
-        # 5. Persist default AI output format if provided
+        # 5. Evict stale analysis refs (older than 7 days)
+        import time as _t
+        try:
+            cur.execute("DELETE FROM analysis_refs WHERE timestamp < ?", (_t.time() - 86400 * 7,))
+        except Exception:
+            pass
+
+        # 6. Persist default AI output format if provided
         if default_format:
             norm_fmt = default_format.strip().lower()
             if norm_fmt in ("stub", "sexp", "json", "outline", "prose"):

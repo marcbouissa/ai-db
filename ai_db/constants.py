@@ -1,6 +1,10 @@
 import os
 
-DEFAULT_DB_FILE = os.environ.get("AI_DB_PATH", os.path.expanduser("~/GitRepos/ai-db/codebase_knowledge.db"))
+_xdg_data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+DEFAULT_DB_FILE = os.environ.get(
+    "AI_DB_PATH",
+    os.path.join(_xdg_data, "ai-db", "codebase_knowledge.db")
+)
 DEFAULT_CONFIG_FILE = os.path.expanduser("~/.config/ai-db/config.json")
 DEFAULT_SKILL_DIRS = [
     os.path.expanduser("~/.gemini/config/skills"),
@@ -16,7 +20,19 @@ INDEXABLE_EXTENSIONS = {
 
 # Directories completely ignored (raw binary or runtime garbage)
 HARD_IGNORE_DIRS = {
-    "__pycache__", ".pytest_cache", "coverage", ".turbo", ".next/cache"
+    # Python
+    "__pycache__", ".pytest_cache", ".tox", ".mypy_cache", ".ruff_cache",
+    ".hypothesis", "htmlcov", "coverage", ".eggs", "eggs",
+    # JS/TS
+    "node_modules", ".turbo", ".next", ".nuxt", ".svelte-kit",
+    # Build outputs
+    "dist", "build", "out", "target",
+    # VCS
+    ".git", ".svn", ".hg",
+    # Vendor
+    "vendor",
+    # VMs / envs
+    ".venv", "venv",
 }
 
 # Subpaths to filter out inside node_modules and .venv to prevent noise & bloat

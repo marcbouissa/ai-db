@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import time
 import argparse
 import subprocess
 from typing import List, Dict, Any, Optional
@@ -13,7 +14,8 @@ from ai_db import (
     load_config,
     detect_project_name,
     run_watch,
-    extract_file_outline
+    extract_file_outline,
+    compute_sha256,
 )
 
 def main():
@@ -39,6 +41,8 @@ def main():
     check_p.add_argument("path", nargs="?", default=None, help="Target path or file to check")
     check_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
     check_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
+    check_p.add_argument("--watch", action="store_true", help="Continuously re-check on file changes (F11)")
+    check_p.add_argument("--interval", type=float, default=2.0, help="Poll interval in seconds for --watch mode (default: 2.0)")
     check_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
     # symbol
@@ -69,6 +73,7 @@ def main():
     route_p.add_argument("prompt", help="User prompt or task description to match against skills")
     route_p.add_argument("--top", type=int, default=3, help="Maximum number of skills to return")
     route_p.add_argument("--format", choices=["dense", "json", "path"], default="dense", help="Output format")
+    route_p.add_argument("--min-confidence", type=float, default=None, help="Minimum confidence (0.0–1.0) to include a skill result (default: 0.15)")
     route_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
     route_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
     route_p.add_argument("--db", default=DEFAULT_DB_FILE)
@@ -168,6 +173,34 @@ def main():
     opt_p.add_argument("--default-format", "--fmt", dest="default_format", choices=["stub", "sexp", "json", "outline", "prose"], default=None, help="Configure and persist default output format for future queries")
     opt_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
+    # diff (F5)
+    diff_p = subparsers.add_parser("diff", help="Show changed spans in a file since last indexed version or a git ref")
+    diff_p.add_argument("path", help="File path to diff")
+    diff_p.add_argument("--since", default="last", help="Git commit/branch/tag, or 'last' to diff against stored DB snapshot (default: last)")
+    diff_p.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
+    diff_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # callers (F2)
+    callers_p = subparsers.add_parser("callers", help="Find all call sites / references to a symbol")
+    callers_p.add_argument("name", help="Symbol name to find callers of")
+    callers_p.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
+    callers_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
+    callers_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # todos (F10)
+    todos_p = subparsers.add_parser("todos", help="List TODO/FIXME/HACK annotations across the project")
+    todos_p.add_argument("--kind", choices=["todo", "fixme", "hack", "note", "xxx"], default=None, help="Filter by annotation kind")
+    todos_p.add_argument("--file", default=None, help="Filter by file path")
+    todos_p.add_argument("--format", choices=["text", "json"], default="text")
+    todos_p.add_argument("--project", default=None)
+    todos_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
+    # serve (F8)
+    serve_p = subparsers.add_parser("serve", help="Run HTTP JSON API server")
+    serve_p.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765)")
+    serve_p.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
+    serve_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
     args = parser.parse_args()
 
     if not args.command:
@@ -213,6 +246,7 @@ def main():
             os.dup2(devnull.fileno(), sys.stdin.fileno())
             os.dup2(devnull.fileno(), sys.stdout.fileno())
             os.dup2(devnull.fileno(), sys.stderr.fileno())
+            devnull.close()
 
         run_watch(args.db, args.path, interval=args.interval)
         return
@@ -278,28 +312,53 @@ def main():
                 print(f"  {clean_snippet}")
 
     elif args.command in ("check", "lint"):
-        if args.path:
-            target_path = os.path.abspath(args.path)
-            if os.path.exists(target_path):
-                if os.path.isdir(target_path):
-                    db.sync(target_path, project=active_proj, verbose=False)
-                elif os.path.isfile(target_path):
-                    db.prune_file(target_path)
-                    db._index_file(target_path, compute_sha256(target_path), project=active_proj)
-                    db.conn.commit()
+        def _run_check_once():
+            if args.path:
+                target_path = os.path.abspath(args.path)
+                if os.path.exists(target_path):
+                    if os.path.isdir(target_path):
+                        db.sync(target_path, project=active_proj, verbose=False)
+                    elif os.path.isfile(target_path):
+                        db.prune_file(target_path)
+                        db._index_file(target_path, compute_sha256(target_path), project=active_proj)
+                        db.conn.commit()
+            return db.check_syntax(args.path, relative_to=os.getcwd(),
+                                   project=active_proj, allowed_projects=allowed_projs)
 
-        errors = db.check_syntax(args.path, relative_to=os.getcwd(),
-                                 project=active_proj, allowed_projects=allowed_projs)
-        if not errors:
-            print("No syntax errors detected.")
-            db.close()
-            sys.exit(0)
+        if getattr(args, "watch", False):
+            # F11: continuous watch mode
+            print(f"[ai-db check --watch] Monitoring '{args.path or '.'}' every {args.interval}s. Ctrl-C to stop.")
+            prev_error_keys = set()
+            while True:
+                try:
+                    errors = _run_check_once()
+                    current_keys = {f"{e['file']}:{e['line']}:{e['col']}" for e in errors}
+                    new_keys = current_keys - prev_error_keys
+                    resolved_keys = prev_error_keys - current_keys
+                    for err in errors:
+                        k = f"{err['file']}:{err['line']}:{err['col']}"
+                        if k in new_keys:
+                            print(f"[NEW] SYNTAX_ERROR: {err['file']}:{err['line']}:{err['col']} {err['message']}")
+                    for k in resolved_keys:
+                        print(f"[RESOLVED] {k}")
+                    prev_error_keys = current_keys
+                    time.sleep(args.interval)
+                except KeyboardInterrupt:
+                    print("\n[ai-db check --watch] Stopped.")
+                    break
         else:
-            for err in errors:
-                print(f"SYNTAX_ERROR: {err['file']}:{err['line']}:{err['col']} [{err['project']}] {err['message']}")
-            print(f"Total errors: {len(errors)}")
-            db.close()
-            sys.exit(1)
+            errors = _run_check_once()
+            if not errors:
+                print("No syntax errors detected.")
+                db.close()
+                sys.exit(0)
+            else:
+                for err in errors:
+                    print(f"SYNTAX_ERROR: {err['file']}:{err['line']}:{err['col']} [{err['project']}] {err['message']}")
+                print(f"Total errors: {len(errors)}")
+                db.close()
+                sys.exit(1)
+
 
     elif args.command == "symbol":
         symbols = db.query_symbol(args.name, relative_to=os.getcwd(),
@@ -311,8 +370,10 @@ def main():
                 print(f"@{s['file']}:L{s['line']} ({s['symbol_type']} {s['name']}) [{s['project']}]")
 
     elif args.command in ("route-skill", "suggest-skills", "route"):
+        min_conf = getattr(args, "min_confidence", None)
         matches = db.route_skills(args.prompt, top_k=args.top,
-                                  project=active_proj, allowed_projects=allowed_projs)
+                                  project=active_proj, allowed_projects=allowed_projs,
+                                  min_confidence=min_conf)
         if not matches:
             if args.format == "json":
                 print("[]")
@@ -596,7 +657,74 @@ def main():
         print(f"Size: {res['initial_kb']}KB -> {res['final_kb']}KB (reclaimed: {res['reclaimed_kb']}KB, pruned_files: {res['pruned_files']})")
         print(f"Active default output format: '{res['default_format']}'")
 
+    # F5: diff command
+    elif args.command == "diff":
+        abs_path = os.path.abspath(args.path)
+        if not os.path.exists(abs_path):
+            print(f"Error: File not found: {args.path}", file=sys.stderr)
+            db.close()
+            sys.exit(1)
+        try:
+            with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                current = f.read()
+        except Exception as e:
+            print(f"Error reading file: {e}", file=sys.stderr)
+            db.close()
+            sys.exit(1)
+        diff = db._diff_spans(abs_path, current, since=args.since)
+        if args.format == "json":
+            print(json.dumps(diff, indent=2))
+        else:
+            added = diff.get("added", [])
+            changed = diff.get("changed", [])
+            removed = diff.get("removed", [])
+            if not added and not changed and not removed:
+                print("No changes detected since last indexed version.")
+            else:
+                for span in added:
+                    print(f"+ L{span[0]}-{span[1]}")
+                for span in changed:
+                    print(f"~ L{span[0]}-{span[1]}")
+                for span in removed:
+                    print(f"- L{span[0]}-{span[1]}")
+
+    # F2: callers command
+    elif args.command == "callers":
+        hits = db.query_callers(args.name, relative_to=os.getcwd(),
+                                project=active_proj, allowed_projects=allowed_projs)
+        if not hits:
+            print(f"NO_CALLERS_FOUND: {args.name}")
+        else:
+            for h in hits:
+                print(f"@{h['file']}:L{h['line']} ({h['ref_type']} in {h['caller']}) [{h['project']}]")
+
+    # F10: todos command
+    elif args.command == "todos":
+        hits = db.query_annotations(
+            kind=args.kind,
+            filepath=os.path.abspath(args.file) if args.file else None,
+            project=active_proj
+        )
+        if not hits:
+            print("NO_ANNOTATIONS_FOUND")
+        elif args.format == "json":
+            print(json.dumps(hits, indent=2))
+        else:
+            for h in hits:
+                rel = os.path.relpath(h["filepath"], os.getcwd())
+                sym_str = f" [{h['symbol']}]" if h.get("symbol") else ""
+                print(f"{h['kind'].upper()}: {rel}:L{h['line']}{sym_str} — {h['content']}")
+
+    # F8: serve command
+    elif args.command == "serve":
+        db.close()
+        from ai_db.server.http_server import start_http_server
+        print(f"[ai-db serve] Listening on http://{args.host}:{args.port} | DB: {args.db}")
+        start_http_server(args.db, args.host, args.port)
+        return
+
     db.close()
+
 
 
 if __name__ == "__main__":

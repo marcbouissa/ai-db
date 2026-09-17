@@ -104,8 +104,11 @@ class VectorDB:
         return self.skill_router.sync_skills(skill_dirs=skill_dirs, project=project, verbose=verbose)
 
     def route_skills(self, prompt: str, top_k: int = 3,
-                     project: Optional[str] = None, allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        return self.skill_router.route_skills(prompt, top_k=top_k, project=project, allowed_projects=allowed_projects)
+                     project: Optional[str] = None, allowed_projects: Optional[List[str]] = None,
+                     min_confidence: Optional[float] = None) -> List[Dict[str, Any]]:
+        return self.skill_router.route_skills(prompt, top_k=top_k, project=project,
+                                              allowed_projects=allowed_projects,
+                                              min_confidence=min_confidence)
 
     # Context Memory
     def save_context(self, session_id: str, summary: str, project: Optional[str] = None,
@@ -169,6 +172,33 @@ class VectorDB:
 
     def locate_targets(self, q: str, scope: str = ".", k: int = 5) -> List[Dict[str, Any]]:
         return self.analyzer_engine.locate_targets(q=q, scope=scope, k=k)
+
+    # F2: Cross-reference / callers
+    def query_callers(self, symbol_name: str, relative_to: Optional[str] = None,
+                      project: Optional[str] = None,
+                      allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        return self.query_engine.query_callers(symbol_name, relative_to=relative_to,
+                                               project=project, allowed_projects=allowed_projects)
+
+    # F5: File diff against stored snapshot or git ref
+    def diff_file(self, filepath: str, since: Optional[str] = "last") -> Dict[str, Any]:
+        import os as _os
+        abs_path = _os.path.abspath(_os.path.expanduser(filepath))
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        return self.analyzer_engine.ref_store._diff_spans(abs_path, content, since=since)
+
+    # Internal shortcut used by CLI
+    def _diff_spans(self, filepath: str, content: str, since: Optional[str] = None) -> Dict[str, Any]:
+        return self.analyzer_engine.ref_store._diff_spans(filepath, content, since=since)
+
+    # F10: Annotations / TODOs
+    def query_annotations(self, kind: Optional[str] = None,
+                          filepath: Optional[str] = None,
+                          project: Optional[str] = None,
+                          allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        return self.query_engine.query_annotations(kind=kind, filepath=filepath,
+                                                   project=project, allowed_projects=allowed_projects)
 
 
 def run_watch(db_path: str, target_dir: str, interval: float = 2.0):

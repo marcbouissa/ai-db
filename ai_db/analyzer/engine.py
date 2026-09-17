@@ -8,6 +8,7 @@ import zlib
 import hashlib
 import sqlite3
 from typing import List, Dict, Any, Tuple, Optional
+from ai_db.logger import _logger
 from ai_db.utils import compute_sha256, tokenize
 from ai_db.analyzer.references import ReferenceStore
 
@@ -16,6 +17,19 @@ class AnalyzerEngine:
         self.db = db
         self.conn = db.conn
         self.ref_store = ReferenceStore(self.conn)
+        self._evict_stale_refs()
+
+    def _evict_stale_refs(self):
+        """Evicts analysis refs older than 7 days to prevent unbounded table growth."""
+        try:
+            cur = self.conn.cursor()
+            cur.execute(
+                "DELETE FROM analysis_refs WHERE timestamp < ?",
+                (time.time() - 86400 * 7,)
+            )
+            self.conn.commit()
+        except Exception as e:
+            _logger.debug(f"_evict_stale_refs: {e}")
 
     def _store_analysis_ref(self, filepath: str, name: str, start_line: int, end_line: int, kind: str, body_text: str) -> str:
         return self.ref_store._store_analysis_ref(filepath, name, start_line, end_line, kind, body_text)
@@ -302,7 +316,6 @@ class AnalyzerEngine:
                       ctx_lines: int = 10) -> Dict[str, Any]:
         """F4 Batching + F5 Token Budgeting: Analyzes multiple targets up to n<=32 with cursor continuation."""
         expanded_targets = []
-        import glob
         for t in targets:
             if any(char in t for char in ["*", "?", "["]):
                 matched = glob.glob(os.path.expanduser(t), recursive=True)
