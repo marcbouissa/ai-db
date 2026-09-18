@@ -4,30 +4,24 @@ import re
 import glob
 import json
 import time
-import zlib
 import hashlib
-import sqlite3
 from typing import List, Dict, Any, Tuple, Optional
 from ai_db.logger import _logger
 from ai_db.utils import compute_sha256, tokenize
 from ai_db.analyzer.references import ReferenceStore
 
+
 class AnalyzerEngine:
-    def __init__(self, db):
+    def __init__(self, db: Any):
         self.db = db
-        self.conn = db.conn
-        self.ref_store = ReferenceStore(self.conn)
+        self.backend = getattr(db, "backend", getattr(db, "db", db))
+        self.ref_store = ReferenceStore(db=self.backend)
         self._evict_stale_refs()
 
     def _evict_stale_refs(self):
         """Evicts analysis refs older than 7 days to prevent unbounded table growth."""
         try:
-            cur = self.conn.cursor()
-            cur.execute(
-                "DELETE FROM analysis_refs WHERE timestamp < ?",
-                (time.time() - 86400 * 7,)
-            )
-            self.conn.commit()
+            self.backend.evict_stale_analysis_refs(older_than_seconds=86400 * 7)
         except Exception as e:
             _logger.debug(f"_evict_stale_refs: {e}")
 
@@ -41,10 +35,17 @@ class AnalyzerEngine:
         return self.ref_store._diff_spans(filepath, current_content, since)
 
     def get_session_state(self, key: str) -> Optional[Any]:
-        return self.db.get_session_state(key)
+        if hasattr(self.backend, "get_state"):
+            return self.backend.get_state(key)
+        if hasattr(self.db, "get_session_state"):
+            return self.db.get_session_state(key)
+        return None
 
     def set_session_state(self, key: str, value: Any):
-        return self.db.set_session_state(key, value)
+        if hasattr(self.backend, "set_state"):
+            return self.backend.set_state(key, value)
+        if hasattr(self.db, "set_session_state"):
+            return self.db.set_session_state(key, value)
 
     def analyze_file(self, filepath: str, depth: str = "structure",
                      span: Optional[Tuple[int, int]] = None,
@@ -90,16 +91,11 @@ class AnalyzerEngine:
         cache_key = hashlib.sha256(cache_key_raw.encode("utf-8")).hexdigest()
 
         if not bypass_cache:
-            cur = self.conn.cursor()
-            cur.execute("SELECT result_json, file_hash FROM semantic_cache WHERE cache_key = ?", (cache_key,))
-            cached_row = cur.fetchone()
-            if cached_row and cached_row["file_hash"] == file_hash:
-                try:
-                    res = json.loads(cached_row["result_json"])
-                    res["meta"]["cached"] = True
-                    return res
-                except Exception:
-                    pass
+            cached_res = self.backend.get_semantic_cache(cache_key, file_hash)
+            if cached_res is not None:
+                if isinstance(cached_res, dict) and "meta" in cached_res:
+                    cached_res["meta"]["cached"] = True
+                return cached_res
 
         # F8 Diff Mode check
         diff_info = self._diff_spans(abs_path, content, since) if since else None
@@ -297,13 +293,7 @@ class AnalyzerEngine:
     def _save_to_semantic_cache(self, cache_key: str, file_hash: str, result: Dict[str, Any]):
         """Saves result to semantic cache table."""
         try:
-            cur = self.conn.cursor()
-            cur.execute(
-                """INSERT OR REPLACE INTO semantic_cache (cache_key, file_hash, result_json, timestamp)
-                   VALUES (?, ?, ?, ?)""",
-                (cache_key, file_hash, json.dumps(result), time.time())
-            )
-            self.conn.commit()
+            self.backend.set_semantic_cache(cache_key, file_hash, result)
         except Exception:
             pass
 
@@ -377,43 +367,22 @@ class AnalyzerEngine:
 
     def locate_targets(self, q: str, scope: str = ".", k: int = 5) -> List[Dict[str, Any]]:
         """F10 Relevance Rank: Finds top-k matching files/snippets without dumping entire directory scans."""
-        cur = self.conn.cursor()
         tokens = tokenize(q)
         if not tokens:
             return []
 
-        fts_query = " OR ".join(tokens)
         scope_abs = os.path.abspath(os.path.expanduser(scope))
-
-        try:
-            cur.execute(
-                """
-                SELECT fts_index.filepath, fts_index.name, bm25(fts_index) as rank,
-                       chunks.start_line, chunks.end_line, chunks.zcontent, chunks.chunk_type
-                FROM fts_index
-                JOIN chunks ON fts_index.chunk_id = chunks.id
-                WHERE fts_index MATCH ? AND fts_index.filepath LIKE ?
-                ORDER BY rank ASC
-                LIMIT ?
-                """,
-                (fts_query, f"{scope_abs}%", k)
-            )
-            rows = cur.fetchall()
-        except Exception:
-            rows = []
+        search_results = self.backend.search_chunks(tokens, allowed_projects=None, top_k=k, path_prefix=scope_abs)
 
         hits = []
-        for r in rows:
-            try:
-                txt = zlib.decompress(r["zcontent"]).decode("utf-8", errors="replace")
-            except Exception:
-                txt = ""
+        for r in search_results:
+            snippet = getattr(r, "snippet", "") or ""
+            score = round(float(getattr(r, "score", 1.0)), 3)
             hits.append({
-                "file": os.path.relpath(r["filepath"], os.getcwd()),
-                "name": r["name"],
-                "span": [r["start_line"], r["end_line"]],
-                "score": round(-float(r["rank"]), 3) if r["rank"] is not None else 1.0,
-                "snippet": txt[:180].strip()
+                "file": os.path.relpath(r.filepath, os.getcwd()),
+                "name": r.name,
+                "span": [r.start_line, r.end_line],
+                "score": score,
+                "snippet": snippet[:180].strip()
             })
         return hits
-

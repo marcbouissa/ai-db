@@ -14,14 +14,17 @@ from ai_db import (
     load_config,
     detect_project_name,
     run_watch,
-    extract_file_outline,
-    compute_sha256,
     __version__,
 )
+from ai_db.dispatcher import ServiceDispatcher
 
-def main(argv: Optional[List[str]] = None):
-    parser = argparse.ArgumentParser(description="ai-db: Token-Optimized Vector DB & Code Index")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="ai-db",
+        description="ai-db: Token-Optimized Vector DB & Code Index"
+    )
+    parser.add_argument("--version", action="version", version=f"ai-db {__version__}")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # sync
@@ -57,6 +60,7 @@ def main(argv: Optional[List[str]] = None):
     # outline
     outline_p = subparsers.add_parser("outline", help="File outline / skeleton extraction")
     outline_p.add_argument("path", help="Filepath to extract outline from")
+    outline_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
     # watch
     watch_p = subparsers.add_parser("watch", help="Watch directory and auto-sync on changes")
@@ -149,93 +153,86 @@ def main(argv: Optional[List[str]] = None):
     expand_p.add_argument("--format", choices=["json", "raw"], default="json", help="Output format")
     expand_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
-    # locate (F10 relevance rank)
-    locate_p = subparsers.add_parser("locate", help="Locate top-k target files/snippets by question")
-    locate_p.add_argument("query", help="Question or concept to locate")
-    locate_p.add_argument("--scope", default=".", help="Repository or directory scope (default: .)")
-    locate_p.add_argument("-k", type=int, default=5, help="Number of results to return (default: 5)")
-    locate_p.add_argument("--format", "--fmt", dest="format", choices=["json", "stub", "sexp"], default=None, help="Output format (default: active DB default, initially 'stub')")
+    # locate
+    locate_p = subparsers.add_parser("locate", help="Locate files and snippet spans for a question")
+    locate_p.add_argument("query", help="Question or concept to search for")
+    locate_p.add_argument("--scope", default=".", help="Directory scope to restrict search (default: .)")
+    locate_p.add_argument("-k", type=int, default=5, help="Number of target candidates (default: 5)")
+    locate_p.add_argument("--format", "--fmt", dest="format", choices=["json", "stub", "sexp"], default=None, help="Output format")
     locate_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
-    # mcp server runner
-    mcp_p = subparsers.add_parser("mcp", help="Run JSON-RPC 2.0 stdio MCP server for agent tool calls")
+    # mcp (JSON-RPC MCP Server)
+    mcp_p = subparsers.add_parser("mcp", help="Run stdio JSON-RPC MCP server for Claude/Cursor/Antigravity")
     mcp_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
     # status
-    status_p = subparsers.add_parser("status", help="Inspect database health and status")
+    status_p = subparsers.add_parser("status", help="Show database statistics and index health")
     status_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
     # prune
-    prune_p = subparsers.add_parser("prune", help="Prune deleted files")
+    prune_p = subparsers.add_parser("prune", help="Remove dead/deleted files from the index")
     prune_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
-    # optimize
-    opt_p = subparsers.add_parser("optimize", aliases=["vacuum"], help="Optimize DB: merge FTS5 index, run query planner optimization, and vacuum")
+    # optimize / vacuum
+    opt_p = subparsers.add_parser("optimize", aliases=["vacuum"], help="Defragment database and optimize FTS index")
     opt_p.add_argument("--no-prune", action="store_true", help="Skip pruning missing files before vacuum")
-    opt_p.add_argument("--default-format", "--fmt", dest="default_format", choices=["stub", "sexp", "json", "outline", "prose"], default=None, help="Configure and persist default output format for future queries")
+    opt_p.add_argument("--default-format", choices=["stub", "sexp", "json", "outline", "prose"], default=None, help="Configure and persist default output format for future queries")
     opt_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
-    # diff (F5)
-    diff_p = subparsers.add_parser("diff", help="Show changed spans in a file since last indexed version or a git ref")
-    diff_p.add_argument("path", help="File path to diff")
-    diff_p.add_argument("--since", default="last", help="Git commit/branch/tag, or 'last' to diff against stored DB snapshot (default: last)")
+    # diff
+    diff_p = subparsers.add_parser("diff", help="Show changed line spans in a file since last index or git ref")
+    diff_p.add_argument("path", help="Path to file to diff")
+    diff_p.add_argument("--since", default="last", help="Git ref/hash/timestamp to compare against, or 'last' for DB snapshot (default: last)")
     diff_p.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
     diff_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
-    # callers (F2)
-    callers_p = subparsers.add_parser("callers", help="Find all call sites / references to a symbol")
+    # callers
+    callers_p = subparsers.add_parser("callers", help="Find all callers/references to a symbol")
     callers_p.add_argument("name", help="Symbol name to find callers of")
     callers_p.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
     callers_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
     callers_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
-    # todos (F10)
-    todos_p = subparsers.add_parser("todos", help="List TODO/FIXME/HACK annotations across the project")
+    # todos
+    todos_p = subparsers.add_parser("todos", help="List TODO/FIXME/HACK annotations")
     todos_p.add_argument("--kind", choices=["todo", "fixme", "hack", "note", "xxx"], default=None, help="Filter by annotation kind")
-    todos_p.add_argument("--file", default=None, help="Filter by file path")
-    todos_p.add_argument("--format", choices=["text", "json"], default="text")
-    todos_p.add_argument("--project", default=None)
+    todos_p.add_argument("--file", default=None, help="Filter by specific file path")
+    todos_p.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
+    todos_p.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
     todos_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
-    # serve (F8)
+    # serve (HTTP JSON API server)
     serve_p = subparsers.add_parser("serve", help="Run HTTP JSON API server")
     serve_p.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765)")
     serve_p.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
     serve_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
+    # telemetry
+    telemetry_p = subparsers.add_parser("telemetry", help="View performance and token compression telemetry")
+    telemetry_p.add_argument("--reset", action="store_true", help="Reset accumulated telemetry metrics")
+    telemetry_p.add_argument("--format", "--fmt", dest="format", choices=["dense", "json"], default="dense", help="Output format")
+    telemetry_p.add_argument("--db", default=DEFAULT_DB_FILE)
+
     args = parser.parse_args(argv)
 
     if not args.command:
         parser.print_help()
-        sys.exit(1)
+        return 0
 
-    # Handle outline (pure file inspection without requiring DB)
-    if args.command == "outline":
-        target_path = os.path.abspath(args.path)
-        if not os.path.exists(target_path):
-            print(f"Error: File not found: {args.path}", file=sys.stderr)
-            sys.exit(1)
-        try:
-            with open(target_path, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
-        except Exception as e:
-            print(f"Error reading file {args.path}: {e}", file=sys.stderr)
-            sys.exit(1)
+    # Transport and long-running server/daemon commands
+    if args.command == "mcp":
+        import mcp_server
+        mcp_server.run_stdio(DEFAULT_DB_FILE if args.db == DEFAULT_DB_FILE else args.db)
+        return 0
 
-        total_lines = len(content.splitlines())
-        outline = extract_file_outline(target_path, content)
-        rel_disp = os.path.relpath(target_path, os.getcwd())
-        print(f"File: {rel_disp} ({total_lines} lines)")
-        if not outline:
-            print("  (no top-level symbols identified)")
-        else:
-            for lineno, label in outline:
-                print(f"  L{lineno}: {label}")
-        return
+    if args.command == "serve":
+        from ai_db.server.http_server import start_http_server
+        print(f"[ai-db serve] Listening on http://{args.host}:{args.port} | DB: {args.db}")
+        start_http_server(args.db, args.host, args.port)
+        return 0
 
-    # Handle watch daemon mode
     if args.command == "watch":
-        if args.daemon:
+        if getattr(args, "daemon", False):
             if os.fork() > 0:
                 print(f"[ai-db watch] Daemon started in background for '{args.path}'")
                 sys.exit(0)
@@ -251,7 +248,10 @@ def main(argv: Optional[List[str]] = None):
             devnull.close()
 
         run_watch(args.db, args.path, interval=args.interval)
-        return
+        return 0
+
+    # Initialize unified ServiceDispatcher for all domain service commands
+    dispatcher = ServiceDispatcher(db_path=args.db)
 
     # Handle sync-all
     if args.command == "sync-all":
@@ -260,9 +260,9 @@ def main(argv: Optional[List[str]] = None):
         if not paths:
             print(f"No paths configured in {args.config}. Example format:")
             print(json.dumps({"auto_sync_paths": ["~/projects/my-project"]}, indent=2))
-            sys.exit(0)
+            dispatcher.close()
+            return 0
 
-        db = VectorDB(args.db)
         total_added = total_updated = total_pruned = total_skipped = 0
         for p in paths:
             expanded = os.path.abspath(os.path.expanduser(p))
@@ -270,17 +270,15 @@ def main(argv: Optional[List[str]] = None):
                 print(f"Skipping non-existent path: {p}")
                 continue
             print(f"Syncing: {p}...")
-            res = db.sync(expanded, verbose=True)
+            res = dispatcher.execute("sync", {"path": expanded, "verbose": True})
             total_added += res["added"]
             total_updated += res["updated"]
             total_pruned += res["pruned"]
             total_skipped += res["skipped"]
 
-        db.close()
+        dispatcher.close()
         print(f"Total: +{total_added} ~{total_updated} -{total_pruned} ={total_skipped}")
-        return
-
-    db = VectorDB(args.db)
+        return 0
 
     # Auto-detect project scope from CWD if not provided
     active_proj = getattr(args, "project", None) or detect_project_name(os.getcwd())
@@ -289,22 +287,16 @@ def main(argv: Optional[List[str]] = None):
     if args.command == "sync":
         target_path = os.path.abspath(args.path)
         proj_name = args.project or detect_project_name(target_path)
-        if os.path.isdir(target_path):
-            res = db.sync(target_path, project=proj_name)
-            print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
-        elif os.path.isfile(target_path):
-            current_sha = compute_sha256(target_path)
-            db.prune_file(target_path)
-            db._index_file(target_path, current_sha, project=proj_name)
-            db.conn.commit()
-            print(f"+1 ~0 -0 =0")
-        else:
-            res = db.sync(target_path, project=proj_name)
-            print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
+        res = dispatcher.execute("sync", {"path": target_path, "project": proj_name, "verbose": True})
+        print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
 
     elif args.command == "query":
-        hits = db.query(args.search, top_k=args.top, relative_to=os.getcwd(),
-                        project=active_proj, allowed_projects=allowed_projs)
+        hits = dispatcher.execute("query", {
+            "query": args.search,
+            "top": args.top,
+            "project": active_proj,
+            "allow_project": allowed_projs
+        })
         if not hits:
             print("NO_HITS")
         else:
@@ -314,26 +306,16 @@ def main(argv: Optional[List[str]] = None):
                 print(f"  {clean_snippet}")
 
     elif args.command in ("check", "lint"):
-        def _run_check_once():
-            if args.path:
-                target_path = os.path.abspath(args.path)
-                if os.path.exists(target_path):
-                    if os.path.isdir(target_path):
-                        db.sync(target_path, project=active_proj, verbose=False)
-                    elif os.path.isfile(target_path):
-                        db.prune_file(target_path)
-                        db._index_file(target_path, compute_sha256(target_path), project=active_proj)
-                        db.conn.commit()
-            return db.check_syntax(args.path, relative_to=os.getcwd(),
-                                   project=active_proj, allowed_projects=allowed_projs)
-
         if getattr(args, "watch", False):
-            # F11: continuous watch mode
             print(f"[ai-db check --watch] Monitoring '{args.path or '.'}' every {args.interval}s. Ctrl-C to stop.")
             prev_error_keys = set()
             while True:
                 try:
-                    errors = _run_check_once()
+                    errors = dispatcher.execute("check", {
+                        "path": args.path,
+                        "project": active_proj,
+                        "allow_project": allowed_projs
+                    })
                     current_keys = {f"{e['file']}:{e['line']}:{e['col']}" for e in errors}
                     new_keys = current_keys - prev_error_keys
                     resolved_keys = prev_error_keys - current_keys
@@ -349,33 +331,55 @@ def main(argv: Optional[List[str]] = None):
                     print("\n[ai-db check --watch] Stopped.")
                     break
         else:
-            errors = _run_check_once()
+            errors = dispatcher.execute("check", {
+                "path": args.path,
+                "project": active_proj,
+                "allow_project": allowed_projs
+            })
             if not errors:
                 print("No syntax errors detected.")
-                db.close()
-                sys.exit(0)
+                dispatcher.close()
+                return 0
             else:
                 for err in errors:
                     print(f"SYNTAX_ERROR: {err['file']}:{err['line']}:{err['col']} [{err['project']}] {err['message']}")
                 print(f"Total errors: {len(errors)}")
-                db.close()
+                dispatcher.close()
                 sys.exit(1)
 
-
     elif args.command == "symbol":
-        symbols = db.query_symbol(args.name, relative_to=os.getcwd(),
-                                  project=active_proj, allowed_projects=allowed_projs)
+        symbols = dispatcher.execute("symbol", {
+            "name": args.name,
+            "project": active_proj,
+            "allow_project": allowed_projs
+        })
         if not symbols:
             print(f"NO_SYMBOLS_FOUND: {args.name}")
         else:
             for s in symbols:
                 print(f"@{s['file']}:L{s['line']} ({s['symbol_type']} {s['name']}) [{s['project']}]")
 
+    elif args.command == "outline":
+        target_path = os.path.abspath(args.path)
+        if not os.path.exists(target_path):
+            print(f"Error: File not found: {args.path}", file=sys.stderr)
+            dispatcher.close()
+            sys.exit(1)
+        out = dispatcher.execute("outline", {"path": target_path})
+        total_lines = out.get("lines", 0)
+        print(f"=== {out['file']} ({total_lines} lines) ===")
+        for item in out.get("outline", []):
+            print(f"  L{item['line']:<4} {item['label']}")
+
     elif args.command in ("route-skill", "suggest-skills", "route"):
         min_conf = getattr(args, "min_confidence", None)
-        matches = db.route_skills(args.prompt, top_k=args.top,
-                                  project=active_proj, allowed_projects=allowed_projs,
-                                  min_confidence=min_conf)
+        matches = dispatcher.execute("route_skill", {
+            "prompt": args.prompt,
+            "top": args.top,
+            "min_confidence": min_conf if min_conf is not None else 0.0,
+            "project": active_proj,
+            "allow_project": allowed_projs
+        })
         if not matches:
             if args.format == "json":
                 print("[]")
@@ -391,19 +395,18 @@ def main(argv: Optional[List[str]] = None):
                 for idx, m in enumerate(matches, 1):
                     prefix = "PRIMARY" if idx == 1 else f"SECONDARY #{idx}"
                     rel_p = os.path.relpath(m["filepath"], os.getcwd())
-                    reasons_str = "; ".join(m["reasons"])
+                    reasons_str = "; ".join(m.get("reasons", []))
                     print(f"[{prefix}] {m['name']} (conf: {m['confidence']}) [{m.get('project', 'global')}] -> {rel_p}")
                     print(f"  Reason: {reasons_str}")
-                    if m["description"]:
+                    if m.get("description"):
                         print(f"  Desc: {m['description'][:140]}...")
 
     elif args.command == "sync-skills":
-        res = db.sync_skills(skill_dirs=args.dir, project=args.project, verbose=True)
+        res = dispatcher.execute("sync_skills", {"skill_dirs": args.dir, "project": args.project})
         print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
 
     elif args.command in ("context", "ctx"):
         if args.ctx_action == "save":
-            # Flatten file and task lists in case comma-separated values are used
             files_list = []
             for f in args.files:
                 files_list.extend([x.strip() for x in f.split(",") if x.strip()])
@@ -411,45 +414,52 @@ def main(argv: Optional[List[str]] = None):
             for t in args.tasks:
                 tasks_list.extend([x.strip() for x in t.split(",") if x.strip()])
 
-            res = db.save_context(
-                session_id=args.session_id,
-                summary=args.summary,
-                project=active_proj,
-                title=args.title,
-                active_files=files_list,
-                open_tasks=tasks_list,
-                full_notes=args.notes
-            )
+            res = dispatcher.execute("context_save", {
+                "session_id": args.session_id,
+                "summary": args.summary,
+                "project": active_proj,
+                "title": args.title,
+                "active_files": files_list,
+                "open_tasks": tasks_list,
+                "notes": args.notes
+            })
             print(f"[ai-db context] Saved session '{res['session_id']}' for project '{res['project']}'")
 
         elif args.ctx_action == "get":
-            ctx = db.get_context(session_id=args.session_id, project=active_proj, allowed_projects=allowed_projs)
-            if not ctx:
+            ctx = dispatcher.execute("context_recall", {
+                "session_id": args.session_id,
+                "project": active_proj,
+                "allow_project": allowed_projs
+            })
+            if not ctx or not ctx.get("summary"):
                 print("NO_CONTEXT_FOUND")
             else:
                 if args.format == "json":
                     print(json.dumps(ctx, indent=2))
                 elif args.format == "dense":
-                    print(f"[{ctx['project']}:{ctx['session_id']}] {ctx['title']} | Files: {len(ctx['active_files'])} | Tasks: {len(ctx['open_tasks'])}")
+                    print(f"[{ctx['project']}:{ctx['session_id']}] {ctx['title']} | Files: {len(ctx.get('active_files', []))} | Tasks: {len(ctx.get('open_tasks', []))}")
                     print(f"Summary: {ctx['summary']}")
                 else:
-                    # Markdown format optimized for LLM /remeber injection
                     print(f"### [Context Memory: {ctx['project']} / {ctx['session_id']}]")
                     print(f"**Title**: {ctx['title']}")
                     print(f"**Summary**: {ctx['summary']}")
-                    if ctx['active_files']:
+                    if ctx.get('active_files'):
                         print("\n**Active Files**:")
                         for f in ctx['active_files']:
                             print(f"- {f}")
-                    if ctx['open_tasks']:
+                    if ctx.get('open_tasks'):
                         print("\n**Pending Tasks**:")
                         for idx, t in enumerate(ctx['open_tasks'], 1):
                             print(f"{idx}. {t}")
-                    if ctx['full_notes'] and ctx['full_notes'] != ctx['summary']:
+                    if ctx.get('full_notes') and ctx['full_notes'] != ctx['summary']:
                         print(f"\n**Notes & Decisions**:\n{ctx['full_notes']}")
 
         elif args.ctx_action == "list":
-            contexts = db.list_contexts(project=active_proj, allowed_projects=allowed_projs)
+            contexts = dispatcher.execute("context_recall", {
+                "list": True,
+                "project": active_proj,
+                "allow_project": allowed_projs
+            })
             if not contexts:
                 print("NO_SAVED_CONTEXTS")
             else:
@@ -458,7 +468,11 @@ def main(argv: Optional[List[str]] = None):
                     print(f"[{c['project']}] {c['session_id']} ({date_str}) - {c['title']} ({c['active_files_count']} files, {c['open_tasks_count']} tasks)")
 
         elif args.ctx_action == "query":
-            hits = db.query_contexts(args.search, project=active_proj, allowed_projects=allowed_projs, top_k=args.top)
+            hits = dispatcher.execute("context_recall", {
+                "query": args.search,
+                "project": active_proj,
+                "allow_project": allowed_projs
+            })
             if not hits:
                 print("NO_HITS")
             else:
@@ -469,22 +483,26 @@ def main(argv: Optional[List[str]] = None):
             ctx_p.print_help()
 
     elif args.command == "remember":
-        ctx = db.get_context(session_id=args.session_id, project=active_proj, allowed_projects=allowed_projs)
-        if not ctx:
+        ctx = dispatcher.execute("context_recall", {
+            "session_id": args.session_id,
+            "project": active_proj,
+            "allow_project": allowed_projs
+        })
+        if not ctx or not ctx.get("summary"):
             print("NO_CONTEXT_FOUND")
         else:
             print(f"### [ai-db Context Memory: {ctx['project']} / {ctx['session_id']}]")
             print(f"**Title**: {ctx['title']}")
             print(f"**Summary**: {ctx['summary']}")
-            if ctx['active_files']:
+            if ctx.get('active_files'):
                 print("\n**Active Files**:")
                 for f in ctx['active_files']:
                     print(f"- {f}")
-            if ctx['open_tasks']:
+            if ctx.get('open_tasks'):
                 print("\n**Pending Tasks**:")
                 for idx, t in enumerate(ctx['open_tasks'], 1):
                     print(f"{idx}. {t}")
-            if ctx['full_notes'] and ctx['full_notes'] != ctx['summary']:
+            if ctx.get('full_notes') and ctx['full_notes'] != ctx['summary']:
                 print(f"\n**Notes & Decisions**:\n{ctx['full_notes']}")
 
     elif args.command == "analyze":
@@ -495,58 +513,45 @@ def main(argv: Optional[List[str]] = None):
                 parsed_span = (int(parts[0]), int(parts[1]))
             else:
                 print(f"Error: Invalid --span format '{args.span}'. Expected START:END (e.g. 50:120)", file=sys.stderr)
-                db.close()
+                dispatcher.close()
                 sys.exit(1)
 
         targets = args.targets
         if not targets:
-            # If no target specified, check if last session had targets
-            last_analysis = db.get_session_state("last_analysis")
+            db_inst = dispatcher._get_db({"db": args.db})
+            last_analysis = db_inst.get_session_state("last_analysis") if hasattr(db_inst, "get_session_state") else None
             if last_analysis and "targets" in last_analysis:
                 targets = last_analysis["targets"]
             else:
                 targets = ["."]
 
-        if len(targets) == 1 and not any(c in targets[0] for c in ["*", "?", "["]) and os.path.isfile(os.path.expanduser(targets[0])):
-            res = db.analyze_file(
-                targets[0],
-                depth=args.depth,
-                span=parsed_span,
-                focus=args.focus,
-                q=args.question,
-                since=args.since,
-                ctx_lines=args.ctx,
-                no_cache=args.no_cache
-            )
-            # Wrap in batch-like structure if max_out budgeting was requested
-            if args.max_out and res["meta"]["tokens_out"] > args.max_out:
-                res["meta"]["truncated"] = True
-                res["symbols"] = res["symbols"][:max(1, len(res["symbols"]) // 2)]
-            output_data = res
-        else:
-            output_data = db.analyze_batch(
-                targets=targets,
-                depth=args.depth,
-                q=args.question,
-                focus=args.focus,
-                span=parsed_span,
-                since=args.since,
-                max_out=args.max_out,
-                cursor=args.cursor,
-                ctx_lines=args.ctx
-            )
+        output_data = dispatcher.execute("analyze", {
+            "targets": targets,
+            "depth": args.depth,
+            "span": parsed_span,
+            "focus": args.focus,
+            "q": args.question,
+            "since": args.since,
+            "ctx_lines": args.ctx,
+            "max_out": args.max_out,
+            "cursor": args.cursor,
+            "no_cache": args.no_cache,
+            "format": args.format
+        })
 
-        # Dynamic format resolution: CLI --fmt override > DB persistent default > 'stub'
-        effective_fmt = args.format or db.get_session_state("default_format") or "stub"
+        db_inst = dispatcher._get_db({"db": args.db})
+        default_fmt = db_inst.get_session_state("default_format") if hasattr(db_inst, "get_session_state") else None
+        effective_fmt = args.format or default_fmt or "stub"
 
-        if effective_fmt == "json":
+        if isinstance(output_data, str):
+            print(output_data)
+        elif effective_fmt == "json":
             print(json.dumps(output_data, indent=2))
         elif effective_fmt == "stub":
             print(VectorDB.format_as_stub(output_data))
         elif effective_fmt == "sexp":
             print(VectorDB.format_as_sexp(output_data))
         elif effective_fmt == "outline":
-            # Compact outline format
             items = output_data.get("symbols", []) if "symbols" in output_data else []
             if not items and "results" in output_data:
                 for fpath, fres in output_data["results"].items():
@@ -561,7 +566,6 @@ def main(argv: Optional[List[str]] = None):
                     span_str = f"L{s['span'][0]}-L{s['span'][1]}" if "span" in s else ""
                     print(f"[{s.get('ref', '')}] {span_str:10} {sig}")
         else:
-            # Prose / markdown format
             meta = output_data.get("meta", {})
             print(f"### Analysis Result ({meta.get('tokens_out', 0)} tokens, cached={meta.get('cached', False)})")
             if "symbols" in output_data:
@@ -585,13 +589,18 @@ def main(argv: Optional[List[str]] = None):
                 parsed_span = (int(parts[0]), int(parts[1]))
             else:
                 print(f"Error: Invalid --span format '{args.span}'. Expected START:END", file=sys.stderr)
-                db.close()
+                dispatcher.close()
                 sys.exit(1)
 
-        exp = db.expand_ref(args.ref, depth=args.depth, span=parsed_span)
-        if not exp:
-            print(f"Error: Ref '{args.ref}' not found or expired", file=sys.stderr)
-            db.close()
+        try:
+            exp = dispatcher.execute("expand", {
+                "ref": args.ref,
+                "depth": args.depth,
+                "span": parsed_span
+            })
+        except Exception as e:
+            print(f"Error: Ref '{args.ref}' not found or expired: {e}", file=sys.stderr)
+            dispatcher.close()
             sys.exit(1)
 
         if args.format == "json":
@@ -600,11 +609,20 @@ def main(argv: Optional[List[str]] = None):
             print(exp.get("body", ""))
 
     elif args.command == "locate":
-        hits = db.locate_targets(args.query, scope=args.scope, k=args.k)
+        hits = dispatcher.execute("locate", {
+            "query": args.query,
+            "scope": args.scope,
+            "k": args.k,
+            "format": args.format
+        })
         if not hits:
             print("NO_LOCATE_HITS")
+        elif isinstance(hits, str):
+            print(hits)
         else:
-            effective_fmt = args.format or db.get_session_state("default_format") or "stub"
+            db_inst = dispatcher._get_db({"db": args.db})
+            default_fmt = db_inst.get_session_state("default_format") if hasattr(db_inst, "get_session_state") else None
+            effective_fmt = args.format or default_fmt or "stub"
             if effective_fmt == "stub":
                 for h in hits:
                     span_str = f"L{h['span'][0]}-{h['span'][1]}" if h.get("span") else ""
@@ -625,63 +643,33 @@ def main(argv: Optional[List[str]] = None):
             else:
                 print(json.dumps(hits, indent=2))
 
-    elif args.command == "mcp":
-        # Launch stdio JSON-RPC MCP server
-        db.close()
-        import mcp_server
-        mcp_server.run_stdio(DEFAULT_DB_FILE if args.db == DEFAULT_DB_FILE else args.db)
-        return
-
     elif args.command == "status":
-        s = db.status()
-        active_fmt = db.get_session_state("default_format") or "stub"
+        s = dispatcher.execute("status", {})
+        db_inst = dispatcher._get_db({"db": args.db})
+        active_fmt = db_inst.get_session_state("default_format") if hasattr(db_inst, "get_session_state") else "stub"
         skills_str = f" | skills:{s.get('skills', 0)}" if "skills" in s else ""
         contexts_str = f" | contexts:{s.get('contexts', 0)}" if "contexts" in s else ""
         print(f"db:{s['db']} | files:{s['files']} | chunks:{s['chunks']} | symbols:{s['symbols']} | syntax_errors:{s['syntax_errors']}{skills_str}{contexts_str} | size:{s['kb']}KB | default_format:{active_fmt}")
 
     elif args.command == "prune":
-        backend = getattr(db, "backend", getattr(db, "db", db))
-        if hasattr(backend, "get_all_filepaths"):
-            all_paths = backend.get_all_filepaths()
-        elif hasattr(db, "get_all_filepaths"):
-            all_paths = db.get_all_filepaths()
-        else:
-            all_paths = []
-        pruned_count = 0
-        for p in all_paths:
-            if not os.path.exists(p):
-                if hasattr(backend, "delete_file"):
-                    backend.delete_file(p)
-                elif hasattr(db, "delete_file"):
-                    db.delete_file(p)
-                elif hasattr(db, "prune_file"):
-                    db.prune_file(p)
-                pruned_count += 1
-        print(f"pruned:{pruned_count}")
+        res = dispatcher.execute("prune", {})
+        print(f"pruned:{res['pruned']}")
 
     elif args.command in ("optimize", "vacuum"):
         prune_flag = not getattr(args, "no_prune", False)
         def_fmt = getattr(args, "default_format", None)
-        res = db.optimize(prune_missing=prune_flag, default_format=def_fmt)
+        res = dispatcher.execute("optimize", {"prune_missing": prune_flag, "default_format": def_fmt})
         print(f"[ai-db optimize] Merged FTS indexes, updated planner stats & vacuumed.")
         print(f"Size: {res['initial_kb']}KB -> {res['final_kb']}KB (reclaimed: {res['reclaimed_kb']}KB, pruned_files: {res['pruned_files']})")
         print(f"Active default output format: '{res['default_format']}'")
 
-    # F5: diff command
     elif args.command == "diff":
         abs_path = os.path.abspath(args.path)
         if not os.path.exists(abs_path):
             print(f"Error: File not found: {args.path}", file=sys.stderr)
-            db.close()
+            dispatcher.close()
             sys.exit(1)
-        try:
-            with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
-                current = f.read()
-        except Exception as e:
-            print(f"Error reading file: {e}", file=sys.stderr)
-            db.close()
-            sys.exit(1)
-        diff = db._diff_spans(abs_path, current, since=args.since)
+        diff = dispatcher.execute("diff", {"path": abs_path, "since": args.since})
         if args.format == "json":
             print(json.dumps(diff, indent=2))
         else:
@@ -698,23 +686,24 @@ def main(argv: Optional[List[str]] = None):
                 for span in removed:
                     print(f"- L{span[0]}-{span[1]}")
 
-    # F2: callers command
     elif args.command == "callers":
-        hits = db.query_callers(args.name, relative_to=os.getcwd(),
-                                project=active_proj, allowed_projects=allowed_projs)
+        hits = dispatcher.execute("callers", {
+            "name": args.name,
+            "project": active_proj,
+            "allow_project": allowed_projs
+        })
         if not hits:
             print(f"NO_CALLERS_FOUND: {args.name}")
         else:
             for h in hits:
                 print(f"@{h['file']}:L{h['line']} ({h['ref_type']} in {h['caller']}) [{h['project']}]")
 
-    # F10: todos command
     elif args.command == "todos":
-        hits = db.query_annotations(
-            kind=args.kind,
-            filepath=os.path.abspath(args.file) if args.file else None,
-            project=active_proj
-        )
+        hits = dispatcher.execute("todos", {
+            "kind": args.kind,
+            "filepath": os.path.abspath(args.file) if args.file else None,
+            "project": active_proj
+        })
         if not hits:
             print("NO_ANNOTATIONS_FOUND")
         elif args.format == "json":
@@ -725,18 +714,27 @@ def main(argv: Optional[List[str]] = None):
                 sym_str = f" [{h['symbol']}]" if h.get("symbol") else ""
                 print(f"{h['kind'].upper()}: {rel}:L{h['line']}{sym_str} — {h['content']}")
 
-    # F8: serve command
-    elif args.command == "serve":
-        db.close()
-        from ai_db.server.http_server import start_http_server
-        print(f"[ai-db serve] Listening on http://{args.host}:{args.port} | DB: {args.db}")
-        start_http_server(args.db, args.host, args.port)
-        return
+    elif args.command == "telemetry":
+        res = dispatcher.execute("telemetry", {"reset": getattr(args, "reset", False)})
+        if getattr(args, "reset", False):
+            print("Telemetry metrics reset.")
+        elif getattr(args, "format", "dense") == "json":
+            print(json.dumps(res, indent=2))
+        else:
+            print("=== Telemetry Dashboard ===")
+            tokens = res.get("tokens", res.get("token_savings", {}))
+            latency = res.get("latency", {})
+            cache = res.get("cache", {})
+            weak = res.get("weak_points", {})
+            print(f"Token Savings: {tokens.get('net_saved_tokens', tokens.get('net_tokens_saved', 0))} tokens saved ({tokens.get('savings_pct', tokens.get('reduction_pct', 0.0))}%)")
+            print(f"Query Latency: avg={latency.get('avg_ms', latency.get('avg_latency_ms', 0.0))}ms, p50={latency.get('p50_ms', 0.0)}ms, p95={latency.get('p95_ms', 0.0)}ms")
+            print(f"Cache Performance: {cache.get('hits', 0)} hits / {cache.get('lookups', 0)} lookups ({cache.get('hit_rate_pct', 0.0)}%)")
+            if weak:
+                print(f"Weak Points: {weak.get('syntax_errors', 0)} syntax errors, {len(weak.get('complexity_hotspots', []))} hotspots")
 
-    db.close()
-
+    dispatcher.close()
+    return 0
 
 
 if __name__ == "__main__":
     main()
-

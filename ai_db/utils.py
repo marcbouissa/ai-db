@@ -61,7 +61,7 @@ def compute_sha256(filepath: str) -> str:
 
 def tokenize(text: str) -> List[str]:
     s1 = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
-    tokens = re.findall(r"[A-Za-z0-9_]{2,}", s1.lower())
+    tokens = re.findall(r"\w{2,}", s1.lower())
     return tokens
 
 def strip_code_bloat(text: str) -> str:

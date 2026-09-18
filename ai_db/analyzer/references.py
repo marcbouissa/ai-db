@@ -1,47 +1,50 @@
 import os
 import time
-import zlib
 import difflib
 import hashlib
-import sqlite3
 from typing import Dict, Any, Tuple, Optional
 from ai_db.logger import _logger
+from ai_db.storage.models import AnalysisRefRecord
+
 
 class ReferenceStore:
-    def __init__(self, conn: sqlite3.Connection):
-        self.conn = conn
+    def __init__(self, db: Any = None, conn: Any = None):
+        self.db = db if db is not None else conn
 
-    def _store_analysis_ref(self, filepath: str, name: str, start_line: int, end_line: int,
-                            kind: str, body_text: str) -> str:
+    def _store_analysis_ref(
+        self, filepath: str, name: str, start_line: int, end_line: int,
+        kind: str, body_text: str
+    ) -> str:
         """Stores a node body in analysis_refs and returns an opaque handle `ref:<sha1_hex>`."""
         hasher = hashlib.sha1()
         hasher.update(f"{filepath}:{start_line}:{end_line}:{body_text}".encode("utf-8"))
         ref_id = f"ref:{hasher.hexdigest()[:8]}"
-        zbody = zlib.compress(body_text.encode("utf-8"), level=9)
-        cur = self.conn.cursor()
-        cur.execute(
-            """INSERT OR REPLACE INTO analysis_refs (ref_id, filepath, name, start_line, end_line, kind, zbody, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (ref_id, filepath, name, start_line, end_line, kind, zbody, time.time())
+
+        record = AnalysisRefRecord(
+            ref_id=ref_id,
+            filepath=filepath,
+            name=name,
+            start_line=start_line,
+            end_line=end_line,
+            kind=kind,
+            body_text=body_text,
+            timestamp=time.time()
         )
+        self.db.store_analysis_ref(record)
         return ref_id
 
-    def expand_ref(self, ref_id: str, depth: str = "full", span: Optional[Tuple[int, int]] = None) -> Optional[Dict[str, Any]]:
+    def expand_ref(
+        self, ref_id: str, depth: str = "full", span: Optional[Tuple[int, int]] = None
+    ) -> Optional[Dict[str, Any]]:
         """F7 Progressive Disclosure: Expands an opaque ref handle pay-per-section."""
-        cur = self.conn.cursor()
-        cur.execute("SELECT ref_id, filepath, name, start_line, end_line, kind, zbody FROM analysis_refs WHERE ref_id = ?", (ref_id,))
-        row = cur.fetchone()
-        if not row:
+        record = self.db.get_analysis_ref(ref_id)
+        if not record:
             return None
 
-        try:
-            body = zlib.decompress(row["zbody"]).decode("utf-8", errors="replace")
-        except Exception:
-            body = ""
-
+        body = record.body_text
         body_lines = body.splitlines()
-        start_line = row["start_line"]
-        end_line = row["end_line"]
+        start_line = record.start_line
+        end_line = record.end_line
 
         if span:
             req_start, req_end = span
@@ -54,10 +57,10 @@ class ReferenceStore:
 
         tokens_est = max(1, len(body) // 4)
         return {
-            "ref": row["ref_id"],
-            "file": row["filepath"],
-            "name": row["name"],
-            "kind": row["kind"],
+            "ref": record.ref_id,
+            "file": record.filepath,
+            "name": record.name,
+            "kind": record.kind,
             "span": [start_line, end_line],
             "body": body,
             "meta": {"tokens_out": tokens_est}
@@ -96,23 +99,12 @@ class ReferenceStore:
             except Exception as e:
                 _logger.debug(f"_diff_spans git fallback: {e}")
 
-        # 2. Fallback: reconstruct from stored DB chunks
+        # 2. Fallback: reconstruct from stored DB chunks using get_chunks_for_file
         if old_text is None:
-            cur = self.conn.cursor()
-            cur.execute(
-                "SELECT zcontent FROM chunks WHERE filepath = ? ORDER BY start_line ASC",
-                (filepath,)
-            )
-            stored_chunks = cur.fetchall()
-            if not stored_chunks:
+            chunks = self.db.get_chunks_for_file(filepath)
+            if not chunks:
                 return {"added": [[1, len(current_content.splitlines())]], "removed": [], "changed": []}
-            parts = []
-            for sc in stored_chunks:
-                try:
-                    parts.append(zlib.decompress(sc["zcontent"]).decode("utf-8", errors="replace"))
-                except Exception:
-                    pass
-            old_text = "\n".join(parts)
+            old_text = "\n".join(c.content for c in chunks)
 
         old_lines = old_text.splitlines()
         new_lines = current_content.splitlines()

@@ -4,7 +4,10 @@ Modular architecture with zero external dependencies (Python standard library on
 """
 
 import os
-from typing import List, Dict, Any, Tuple, Optional
+import time
+from typing import List, Dict, Any, Tuple, Optional, Union
+
+__version__ = "0.1.0"
 
 from ai_db.constants import (
     DEFAULT_DB_FILE,
@@ -29,6 +32,8 @@ from ai_db.parser.syntax import validate_python_syntax
 from ai_db.parser.ast_visitor import extract_symbols, extract_file_outline
 from ai_db.parser.chunker import chunk_file
 
+from ai_db.storage.backend import StorageBackend
+from ai_db.storage.factory import StorageBackendFactory
 from ai_db.storage.database import Database
 from ai_db.storage.state import get_session_state, set_session_state
 from ai_db.memory.context import ContextMemory
@@ -43,16 +48,34 @@ from ai_db.watcher import run_watch as _run_watch
 class VectorDB:
     """Unified Facade for ai-db, maintaining 100% backward compatibility."""
 
-    def __init__(self, db_path: str = DEFAULT_DB_FILE):
-        self.db = Database(db_path)
-        self.db_path = self.db.db_path
-        self.conn = self.db.conn
-        self.context_memory = ContextMemory(self.conn)
-        self.indexer = Indexer(self)
-        self.query_engine = QueryEngine(self.conn)
-        self.skill_router = SkillRouter(self.conn, self.db_path)
-        self.analyzer_engine = AnalyzerEngine(self)
+    backend: StorageBackend
+    db: StorageBackend
+    conn: Any
+    db_path: str
+    telemetry_tracker: Optional[Any]
+
+    def __init__(self, db_path: Optional[Union[str, StorageBackend]] = None):
+        if isinstance(db_path, StorageBackend):
+            self.backend = db_path
+        else:
+            path_or_uri = db_path if db_path is not None else DEFAULT_DB_FILE
+            self.backend = StorageBackendFactory.create(path_or_uri)
+            self.backend.initialize()
+
+        self.db = self.backend
+        self.db_path = getattr(self.backend, "db_path", str(db_path or DEFAULT_DB_FILE))
+        self.conn = getattr(self.backend, "conn", None)
+        self.context_memory = ContextMemory(db=self.backend)
+        self.indexer = Indexer(db=self.backend)
+        self.query_engine = QueryEngine(db=self.backend)
+        self.skill_router = SkillRouter(db=self.backend, db_path=self.db_path)
+        self.analyzer_engine = AnalyzerEngine(db=self.backend)
         self.formatters = Formatters
+        try:
+            from ai_db.telemetry.tracker import TelemetryTracker
+            self.telemetry_tracker = TelemetryTracker(conn=self.conn, db_path=self.db_path)
+        except Exception:
+            self.telemetry_tracker = None
 
     # Storage & DB management
     def status(self) -> Dict[str, Any]:
@@ -62,9 +85,13 @@ class VectorDB:
         return self.db.optimize(prune_missing=prune_missing, default_format=default_format)
 
     def get_session_state(self, key: str) -> Optional[Any]:
+        if hasattr(self.backend, "get_state"):
+            return self.backend.get_state(key)
         return get_session_state(self.conn, key)
 
     def set_session_state(self, key: str, value: Any):
+        if hasattr(self.backend, "set_state"):
+            return self.backend.set_state(key, value)
         return set_session_state(self.conn, key, value)
 
     def close(self):
@@ -85,9 +112,17 @@ class VectorDB:
 
     # Search & Code Query
     def query(self, search_text: str, top_k: int = 5, relative_to: Optional[str] = None,
-              project: Optional[str] = None, allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        return self.query_engine.query(search_text, top_k=top_k, relative_to=relative_to,
-                                       project=project, allowed_projects=allowed_projects)
+              project: Optional[str] = None, allowed_projects: Optional[List[str]] = None,
+              **kwargs: Any) -> List[Dict[str, Any]]:
+        k = kwargs.get("top", top_k)
+        t0 = time.perf_counter()
+        results = self.query_engine.query(search_text, top_k=k, relative_to=relative_to,
+                                          project=project, allowed_projects=allowed_projects)
+        if getattr(self, "telemetry_tracker", None) is not None:
+            latency_ms = (time.perf_counter() - t0) * 1000.0
+            backend_name = "sqlite_wal" if "sqlite" in getattr(self.backend, "__class__", type(self.backend)).__name__.lower() else "generic"
+            self.telemetry_tracker.record_query(backend=backend_name, latency_ms=latency_ms, results_count=len(results))
+        return results
 
     def query_symbol(self, name: str, relative_to: Optional[str] = None,
                      project: Optional[str] = None, allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
@@ -156,9 +191,17 @@ class VectorDB:
                      ctx_lines: int = 10,
                      bypass_cache: bool = False,
                      no_cache: bool = False) -> Dict[str, Any]:
-        return self.analyzer_engine.analyze_file(filepath, depth=depth, span=span, focus=focus, q=q,
-                                                since=since, ctx_lines=ctx_lines,
-                                                bypass_cache=bypass_cache, no_cache=no_cache)
+        result = self.analyzer_engine.analyze_file(filepath, depth=depth, span=span, focus=focus, q=q,
+                                                   since=since, ctx_lines=ctx_lines,
+                                                   bypass_cache=bypass_cache, no_cache=no_cache)
+        if getattr(self, "telemetry_tracker", None) is not None:
+            meta = result.get("meta", {})
+            is_hit = bool(meta.get("cached", False))
+            tokens_in = meta.get("tokens_in", 0)
+            tokens_out = meta.get("tokens_out", 0)
+            tokens_saved = max(0, tokens_in - tokens_out) if is_hit else 0
+            self.telemetry_tracker.record_cache_access(hit=is_hit, tokens_saved=tokens_saved)
+        return result
 
     def analyze_batch(self, targets: List[str], depth: str = "structure",
                       q: Optional[str] = None, focus: Optional[str] = None,
@@ -187,10 +230,6 @@ class VectorDB:
         with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
         return self.analyzer_engine.ref_store._diff_spans(abs_path, content, since=since)
-
-    # Internal shortcut used by CLI
-    def _diff_spans(self, filepath: str, content: str, since: Optional[str] = None) -> Dict[str, Any]:
-        return self.analyzer_engine.ref_store._diff_spans(filepath, content, since=since)
 
     # F10: Annotations / TODOs
     def query_annotations(self, kind: Optional[str] = None,

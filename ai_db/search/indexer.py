@@ -1,7 +1,5 @@
 import os
 import time
-import zlib
-import sqlite3
 from typing import List, Dict, Any, Optional
 from ai_db.constants import HARD_IGNORE_DIRS
 from ai_db.logger import _logger
@@ -10,12 +8,16 @@ from ai_db.utils import detect_project_name, compute_sha256, should_index_path
 from ai_db.parser.syntax import validate_python_syntax
 from ai_db.parser.ast_visitor import extract_symbols
 from ai_db.parser.chunker import chunk_file
+from ai_db.storage.models import (
+    FileRecord, ChunkRecord, SymbolRecord,
+    SymbolRefRecord, AnnotationRecord, SyntaxErrorRecord
+)
+
 
 class Indexer:
-    def __init__(self, db):
+    def __init__(self, db: Any):
         self.db = db
-        self.conn = db.conn
-        self.db_path = db.db_path
+        self.db_path = getattr(db, "db_path", getattr(db, "backend_name", "storage"))
 
     def scan_directory(self, root_dir: str) -> List[str]:
         candidates = []
@@ -40,12 +42,7 @@ class Indexer:
 
         all_disk_files = set(self.scan_directory(root_dir))
 
-        cur = self.conn.cursor()
-        cur.execute(
-            "SELECT filepath, sha256 FROM files WHERE filepath = ? OR filepath LIKE ?",
-            (root_dir, f"{root_dir}{os.sep}%")
-        )
-        stored_files = {row["filepath"]: row["sha256"] for row in cur.fetchall()}
+        stored_files = self.db.get_files_by_prefix(root_dir)
 
         added = 0
         updated = 0
@@ -87,12 +84,12 @@ class Indexer:
             if os.path.isdir(candidate_full):
                 proj_skill_dirs.append(candidate_full)
 
-        if proj_skill_dirs:
+        if proj_skill_dirs and hasattr(self.db, "sync_skills"):
             self.db.sync_skills(skill_dirs=proj_skill_dirs, project=project, verbose=verbose)
 
-        self.conn.commit()
         if verbose:
-            print(f"[{os.path.basename(self.db_path)}] Sync ({project}): +{added} ~{updated} -{pruned} ={skipped}")
+            db_name = os.path.basename(str(self.db_path))
+            print(f"[{db_name}] Sync ({project}): +{added} ~{updated} -{pruned} ={skipped}")
         return {"added": added, "updated": updated, "pruned": pruned, "skipped": skipped}
 
     def _index_file(self, filepath: str, file_hash: str, project: str = "global"):
@@ -103,100 +100,103 @@ class Indexer:
             _logger.debug(f"_index_file: cannot read {filepath}: {e}")
             return
 
-        cur = self.conn.cursor()
-
         # AST Validation for Python files
         ext = os.path.splitext(filepath)[1].lower()
         if ext in (".py", ".pyi"):
             syntax_err = validate_python_syntax(content, filepath)
             if syntax_err:
                 line, col, msg = syntax_err
-                cur.execute(
-                    """INSERT OR REPLACE INTO syntax_errors (filepath, line, col, message, timestamp, project)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (filepath, line, col, msg, time.time(), project)
+                self.db.upsert_syntax_error(
+                    SyntaxErrorRecord(filepath=filepath, line=line, col=col, message=msg, timestamp=time.time(), project=project)
                 )
             else:
-                cur.execute("DELETE FROM syntax_errors WHERE filepath = ?", (filepath,))
+                self.db.delete_syntax_error(filepath)
         else:
-            # F1: External linter validation for JS/TS/Shell/YAML etc.
+            # External linter validation for JS/TS/Shell/YAML etc.
             from ai_db.parser.linters import get_linter
             lint_err = get_linter().validate(filepath, content)
             if lint_err:
                 line, col, msg = lint_err
-                cur.execute(
-                    """INSERT OR REPLACE INTO syntax_errors (filepath, line, col, message, timestamp, project)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (filepath, line, col, msg, time.time(), project)
+                self.db.upsert_syntax_error(
+                    SyntaxErrorRecord(filepath=filepath, line=line, col=col, message=msg, timestamp=time.time(), project=project)
                 )
             else:
-                cur.execute("DELETE FROM syntax_errors WHERE filepath = ?", (filepath,))
+                self.db.delete_syntax_error(filepath)
 
-
-        chunks = chunk_file(filepath, content)
+        chunks_data = chunk_file(filepath, content)
         mtime = os.path.getmtime(filepath)
 
-        cur.execute(
-            "INSERT OR REPLACE INTO files (filepath, sha256, last_modified, chunk_count, project) VALUES (?, ?, ?, ?, ?)",
-            (filepath, file_hash, mtime, len(chunks), project)
+        # 1. Upsert file record
+        self.db.upsert_file(
+            FileRecord(filepath=filepath, sha256=file_hash, last_modified=mtime, chunk_count=len(chunks_data), project=project)
         )
 
-        for c in chunks:
-            raw_bytes = c["content"].encode("utf-8")
-            z_blob = zlib.compress(raw_bytes, level=9)
-            cur.execute(
-                """INSERT INTO chunks (filepath, chunk_type, name, start_line, end_line, zcontent, project)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (filepath, c["chunk_type"], c["name"], c["start_line"], c["end_line"], z_blob, project)
+        # 2. Insert chunks (backend handles compression & FTS indexing)
+        chunk_records = [
+            ChunkRecord(
+                filepath=filepath,
+                chunk_type=c["chunk_type"],
+                name=c["name"],
+                start_line=c["start_line"],
+                end_line=c["end_line"],
+                content=c["content"],
+                project=project,
             )
-            chunk_id = cur.lastrowid
-            cur.execute(
-                "INSERT INTO fts_index (content, filepath, name, chunk_id) VALUES (?, ?, ?, ?)",
-                (f"{c['name']} {c['content']}", filepath, c["name"], chunk_id)
-            )
+            for c in chunks_data
+        ]
+        if chunk_records:
+            self.db.insert_chunks(chunk_records)
 
-        # Symbol extraction & indexing
-        symbols = extract_symbols(filepath, content)
-        for s in symbols:
-            cur.execute(
-                """INSERT INTO symbols (name, symbol_type, filepath, line, signature, project)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (s["name"], s["symbol_type"], s["filepath"], s["line"], s["signature"], project)
+        # 3. Symbol extraction & indexing
+        symbols_data = extract_symbols(filepath, content)
+        symbol_records = [
+            SymbolRecord(
+                name=s["name"],
+                symbol_type=s["symbol_type"],
+                filepath=s["filepath"],
+                line=s["line"],
+                signature=s.get("signature"),
+                project=project,
             )
+            for s in symbols_data
+        ]
+        if symbol_records:
+            self.db.insert_symbols(symbol_records)
 
-        # F2: Cross-reference extraction (calls, imports, inheritance)
+        # 4. Cross-references (calls, imports, inheritance)
         from ai_db.parser.cross_refs import extract_cross_refs
         cross_refs = extract_cross_refs(filepath, content)
         if cross_refs:
-            cur.executemany(
-                """INSERT INTO symbol_refs (caller_filepath, caller_name, caller_line, callee_name, ref_type, project)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                [(filepath, r["caller_name"], r["caller_line"], r["callee_name"], r["ref_type"], project)
-                 for r in cross_refs]
-            )
+            ref_records = [
+                SymbolRefRecord(
+                    caller_filepath=filepath,
+                    caller_name=r["caller_name"],
+                    caller_line=r["caller_line"],
+                    callee_name=r["callee_name"],
+                    ref_type=r["ref_type"],
+                    project=project,
+                )
+                for r in cross_refs
+            ]
+            self.db.insert_symbol_refs(ref_records)
 
-        # F10: Annotation extraction (TODO/FIXME/HACK + docstrings)
+        # 5. Annotation extraction (TODO/FIXME/HACK + docstrings)
         from ai_db.parser.annotations import extract_annotations
-        annotations = extract_annotations(filepath, content)
-        if annotations:
-            cur.executemany(
-                """INSERT INTO annotations (filepath, line, kind, symbol, content, project)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                [(filepath, a["line"], a["kind"], a.get("symbol"), a["content"], project)
-                 for a in annotations]
-            )
+        annotations_data = extract_annotations(filepath, content)
+        if annotations_data:
+            annotation_records = [
+                AnnotationRecord(
+                    filepath=filepath,
+                    line=a["line"],
+                    kind=a["kind"],
+                    content=a["content"],
+                    symbol=a.get("symbol"),
+                    project=project,
+                )
+                for a in annotations_data
+            ]
+            self.db.insert_annotations(annotation_records)
 
     def prune_file(self, filepath: str):
-        cur = self.conn.cursor()
-        # Delete FTS rows first (they reference chunk ids)
-        cur.execute("DELETE FROM fts_index WHERE filepath = ?", (filepath,))
-        cur.execute("DELETE FROM chunks WHERE filepath = ?", (filepath,))
-        cur.execute("DELETE FROM symbols WHERE filepath = ?", (filepath,))
-        cur.execute("DELETE FROM syntax_errors WHERE filepath = ?", (filepath,))
-        cur.execute("DELETE FROM analysis_refs WHERE filepath = ?", (filepath,))
-        cur.execute("DELETE FROM symbol_refs WHERE caller_filepath = ?", (filepath,))
-        cur.execute("DELETE FROM annotations WHERE filepath = ?", (filepath,))
-        cur.execute("DELETE FROM files WHERE filepath = ?", (filepath,))
-
-
-
+        """Prunes file and cascades deletion through storage backend."""
+        self.db.delete_file(filepath)

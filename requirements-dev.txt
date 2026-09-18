@@ -1,0 +1,7 @@
+# Development, testing, and linting dependencies for ai-db
+# Installs core package in editable mode along with dev tools (pytest, pytest-cov, ruff, mypy)
+-e .[dev]
+
+# Optional database adapters:
+# To install MySQL support alongside dev tools, run:
+# pip install -e ".[all]"

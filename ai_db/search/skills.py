@@ -1,14 +1,15 @@
 import os
 import re
-import sqlite3
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from ai_db.constants import DEFAULT_SKILL_DIRS
 from ai_db.utils import get_allowed_projects, tokenize, compute_sha256
+from ai_db.storage.models import SkillRecord
+
 
 class SkillRouter:
-    def __init__(self, conn: sqlite3.Connection, db_path: str):
-        self.conn = conn
-        self.db_path = db_path
+    def __init__(self, db: Any = None, conn: Any = None, db_path: str = ""):
+        self.db = db if db is not None else conn
+        self.db_path = db_path or getattr(self.db, "db_path", "")
 
     def sync_skills(self, skill_dirs: Optional[List[str]] = None, project: str = "global", verbose: bool = True) -> Dict[str, int]:
         """Indexes skills from skill directories into skills and fts_skills tables under the specified project scope."""
@@ -16,9 +17,7 @@ class SkillRouter:
             skill_dirs = DEFAULT_SKILL_DIRS
             project = "global"
 
-        cur = self.conn.cursor()
-        cur.execute("SELECT name, filepath, sha256 FROM skills WHERE project = ?", (project,))
-        stored = {r["filepath"]: (r["name"], r["sha256"]) for r in cur.fetchall()}
+        stored = self.db.get_skills_by_project(project)
 
         found_files = []
         for sdir in skill_dirs:
@@ -39,8 +38,7 @@ class SkillRouter:
         # Prune removed skills
         for stored_path, (sname, _) in list(stored.items()):
             if stored_path not in found_set:
-                cur.execute("DELETE FROM skills WHERE filepath = ? AND project = ?", (stored_path, project))
-                cur.execute("DELETE FROM fts_skills WHERE name = ? AND project = ?", (sname, project))
+                self.db.delete_skill(filepath=stored_path, project=project, name=sname)
                 pruned += 1
 
         for sfile in found_files:
@@ -85,26 +83,27 @@ class SkillRouter:
             triggers_str = " | ".join(triggers_found)
 
             if stored_entry:
-                cur.execute("DELETE FROM skills WHERE filepath = ? AND project = ?", (sfile, project))
-                cur.execute("DELETE FROM fts_skills WHERE name = ? AND project = ?", (stored_entry[0], project))
+                self.db.delete_skill(filepath=sfile, project=project, name=stored_entry[0])
                 updated += 1
             else:
                 added += 1
 
-            cur.execute(
-                """INSERT INTO skills (name, description, filepath, triggers, sha256, last_modified, project)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (skill_name, desc, sfile, triggers_str, curr_sha, mtime, project)
-            )
-            cur.execute(
-                """INSERT INTO fts_skills (name, description, triggers, content, project)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (skill_name, desc, triggers_str, body_content[:4000], project)
+            self.db.upsert_skill(
+                SkillRecord(
+                    name=skill_name,
+                    description=desc,
+                    filepath=sfile,
+                    triggers=triggers_str,
+                    sha256=curr_sha,
+                    last_modified=mtime,
+                    content=body_content[:4000],
+                    project=project,
+                )
             )
 
-        self.conn.commit()
         if verbose:
-            print(f"[{os.path.basename(self.db_path)}] Skills Sync ({project}): +{added} ~{updated} -{pruned} ={skipped}")
+            db_name = os.path.basename(str(self.db_path))
+            print(f"[{db_name}] Skills Sync ({project}): +{added} ~{updated} -{pruned} ={skipped}")
         return {"added": added, "updated": updated, "pruned": pruned, "skipped": skipped}
 
     def route_skills(self, prompt: str, top_k: int = 3,
@@ -113,18 +112,27 @@ class SkillRouter:
         """Analyzes prompt intent and returns ranked matching skills within allowed project scopes."""
         _min_confidence = min_confidence if min_confidence is not None else 0.15
         allowed = get_allowed_projects(project or "global", allowed_projects)
-        placeholders = ",".join("?" for _ in allowed)
 
-        cur = self.conn.cursor()
-        # Ensure global skills are indexed
-        cur.execute("SELECT COUNT(*) as c FROM skills")
-        if cur.fetchone()["c"] == 0:
-            self.sync_skills(verbose=False)
+        skills_list = self.db.get_skills(allowed_projects=allowed)
+        if not skills_list:
+            all_known = self.db.get_skills()
+            if not all_known:
+                self.sync_skills(verbose=False)
+                skills_list = self.db.get_skills(allowed_projects=allowed)
 
-        cur.execute(f"SELECT name, description, filepath, triggers, project FROM skills WHERE project IN ({placeholders})", allowed)
-        all_skills = {r["name"]: dict(r) for r in cur.fetchall()}
-        if not all_skills:
+        if not skills_list:
             return []
+
+        all_skills = {
+            sk.name: {
+                "name": sk.name,
+                "description": sk.description,
+                "filepath": sk.filepath,
+                "triggers": sk.triggers,
+                "project": sk.project,
+            }
+            for sk in skills_list
+        }
 
         tokens = tokenize(prompt)
         if not tokens:
@@ -169,31 +177,20 @@ class SkillRouter:
                     matched_triggers.append(t)
                     scores[name] += 3.5
                 elif re.search(r"\b" + re.escape(t) + r"\b", desc):
+                    matched_triggers.append(t)
                     scores[name] += 1.5
 
             if matched_triggers:
                 top_matched = list(dict.fromkeys(matched_triggers))[:4]
                 reasons[name].append(f"Matched triggers: {', '.join(top_matched)}")
 
-        # 3. FTS5 BM25 Ranking across skills in allowed projects
+        # 3. FTS BM25 Ranking across skills in allowed projects
         filtered_tokens = [t for t in tokens if t not in STOP_WORDS and len(t) > 2]
         if filtered_tokens:
-            fts_query = " OR ".join(filtered_tokens)
             try:
-                cur.execute(
-                    f"""
-                    SELECT name, project, bm25(fts_skills) as rank
-                    FROM fts_skills
-                    WHERE fts_skills MATCH ? AND project IN ({placeholders})
-                    ORDER BY rank
-                    LIMIT 20
-                    """,
-                    [fts_query] + allowed
-                )
-                for r in cur.fetchall():
-                    name = r["name"]
+                ranked_skills = self.db.search_skills(filtered_tokens, allowed_projects=allowed, limit=20)
+                for name, bm25_score in ranked_skills:
                     if name in scores:
-                        bm25_score = max(0.0, -float(r["rank"]))
                         scores[name] += bm25_score * 1.5
                         if bm25_score > 2.0 and not any("Semantic" in r for r in reasons[name]):
                             reasons[name].append("High semantic relevance")
@@ -239,4 +236,3 @@ class SkillRouter:
                 })
 
         return results
-

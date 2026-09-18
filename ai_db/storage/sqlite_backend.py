@@ -1,0 +1,1300 @@
+"""High-performance SQLite storage backend for ai-db (Milestone 2, Feature 8).
+
+Implements StorageBackend ABC with WAL mode, FTS5 porter unicode61 full-text search,
+BM25 scoring, transparent Zlib level 9 compression, and savepoint-based nested transactions.
+"""
+
+import os
+import re
+import json
+import time
+import zlib
+import sqlite3
+from contextlib import contextmanager
+from typing import Optional, List, Dict, Any, Tuple, Generator
+
+from ai_db.constants import DEFAULT_DB_FILE
+from ai_db.storage.backend import StorageBackend
+from ai_db.storage.models import (
+    FileRecord, ChunkRecord, SymbolRecord, SymbolRefRecord,
+    AnnotationRecord, SyntaxErrorRecord, SkillRecord,
+    ContextRecord, AnalysisRefRecord, SearchResult
+)
+
+
+class SQLiteBackend(StorageBackend):
+    """SQLite implementation of the StorageBackend interface."""
+
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            db_path = os.environ.get("AI_DB_PATH", DEFAULT_DB_FILE)
+
+        # Handle sqlite:/// URI prefixes
+        if isinstance(db_path, str) and db_path.lower().startswith("sqlite:///"):
+            sub = db_path[len("sqlite:///"):]
+            if sub.lower() in (":memory:", "/:memory:"):
+                db_path = ":memory:"
+            else:
+                db_path = sub
+
+        self._closed = False
+        self._tx_depth = 0
+
+        if isinstance(db_path, str) and db_path.lower() in (":memory:", "/:memory:"):
+            self.db_path = ":memory:"
+        else:
+            self.db_path = os.path.abspath(db_path)
+            parent = os.path.dirname(self.db_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+
+        self.conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+
+        # Concurrency & performance pragmas
+        self.conn.execute("PRAGMA journal_mode = WAL;")
+        self.conn.execute("PRAGMA synchronous = NORMAL;")
+        self.conn.execute("PRAGMA foreign_keys = ON;")
+        self.conn.execute("PRAGMA temp_store = MEMORY;")
+        self.conn.execute("PRAGMA cache_size = -64000;")
+
+    @property
+    def backend_name(self) -> str:
+        return "sqlite"
+
+    def _check_closed(self) -> None:
+        if self._closed or self.conn is None:
+            raise RuntimeError("Storage backend is closed")
+
+    def _auto_commit(self) -> None:
+        if self._tx_depth == 0 and self.conn is not None:
+            self.conn.commit()
+
+    # =========================================================================
+    # Lifecycle & Transactions
+    # =========================================================================
+
+    def initialize(self) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS files (
+                filepath TEXT PRIMARY KEY,
+                sha256 TEXT NOT NULL,
+                last_modified REAL NOT NULL,
+                chunk_count INTEGER NOT NULL,
+                project TEXT DEFAULT 'global'
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filepath TEXT NOT NULL,
+                chunk_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                zcontent BLOB NOT NULL,
+                project TEXT DEFAULT 'global',
+                FOREIGN KEY (filepath) REFERENCES files(filepath) ON DELETE CASCADE
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_filepath ON chunks(filepath)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_project ON chunks(project)")
+
+        cur.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS fts_index USING fts5(
+                content,
+                filepath UNINDEXED,
+                name UNINDEXED,
+                chunk_id UNINDEXED,
+                tokenize = 'porter unicode61'
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS syntax_errors (
+                filepath TEXT PRIMARY KEY,
+                line INTEGER,
+                col INTEGER,
+                message TEXT,
+                timestamp REAL,
+                project TEXT DEFAULT 'global'
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_syntax_errors_project ON syntax_errors(project)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS symbols (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                symbol_type TEXT NOT NULL,
+                filepath TEXT NOT NULL,
+                line INTEGER NOT NULL,
+                signature TEXT,
+                project TEXT DEFAULT 'global',
+                FOREIGN KEY (filepath) REFERENCES files(filepath) ON DELETE CASCADE
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_symbol_name ON symbols(name)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_symbol_filepath ON symbols(filepath)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_symbol_project ON symbols(project)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS skills (
+                name TEXT,
+                description TEXT,
+                filepath TEXT NOT NULL,
+                triggers TEXT,
+                sha256 TEXT NOT NULL,
+                last_modified REAL NOT NULL,
+                project TEXT DEFAULT 'global',
+                PRIMARY KEY (name, project)
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_skills_project ON skills(project)")
+
+        cur.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS fts_skills USING fts5(
+                name,
+                description,
+                triggers,
+                content,
+                project,
+                tokenize = 'porter unicode61'
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS contexts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                project TEXT NOT NULL,
+                title TEXT,
+                summary TEXT NOT NULL,
+                active_files TEXT,
+                open_tasks TEXT,
+                timestamp REAL NOT NULL,
+                zcontent BLOB NOT NULL,
+                UNIQUE(session_id, project)
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_contexts_proj_sess ON contexts(project, session_id)")
+
+        cur.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS fts_contexts USING fts5(
+                session_id,
+                project,
+                title,
+                summary,
+                content,
+                tokenize = 'porter unicode61'
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS semantic_cache (
+                cache_key TEXT PRIMARY KEY,
+                file_hash TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                timestamp REAL NOT NULL
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_semantic_cache_hash ON semantic_cache(file_hash)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS module_summaries (
+                filepath TEXT PRIMARY KEY,
+                sha256 TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                updated REAL NOT NULL
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS session_state (
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL,
+                updated REAL NOT NULL
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_refs (
+                ref_id TEXT PRIMARY KEY,
+                filepath TEXT NOT NULL,
+                name TEXT NOT NULL,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                zbody BLOB NOT NULL,
+                timestamp REAL NOT NULL
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_analysis_refs_file ON analysis_refs(filepath)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS symbol_refs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                caller_filepath TEXT NOT NULL,
+                caller_name TEXT NOT NULL,
+                caller_line INTEGER NOT NULL,
+                callee_name TEXT NOT NULL,
+                ref_type TEXT NOT NULL,
+                project TEXT DEFAULT 'global'
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_symrefs_callee ON symbol_refs(callee_name)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_symrefs_caller ON symbol_refs(caller_filepath, caller_name)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_symrefs_project ON symbol_refs(project)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS annotations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filepath TEXT NOT NULL,
+                line INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                symbol TEXT,
+                content TEXT NOT NULL,
+                project TEXT DEFAULT 'global'
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_annotations_filepath ON annotations(filepath)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_annotations_kind ON annotations(kind, project)")
+
+        # Invalidate cache on schema version bump
+        SCHEMA_VERSION = "4"
+        cur.execute("SELECT value_json FROM session_state WHERE key = 'schema_version'")
+        row = cur.fetchone()
+        stored_ver = json.loads(row["value_json"]) if row else None
+        if stored_ver != SCHEMA_VERSION:
+            try:
+                cur.execute("DELETE FROM semantic_cache")
+            except Exception:
+                pass
+            cur.execute(
+                "INSERT OR REPLACE INTO session_state (key, value_json, updated) VALUES (?, ?, ?)",
+                ("schema_version", json.dumps(SCHEMA_VERSION), time.time())
+            )
+
+        self.conn.commit()
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            if self.conn is not None:
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+                self.conn = None
+
+    @contextmanager
+    def transaction(self) -> Generator[None, None, None]:
+        self._check_closed()
+        self._tx_depth += 1
+        sp_name = f"sp_level_{self._tx_depth}"
+        try:
+            self.conn.execute(f"SAVEPOINT {sp_name}")
+            yield
+            self.conn.execute(f"RELEASE SAVEPOINT {sp_name}")
+            if self._tx_depth == 1:
+                self.conn.commit()
+        except Exception:
+            try:
+                self.conn.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                self.conn.execute(f"RELEASE SAVEPOINT {sp_name}")
+                if self._tx_depth == 1:
+                    self.conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            self._tx_depth -= 1
+
+    # =========================================================================
+    # Status & Optimization
+    # =========================================================================
+
+    def status(self) -> Dict[str, Any]:
+        self._check_closed()
+        cur = self.conn.cursor()
+        counts = {}
+        for tbl in ["files", "chunks", "symbols", "syntax_errors", "skills", "contexts"]:
+            try:
+                cur.execute(f"SELECT COUNT(*) as c FROM {tbl}")
+                counts[tbl] = cur.fetchone()["c"]
+            except Exception:
+                counts[tbl] = 0
+
+        size_bytes = os.path.getsize(self.db_path) if self.db_path != ":memory:" and os.path.exists(self.db_path) else 0
+
+        return {
+            "backend": "sqlite",
+            "db": self.db_path,
+            "files": counts.get("files", 0),
+            "chunks": counts.get("chunks", 0),
+            "symbols": counts.get("symbols", 0),
+            "syntax_errors": counts.get("syntax_errors", 0),
+            "skills": counts.get("skills", 0),
+            "contexts": counts.get("contexts", 0),
+            "kb": round(size_bytes / 1024, 1),
+            "format": "zlib-compressed binary blob (token-dense)"
+        }
+
+    def optimize(self, prune_missing: bool = True, default_format: Optional[str] = None) -> Dict[str, Any]:
+        self._check_closed()
+        initial_size = os.path.getsize(self.db_path) if self.db_path != ":memory:" and os.path.exists(self.db_path) else 0
+        pruned_files = 0
+
+        cur = self.conn.cursor()
+        if prune_missing and self.db_path != ":memory:":
+            cur.execute("SELECT filepath FROM files")
+            for row in cur.fetchall():
+                fp = row["filepath"]
+                if not os.path.exists(fp):
+                    self.delete_file(fp)
+                    pruned_files += 1
+
+        for fts in ["fts_index", "fts_skills", "fts_contexts"]:
+            try:
+                cur.execute(f"INSERT INTO {fts}({fts}) VALUES('optimize')")
+            except Exception:
+                pass
+
+        try:
+            cur.execute("PRAGMA optimize")
+        except Exception:
+            pass
+
+        try:
+            cur.execute("VACUUM")
+        except Exception:
+            pass
+
+        # Evict stale analysis refs older than 7 days
+        self.evict_stale_analysis_refs(86400 * 7)
+
+        if default_format:
+            norm_fmt = default_format.strip().lower()
+            if norm_fmt in ("stub", "sexp", "json", "outline", "prose"):
+                self.set_state("default_format", norm_fmt)
+
+        final_size = os.path.getsize(self.db_path) if self.db_path != ":memory:" and os.path.exists(self.db_path) else 0
+        reclaimed_kb = round(max(0, initial_size - final_size) / 1024, 1)
+        active_fmt = self.get_state("default_format") or "stub"
+
+        return {
+            "initial_kb": round(initial_size / 1024, 1),
+            "final_kb": round(final_size / 1024, 1),
+            "reclaimed_kb": reclaimed_kb,
+            "pruned_files": pruned_files,
+            "default_format": active_fmt
+        }
+
+    # =========================================================================
+    # Files
+    # =========================================================================
+
+    def get_file(self, filepath: str) -> Optional[FileRecord]:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT filepath, sha256, last_modified, chunk_count, project FROM files WHERE filepath = ?",
+            (filepath,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return FileRecord(
+            filepath=row["filepath"],
+            sha256=row["sha256"],
+            last_modified=float(row["last_modified"]),
+            chunk_count=int(row["chunk_count"]),
+            project=row["project"]
+        )
+
+    def get_files_by_prefix(self, prefix: str) -> Dict[str, str]:
+        self._check_closed()
+        prefix = prefix.replace("\x00", "") if prefix else ""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT filepath, sha256 FROM files WHERE filepath = ? OR filepath LIKE ?",
+            (prefix, f"{prefix.rstrip('/')}/%")
+        )
+        return {r["filepath"]: r["sha256"] for r in cur.fetchall()}
+
+    def get_all_filepaths(self) -> List[str]:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute("SELECT filepath FROM files")
+        return [r["filepath"] for r in cur.fetchall()]
+
+    def upsert_file(self, record: FileRecord) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO files (filepath, sha256, last_modified, chunk_count, project)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(filepath) DO UPDATE SET
+                sha256 = excluded.sha256,
+                last_modified = excluded.last_modified,
+                chunk_count = excluded.chunk_count,
+                project = excluded.project
+            """,
+            (record.filepath, record.sha256, record.last_modified, record.chunk_count, record.project)
+        )
+        self._auto_commit()
+
+    def delete_file(self, filepath: str) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM fts_index WHERE filepath = ?", (filepath,))
+        cur.execute("DELETE FROM chunks WHERE filepath = ?", (filepath,))
+        cur.execute("DELETE FROM symbols WHERE filepath = ?", (filepath,))
+        cur.execute("DELETE FROM symbol_refs WHERE caller_filepath = ?", (filepath,))
+        cur.execute("DELETE FROM annotations WHERE filepath = ?", (filepath,))
+        cur.execute("DELETE FROM syntax_errors WHERE filepath = ?", (filepath,))
+        cur.execute("DELETE FROM analysis_refs WHERE filepath = ?", (filepath,))
+        cur.execute("DELETE FROM files WHERE filepath = ?", (filepath,))
+        self._auto_commit()
+
+    # =========================================================================
+    # Chunks & Full-Text Search (BM25)
+    # =========================================================================
+
+    def insert_chunks(self, chunks: List[ChunkRecord]) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        for c in chunks:
+            zcontent = zlib.compress(c.content.encode("utf-8"), level=9)
+            cur.execute(
+                """
+                INSERT INTO chunks (filepath, chunk_type, name, start_line, end_line, zcontent, project)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (c.filepath, c.chunk_type, c.name, c.start_line, c.end_line, zcontent, c.project)
+            )
+            chunk_id = cur.lastrowid
+            c.id = chunk_id
+            cur.execute(
+                "INSERT INTO fts_index (content, filepath, name, chunk_id) VALUES (?, ?, ?, ?)",
+                (f"{c.name} {c.content}", c.filepath, c.name, chunk_id)
+            )
+        self._auto_commit()
+
+    def get_chunks_for_file(self, filepath: str) -> List[ChunkRecord]:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            SELECT id, filepath, chunk_type, name, start_line, end_line, zcontent, project
+            FROM chunks WHERE filepath = ? ORDER BY start_line ASC
+            """,
+            (filepath,)
+        )
+        result = []
+        for r in cur.fetchall():
+            try:
+                content = zlib.decompress(r["zcontent"]).decode("utf-8", errors="replace")
+            except Exception:
+                content = ""
+            result.append(ChunkRecord(
+                id=r["id"],
+                filepath=r["filepath"],
+                chunk_type=r["chunk_type"],
+                name=r["name"],
+                start_line=r["start_line"],
+                end_line=r["end_line"],
+                content=content,
+                project=r["project"]
+            ))
+        return result
+
+    def search_chunks(
+        self,
+        query_tokens: List[str],
+        allowed_projects: Optional[List[str]] = None,
+        top_k: int = 5,
+        path_prefix: Optional[str] = None,
+    ) -> List[SearchResult]:
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        clean_tokens = [t.replace("\x00", "").strip() for t in query_tokens if t.replace("\x00", "").strip()]
+        if not clean_tokens:
+            return []
+
+        # Sanitize query tokens to defend against malformed FTS syntax
+        safe_parts = []
+        for token in clean_tokens:
+            escaped = token.replace('"', '""')
+            safe_parts.append(f'"{escaped}"')
+        fts_query = " OR ".join(safe_parts)
+
+        cur = self.conn.cursor()
+
+        where_clauses = ["fts_index MATCH ?"]
+        params: List[Any] = [fts_query]
+
+        if allowed_projects is not None:
+            placeholders = ",".join("?" for _ in allowed_projects)
+            where_clauses.append(f"chunks.project IN ({placeholders})")
+            params.extend(allowed_projects)
+
+        if path_prefix:
+            clean_prefix = path_prefix.replace("\x00", "")
+            where_clauses.append("chunks.filepath LIKE ?")
+            params.append(f"{clean_prefix.rstrip('/')}/%")
+
+        where_sql = " AND ".join(where_clauses)
+        params.append(top_k * 2)
+
+        sql = f"""
+            SELECT fts_index.chunk_id, fts_index.filepath, fts_index.name,
+                   bm25(fts_index) as bm25_rank,
+                   chunks.start_line, chunks.end_line, chunks.zcontent, chunks.chunk_type, chunks.project
+            FROM fts_index
+            JOIN chunks ON fts_index.chunk_id = chunks.id
+            WHERE {where_sql}
+            ORDER BY bm25_rank
+            LIMIT ?
+        """
+
+        rows = []
+        try:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        except sqlite3.OperationalError:
+            return []
+        except Exception:
+            return []
+
+        results = []
+        for r in rows:
+            try:
+                decompressed = zlib.decompress(r["zcontent"]).decode("utf-8", errors="replace")
+            except Exception:
+                decompressed = ""
+
+            snippet = decompressed[:300].strip() if decompressed else ""
+            raw_score = abs(float(r["bm25_rank"]))
+            score = round(raw_score, 8) if raw_score else 0.001
+
+            results.append(SearchResult(
+                chunk_id=r["chunk_id"],
+                filepath=r["filepath"],
+                name=r["name"],
+                chunk_type=r["chunk_type"],
+                project=r["project"],
+                start_line=r["start_line"],
+                end_line=r["end_line"],
+                score=score,
+                snippet=snippet
+            ))
+            if len(results) >= top_k:
+                break
+        return results
+
+    # =========================================================================
+    # Symbols & Cross-References
+    # =========================================================================
+
+    def insert_symbols(self, symbols: List[SymbolRecord]) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.executemany(
+            """
+            INSERT INTO symbols (name, symbol_type, filepath, line, signature, project)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [(s.name, s.symbol_type, s.filepath, s.line, s.signature, s.project) for s in symbols]
+        )
+        self._auto_commit()
+
+    def query_symbols(
+        self,
+        name: str,
+        allowed_projects: Optional[List[str]] = None,
+        limit: int = 50,
+    ) -> List[SymbolRecord]:
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        cur = self.conn.cursor()
+        clauses = ["(name = ? OR name LIKE ?)"]
+        params: List[Any] = [name, f"{name}%"]
+
+        if allowed_projects is not None:
+            placeholders = ",".join("?" for _ in allowed_projects)
+            clauses.append(f"project IN ({placeholders})")
+            params.extend(allowed_projects)
+
+        where = " AND ".join(clauses)
+        params.extend([name, limit])
+
+        cur.execute(
+            f"""
+            SELECT id, name, symbol_type, filepath, line, signature, project
+            FROM symbols
+            WHERE {where}
+            ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END, line ASC
+            LIMIT ?
+            """,
+            params
+        )
+        return [
+            SymbolRecord(
+                id=r["id"],
+                name=r["name"],
+                symbol_type=r["symbol_type"],
+                filepath=r["filepath"],
+                line=r["line"],
+                signature=r["signature"],
+                project=r["project"]
+            )
+            for r in cur.fetchall()
+        ]
+
+    def insert_symbol_refs(self, refs: List[SymbolRefRecord]) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.executemany(
+            """
+            INSERT INTO symbol_refs (caller_filepath, caller_name, caller_line, callee_name, ref_type, project)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [(r.caller_filepath, r.caller_name, r.caller_line, r.callee_name, r.ref_type, r.project) for r in refs]
+        )
+        self._auto_commit()
+
+    def query_symbol_callers(
+        self,
+        callee_name: str,
+        allowed_projects: Optional[List[str]] = None,
+        limit: int = 100,
+    ) -> List[SymbolRefRecord]:
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        cur = self.conn.cursor()
+        clauses = ["callee_name = ?"]
+        params: List[Any] = [callee_name]
+
+        if allowed_projects is not None:
+            placeholders = ",".join("?" for _ in allowed_projects)
+            clauses.append(f"project IN ({placeholders})")
+            params.extend(allowed_projects)
+
+        where = " AND ".join(clauses)
+        params.append(limit)
+
+        cur.execute(
+            f"""
+            SELECT id, caller_filepath, caller_name, caller_line, callee_name, ref_type, project
+            FROM symbol_refs
+            WHERE {where}
+            ORDER BY caller_filepath ASC, caller_line ASC
+            LIMIT ?
+            """,
+            params
+        )
+        return [
+            SymbolRefRecord(
+                id=r["id"],
+                caller_filepath=r["caller_filepath"],
+                caller_name=r["caller_name"],
+                caller_line=r["caller_line"],
+                callee_name=r["callee_name"],
+                ref_type=r["ref_type"],
+                project=r["project"]
+            )
+            for r in cur.fetchall()
+        ]
+
+    # =========================================================================
+    # Diagnostics & Annotations
+    # =========================================================================
+
+    def upsert_syntax_error(self, error: SyntaxErrorRecord) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO syntax_errors (filepath, line, col, message, timestamp, project)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (error.filepath, error.line, error.col, error.message, error.timestamp, error.project)
+        )
+        self._auto_commit()
+
+    def delete_syntax_error(self, filepath: str) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM syntax_errors WHERE filepath = ?", (filepath,))
+        self._auto_commit()
+
+    def get_syntax_errors(
+        self,
+        target_path: Optional[str] = None,
+        allowed_projects: Optional[List[str]] = None,
+    ) -> List[SyntaxErrorRecord]:
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        cur = self.conn.cursor()
+        clauses = []
+        params: List[Any] = []
+
+        if target_path:
+            clauses.append("filepath = ?")
+            params.append(target_path)
+
+        if allowed_projects is not None:
+            placeholders = ",".join("?" for _ in allowed_projects)
+            clauses.append(f"project IN ({placeholders})")
+            params.extend(allowed_projects)
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        cur.execute(
+            f"SELECT filepath, line, col, message, timestamp, project FROM syntax_errors {where} ORDER BY filepath ASC, line ASC",
+            params
+        )
+        return [
+            SyntaxErrorRecord(
+                filepath=r["filepath"],
+                line=r["line"],
+                col=r["col"],
+                message=r["message"],
+                timestamp=r["timestamp"],
+                project=r["project"]
+            )
+            for r in cur.fetchall()
+        ]
+
+    def insert_annotations(self, annotations: List[AnnotationRecord]) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.executemany(
+            """
+            INSERT INTO annotations (filepath, line, kind, symbol, content, project)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [(a.filepath, a.line, a.kind, a.symbol, a.content, a.project) for a in annotations]
+        )
+        self._auto_commit()
+
+    def query_annotations(
+        self,
+        kind: Optional[str] = None,
+        filepath: Optional[str] = None,
+        allowed_projects: Optional[List[str]] = None,
+        limit: int = 200,
+    ) -> List[AnnotationRecord]:
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        cur = self.conn.cursor()
+        clauses = []
+        params: List[Any] = []
+
+        if allowed_projects is not None:
+            placeholders = ",".join("?" for _ in allowed_projects)
+            clauses.append(f"project IN ({placeholders})")
+            params.extend(allowed_projects)
+
+        if kind:
+            clauses.append("kind = ?")
+            params.append(kind)
+
+        if filepath:
+            clauses.append("filepath = ?")
+            params.append(filepath)
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        cur.execute(
+            f"SELECT id, filepath, line, kind, symbol, content, project FROM annotations {where} LIMIT ?",
+            params
+        )
+        return [
+            AnnotationRecord(
+                id=r["id"],
+                filepath=r["filepath"],
+                line=r["line"],
+                kind=r["kind"],
+                symbol=r["symbol"],
+                content=r["content"],
+                project=r["project"]
+            )
+            for r in cur.fetchall()
+        ]
+
+    # =========================================================================
+    # Skills
+    # =========================================================================
+
+    def get_skills(self, allowed_projects: Optional[List[str]] = None) -> List[SkillRecord]:
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        cur = self.conn.cursor()
+        if allowed_projects is not None:
+            placeholders = ",".join("?" for _ in allowed_projects)
+            cur.execute(
+                f"SELECT name, description, filepath, triggers, sha256, last_modified, project FROM skills WHERE project IN ({placeholders})",
+                list(allowed_projects)
+            )
+        else:
+            cur.execute("SELECT name, description, filepath, triggers, sha256, last_modified, project FROM skills")
+        return [
+            SkillRecord(
+                name=r["name"],
+                description=r["description"],
+                filepath=r["filepath"],
+                triggers=r["triggers"],
+                sha256=r["sha256"],
+                last_modified=r["last_modified"],
+                project=r["project"]
+            )
+            for r in cur.fetchall()
+        ]
+
+    def get_skills_by_project(self, project: str) -> Dict[str, Tuple[str, str]]:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute("SELECT filepath, name, sha256 FROM skills WHERE project = ?", (project,))
+        return {r["filepath"]: (r["name"], r["sha256"]) for r in cur.fetchall()}
+
+    def upsert_skill(self, skill: SkillRecord) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO skills (name, description, filepath, triggers, sha256, last_modified, project)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(name, project) DO UPDATE SET
+                description = excluded.description,
+                filepath = excluded.filepath,
+                triggers = excluded.triggers,
+                sha256 = excluded.sha256,
+                last_modified = excluded.last_modified
+            """,
+            (skill.name, skill.description, skill.filepath, skill.triggers, skill.sha256, skill.last_modified, skill.project)
+        )
+        cur.execute("DELETE FROM fts_skills WHERE name = ? AND project = ?", (skill.name, skill.project))
+        cur.execute(
+            "INSERT INTO fts_skills (name, description, triggers, content, project) VALUES (?, ?, ?, ?, ?)",
+            (skill.name, skill.description, skill.triggers, skill.content[:4000], skill.project)
+        )
+        self._auto_commit()
+
+    def delete_skill(self, filepath: str, project: str, name: Optional[str] = None) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        if name:
+            cur.execute("DELETE FROM skills WHERE name = ? AND project = ?", (name, project))
+            cur.execute("DELETE FROM fts_skills WHERE name = ? AND project = ?", (name, project))
+        else:
+            cur.execute("DELETE FROM skills WHERE filepath = ? AND project = ?", (filepath, project))
+        self._auto_commit()
+
+    def search_skills(
+        self,
+        query_tokens: List[str],
+        allowed_projects: Optional[List[str]] = None,
+        limit: int = 20,
+    ) -> List[Tuple[str, float]]:
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        clean = [t.strip() for t in query_tokens if t.strip()]
+        if not clean:
+            return []
+        cur = self.conn.cursor()
+        fts_query = " OR ".join(f'"{t.replace(chr(34), chr(34)+chr(34))}"' for t in clean)
+
+        clauses = ["fts_skills MATCH ?"]
+        params: List[Any] = [fts_query]
+
+        if allowed_projects is not None:
+            placeholders = ",".join("?" for _ in allowed_projects)
+            clauses.append(f"project IN ({placeholders})")
+            params.extend(allowed_projects)
+
+        where = " AND ".join(clauses)
+        params.append(limit)
+
+        try:
+            cur.execute(
+                f"""
+                SELECT name, project, bm25(fts_skills) as rank
+                FROM fts_skills
+                WHERE {where}
+                ORDER BY rank
+                LIMIT ?
+                """,
+                params
+            )
+            return [(r["name"], round(abs(float(r["rank"])), 3)) for r in cur.fetchall()]
+        except Exception:
+            return []
+
+    # =========================================================================
+    # Contexts (Session Memory)
+    # =========================================================================
+
+    def save_context(self, context: ContextRecord) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        zcontent = zlib.compress(context.full_notes.encode("utf-8"), level=9)
+        active_json = json.dumps(context.active_files)
+        tasks_json = json.dumps(context.open_tasks)
+
+        cur.execute(
+            """
+            INSERT INTO contexts (session_id, project, title, summary, active_files, open_tasks, timestamp, zcontent)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id, project) DO UPDATE SET
+                title = excluded.title,
+                summary = excluded.summary,
+                active_files = excluded.active_files,
+                open_tasks = excluded.open_tasks,
+                timestamp = excluded.timestamp,
+                zcontent = excluded.zcontent
+            """,
+            (context.session_id, context.project, context.title, context.summary, active_json, tasks_json, context.timestamp, zcontent)
+        )
+
+        cur.execute("DELETE FROM fts_contexts WHERE session_id = ? AND project = ?", (context.session_id, context.project))
+        cur.execute(
+            "INSERT INTO fts_contexts (session_id, project, title, summary, content) VALUES (?, ?, ?, ?, ?)",
+            (context.session_id, context.project, context.title or "", context.summary, context.full_notes[:4000])
+        )
+        self._auto_commit()
+
+    def get_context(
+        self,
+        session_id: Optional[str] = None,
+        allowed_projects: Optional[List[str]] = None,
+    ) -> Optional[ContextRecord]:
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return None
+        cur = self.conn.cursor()
+        clauses = []
+        params: List[Any] = []
+
+        if session_id:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+
+        if allowed_projects is not None:
+            placeholders = ",".join("?" for _ in allowed_projects)
+            clauses.append(f"project IN ({placeholders})")
+            params.extend(allowed_projects)
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        order_limit = "" if session_id else "ORDER BY timestamp DESC LIMIT 1"
+
+        cur.execute(
+            f"SELECT session_id, project, title, summary, active_files, open_tasks, timestamp, zcontent FROM contexts {where} {order_limit}",
+            params
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        try:
+            full_notes = zlib.decompress(row["zcontent"]).decode("utf-8", errors="replace")
+        except Exception:
+            full_notes = ""
+
+        try:
+            active_files = json.loads(row["active_files"]) if row["active_files"] else []
+        except Exception:
+            active_files = []
+
+        try:
+            open_tasks = json.loads(row["open_tasks"]) if row["open_tasks"] else []
+        except Exception:
+            open_tasks = []
+
+        return ContextRecord(
+            session_id=row["session_id"],
+            project=row["project"],
+            title=row["title"] or "",
+            summary=row["summary"],
+            active_files=active_files,
+            open_tasks=open_tasks,
+            timestamp=float(row["timestamp"]),
+            full_notes=full_notes
+        )
+
+    def list_contexts(self, allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        cur = self.conn.cursor()
+        clauses = []
+        params: List[Any] = []
+
+        if allowed_projects is not None:
+            placeholders = ",".join("?" for _ in allowed_projects)
+            clauses.append(f"project IN ({placeholders})")
+            params.extend(allowed_projects)
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        cur.execute(
+            f"SELECT session_id, project, title, summary, timestamp, active_files, open_tasks FROM contexts {where} ORDER BY timestamp DESC",
+            params
+        )
+        results = []
+        for r in cur.fetchall():
+            try:
+                af = json.loads(r["active_files"]) if r["active_files"] else []
+            except Exception:
+                af = []
+            try:
+                ot = json.loads(r["open_tasks"]) if r["open_tasks"] else []
+            except Exception:
+                ot = []
+            results.append({
+                "session_id": r["session_id"],
+                "project": r["project"],
+                "title": r["title"] or "",
+                "summary": r["summary"],
+                "timestamp": r["timestamp"],
+                "active_files": af,
+                "open_tasks": ot
+            })
+        return results
+
+    def search_contexts(
+        self,
+        query_tokens: List[str],
+        allowed_projects: Optional[List[str]] = None,
+        top_k: int = 3,
+    ) -> List[Dict[str, Any]]:
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        clean = [t.strip() for t in query_tokens if t.strip()]
+        if not clean:
+            return []
+        cur = self.conn.cursor()
+        fts_query = " OR ".join(f'"{t.replace(chr(34), chr(34)+chr(34))}"' for t in clean)
+
+        clauses = ["fts_contexts MATCH ?"]
+        params: List[Any] = [fts_query]
+
+        if allowed_projects is not None:
+            placeholders = ",".join("?" for _ in allowed_projects)
+            clauses.append(f"fts_contexts.project IN ({placeholders})")
+            params.extend(allowed_projects)
+
+        where = " AND ".join(clauses)
+        params.append(top_k)
+
+        try:
+            cur.execute(
+                f"""
+                SELECT fts_contexts.session_id, fts_contexts.project, fts_contexts.title,
+                       fts_contexts.summary, bm25(fts_contexts) as rank, contexts.timestamp
+                FROM fts_contexts
+                JOIN contexts ON fts_contexts.session_id = contexts.session_id AND fts_contexts.project = contexts.project
+                WHERE {where}
+                ORDER BY rank
+                LIMIT ?
+                """,
+                params
+            )
+            return [
+                {
+                    "session_id": r["session_id"],
+                    "project": r["project"],
+                    "title": r["title"],
+                    "summary": r["summary"],
+                    "score": round(abs(float(r["rank"])), 3),
+                    "timestamp": r["timestamp"]
+                }
+                for r in cur.fetchall()
+            ]
+        except Exception:
+            return []
+
+    # =========================================================================
+    # Analysis References
+    # =========================================================================
+
+    def store_analysis_ref(self, ref: AnalysisRefRecord) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        zbody = zlib.compress(ref.body_text.encode("utf-8"), level=9)
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO analysis_refs (ref_id, filepath, name, start_line, end_line, kind, zbody, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (ref.ref_id, ref.filepath, ref.name, ref.start_line, ref.end_line, ref.kind, zbody, ref.timestamp)
+        )
+        self._auto_commit()
+
+    def get_analysis_ref(self, ref_id: str) -> Optional[AnalysisRefRecord]:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT ref_id, filepath, name, start_line, end_line, kind, zbody, timestamp FROM analysis_refs WHERE ref_id = ?",
+            (ref_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        try:
+            body = zlib.decompress(row["zbody"]).decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        return AnalysisRefRecord(
+            ref_id=row["ref_id"],
+            filepath=row["filepath"],
+            name=row["name"],
+            start_line=row["start_line"],
+            end_line=row["end_line"],
+            kind=row["kind"],
+            body_text=body,
+            timestamp=row["timestamp"]
+        )
+
+    def evict_stale_analysis_refs(self, older_than_seconds: float) -> int:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cutoff = time.time() - older_than_seconds
+        cur.execute("DELETE FROM analysis_refs WHERE timestamp < ?", (cutoff,))
+        count = cur.rowcount
+        self._auto_commit()
+        return count
+
+    # =========================================================================
+    # Semantic Cache & State
+    # =========================================================================
+
+    def get_semantic_cache(self, cache_key: str, file_hash: str) -> Optional[Dict[str, Any]]:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT result_json FROM semantic_cache WHERE cache_key = ? AND file_hash = ?",
+            (cache_key, file_hash)
+        )
+        row = cur.fetchone()
+        if row:
+            try:
+                return json.loads(row["result_json"])
+            except Exception:
+                return None
+        return None
+
+    def set_semantic_cache(self, cache_key: str, file_hash: str, result: Dict[str, Any]) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO semantic_cache (cache_key, file_hash, result_json, timestamp)
+            VALUES (?, ?, ?, ?)
+            """,
+            (cache_key, file_hash, json.dumps(result), time.time())
+        )
+        self._auto_commit()
+
+    def clear_semantic_cache(self) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM semantic_cache")
+        self._auto_commit()
+
+    def get_state(self, key: str) -> Optional[Any]:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute("SELECT value_json FROM session_state WHERE key = ?", (key,))
+        row = cur.fetchone()
+        if row:
+            try:
+                return json.loads(row["value_json"])
+            except Exception:
+                return None
+        return None
+
+    def set_state(self, key: str, value: Any) -> None:
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO session_state (key, value_json, updated)
+            VALUES (?, ?, ?)
+            """,
+            (key, json.dumps(value), time.time())
+        )
+        self._auto_commit()
+
+    def get_table_counts(self) -> Dict[str, int]:
+        self._check_closed()
+        cur = self.conn.cursor()
+        counts: Dict[str, int] = {}
+        for tbl in ["files", "chunks", "symbols", "skills", "syntax_errors", "contexts"]:
+            try:
+                cur.execute(f"SELECT COUNT(*) as c FROM {tbl}")
+                counts[tbl] = int(cur.fetchone()["c"])
+            except Exception:
+                counts[tbl] = 0
+        return counts
+
+    def get_weak_points(self) -> Dict[str, Any]:
+        self._check_closed()
+        cur = self.conn.cursor()
+        result: Dict[str, Any] = {
+            "syntax_error_density_pct": 0.0,
+            "complexity_hotspots": [],
+            "unindexed_or_stale_files": [],
+        }
+        try:
+            cur.execute("SELECT COUNT(*) as c FROM files")
+            row = cur.fetchone()
+            total_files = int(row["c"]) if row else 0
+
+            cur.execute("SELECT COUNT(DISTINCT filepath) as c FROM syntax_errors")
+            row_err = cur.fetchone()
+            files_with_errors = int(row_err["c"]) if row_err else 0
+
+            if total_files > 0:
+                result["syntax_error_density_pct"] = round((files_with_errors / total_files) * 100.0, 2)
+
+            cur.execute(
+                """
+                SELECT f.filepath, COUNT(s.id) as sym_count
+                FROM files f
+                JOIN symbols s ON f.filepath = s.filepath
+                GROUP BY f.filepath
+                ORDER BY sym_count DESC
+                LIMIT 10
+                """
+            )
+            hotspots = []
+            for r in cur.fetchall():
+                hotspots.append({
+                    "filepath": r["filepath"],
+                    "symbols_count": int(r["sym_count"]),
+                })
+            result["complexity_hotspots"] = hotspots
+
+            cur.execute(
+                """
+                SELECT filepath FROM files
+                WHERE mtime IS NULL OR mtime = 0
+                LIMIT 10
+                """
+            )
+            result["unindexed_or_stale_files"] = [r["filepath"] for r in cur.fetchall()]
+        except Exception:
+            pass
+        return result
