@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Background file watcher that automatically synchronizes ai-db when files change
 TARGET_DIR="${1:-.}"
-DB_PATH="${2:-$HOME/GitRepos/ai-db/codebase_knowledge.db}"
+DB_PATH="${2:-${AI_DB_PATH:-$HOME/.local/share/ai-db/codebase_knowledge.db}}"
 
 echo "[ai-db watcher] Monitoring '$TARGET_DIR' -> DB: '$DB_PATH'"
 

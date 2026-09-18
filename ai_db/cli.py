@@ -16,10 +16,12 @@ from ai_db import (
     run_watch,
     extract_file_outline,
     compute_sha256,
+    __version__,
 )
 
-def main():
+def main(argv: Optional[List[str]] = None):
     parser = argparse.ArgumentParser(description="ai-db: Token-Optimized Vector DB & Code Index")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # sync
@@ -168,7 +170,7 @@ def main():
     prune_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
     # optimize
-    opt_p = subparsers.add_parser("optimize", aliases=["vacuum"], help="Optimize DB: merge FTS5 index, run PRAGMA optimize, and vacuum")
+    opt_p = subparsers.add_parser("optimize", aliases=["vacuum"], help="Optimize DB: merge FTS5 index, run query planner optimization, and vacuum")
     opt_p.add_argument("--no-prune", action="store_true", help="Skip pruning missing files before vacuum")
     opt_p.add_argument("--default-format", "--fmt", dest="default_format", choices=["stub", "sexp", "json", "outline", "prose"], default=None, help="Configure and persist default output format for future queries")
     opt_p.add_argument("--db", default=DEFAULT_DB_FILE)
@@ -201,7 +203,7 @@ def main():
     serve_p.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
     serve_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.command:
         parser.print_help()
@@ -257,7 +259,7 @@ def main():
         paths = cfg.get("auto_sync_paths", [])
         if not paths:
             print(f"No paths configured in {args.config}. Example format:")
-            print(json.dumps({"auto_sync_paths": ["~/GitRepos/my-project"]}, indent=2))
+            print(json.dumps({"auto_sync_paths": ["~/projects/my-project"]}, indent=2))
             sys.exit(0)
 
         db = VectorDB(args.db)
@@ -638,15 +640,23 @@ def main():
         print(f"db:{s['db']} | files:{s['files']} | chunks:{s['chunks']} | symbols:{s['symbols']} | syntax_errors:{s['syntax_errors']}{skills_str}{contexts_str} | size:{s['kb']}KB | default_format:{active_fmt}")
 
     elif args.command == "prune":
-        cur = db.conn.cursor()
-        cur.execute("SELECT filepath FROM files")
-        all_paths = [r["filepath"] for r in cur.fetchall()]
+        backend = getattr(db, "backend", getattr(db, "db", db))
+        if hasattr(backend, "get_all_filepaths"):
+            all_paths = backend.get_all_filepaths()
+        elif hasattr(db, "get_all_filepaths"):
+            all_paths = db.get_all_filepaths()
+        else:
+            all_paths = []
         pruned_count = 0
         for p in all_paths:
             if not os.path.exists(p):
-                db.prune_file(p)
+                if hasattr(backend, "delete_file"):
+                    backend.delete_file(p)
+                elif hasattr(db, "delete_file"):
+                    db.delete_file(p)
+                elif hasattr(db, "prune_file"):
+                    db.prune_file(p)
                 pruned_count += 1
-        db.conn.commit()
         print(f"pruned:{pruned_count}")
 
     elif args.command in ("optimize", "vacuum"):

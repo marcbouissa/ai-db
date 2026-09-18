@@ -6,10 +6,16 @@ DEFAULT_DB_FILE = os.environ.get(
     os.path.join(_xdg_data, "ai-db", "codebase_knowledge.db")
 )
 DEFAULT_CONFIG_FILE = os.path.expanduser("~/.config/ai-db/config.json")
-DEFAULT_SKILL_DIRS = [
-    os.path.expanduser("~/.gemini/config/skills"),
-    os.path.expanduser("~/.gemini/antigravity/builtin/skills")
-]
+_custom_skill_dirs = os.environ.get("AI_DB_SKILL_DIRS")
+if _custom_skill_dirs:
+    DEFAULT_SKILL_DIRS = [os.path.expanduser(p.strip()) for p in _custom_skill_dirs.split(":") if p.strip()]
+else:
+    DEFAULT_SKILL_DIRS = [
+        os.path.join(_xdg_data, "ai-db", "skills"),
+        os.path.expanduser("~/.config/ai-db/skills"),
+        os.path.expanduser("~/.gemini/config/skills"),
+        os.path.expanduser("~/.gemini/antigravity/builtin/skills"),
+    ]
 
 INDEXABLE_EXTENSIONS = {
     ".py", ".pyi", ".js", ".ts", ".d.ts", ".jsx", ".tsx", ".html", ".css", ".scss",

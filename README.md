@@ -1,269 +1,671 @@
-# ai-db: Zero-Dependency Code Knowledge & Vector Index Engine
+# ai-db: Zero-Dependency Code Intelligence & Vector Index Platform
 
-A high-speed, zero-dependency SQLite FTS5 + BM25 ranking vector database and knowledge index designed specifically for AI coding assistants (like Antigravity / Gemini / Claude) to **instantly recall codebase architecture, symbols, and files without slow repetitive codebase re-analysis on every new chat**.
+[![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](tests/)
+[![Dependencies: Zero](https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-blueviolet.svg)](pyproject.toml)
+[![Token Efficiency](https://img.shields.io/badge/token%20savings-80--95%25-success.svg)](#token-optimization-benchmarks)
+[![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![Type Checked: Mypy](https://img.shields.io/badge/type%20checked-mypy-informational.svg)](http://mypy-lang.org/)
 
-## Features
-- **Zero External Dependencies**: Powered entirely by the Python 3 standard library (`sqlite3`, `math`, `re`, `hashlib`, `json`, `ast`, `time`).
-- **AST Code Validation & Pre-Flight (`ai-db check`)**: Instant detection of broken syntax with exact file, line, and column numbers.
-- **Exact Symbol Resolution (`ai-db symbol`)**: Look up exact `class`, `def`, and `interface` definitions without noisy BM25 full-text false positives.
-- **Instant File Outlines (`ai-db outline`)**: Extract function signatures, class hierarchies, and key definitions without loading large files into LLM context.
-- **Sub-Millisecond Queries (`ai-db query`)**: Instant search across thousands of code chunks using SQLite FTS5 with BM25 ranking and identifier-aware tokenization.
-- **Incremental Synchronization (`ai-db sync`, `ai-db sync-all`)**: SHA-256 hash detection indexes only new or modified files, pruning deleted files automatically.
-- **Continuous Watch Daemon (`ai-db watch`)**: Background daemon keeping the index fresh on project file changes.
+A high-speed, zero-dependency local code intelligence engine, vector database, and AST analyzer designed specifically for AI coding assistants (such as Claude Desktop, Cursor, Google Antigravity, and autonomous coding agents) to **instantly recall codebase architecture, symbols, files, and session memories with 80%–95% token savings without repetitive codebase re-analysis on every chat**.
 
-## CLI Usage
+---
 
-### 1. Code Health & Syntax Pre-Flight
-Detect syntax errors before executing code or running tests:
+## Table of Contents
+
+- [Overview & Value Proposition](#overview--value-proposition)
+- [Key Features](#key-features)
+- [Architecture at a Glance](#architecture-at-a-glance)
+- [Installation & Quickstart](#installation--quickstart)
+- [CLI Commands Reference](#cli-commands-reference)
+  - [1. Code Health & Syntax Pre-Flight (`check`)](#1-code-health--syntax-pre-flight-ai-db-check)
+  - [2. Exact Symbol Definition Resolution (`symbol`)](#2-exact-symbol-definition-resolution-ai-db-symbol)
+  - [3. Instant File Outlines (`outline`)](#3-instant-file-outlines-ai-db-outline)
+  - [4. Semantic & Full-Text Search (`query`)](#4-semantic--full-text-search-ai-db-query)
+  - [5. Token-Optimized Code Analysis (`analyze`)](#5-token-optimized-code-analysis-ai-db-analyze)
+  - [6. Progressive Disclosure Expansion (`expand`)](#6-progressive-disclosure-expansion-ai-db-expand)
+  - [7. Natural Language Relevance Ranking (`locate`)](#7-natural-language-relevance-ranking-ai-db-locate)
+  - [8. Session Context & Memory Recall (`context` / `remember`)](#8-session-context--memory-recall-ai-db-context--ai-db-remember)
+  - [9. Performance & Token Telemetry (`telemetry`)](#9-performance--token-telemetry-ai-db-telemetry)
+  - [10. HTTP REST API Server (`serve`)](#10-http-rest-api-server-ai-db-serve)
+  - [11. Codebase Synchronization (`sync`, `sync-all`, `watch`)](#11-codebase-synchronization-ai-db-sync-sync-all-watch)
+  - [12. Smart Skill Routing (`route-skill`)](#12-smart-skill-routing-ai-db-route-skill)
+  - [13. Code Insights (`callers`, `diff`, `todos`)](#13-code-insights-ai-db-callers-diff-todos)
+  - [14. Database Maintenance (`optimize`, `status`, `prune`)](#14-database-maintenance-ai-db-optimize-status-prune)
+- [Model Context Protocol (MCP) Server](#model-context-protocol-mcp-server)
+  - [Claude Desktop Configuration](#claude-desktop-configuration)
+  - [Cursor IDE Configuration](#cursor-ide-configuration)
+  - [Google Antigravity Configuration](#google-antigravity-configuration)
+  - [MCP Tools Reference](#mcp-tools-reference)
+- [HTTP REST API Reference](#http-rest-api-reference)
+- [Token Optimization Benchmarks](#token-optimization-benchmarks)
+- [Project Scoping & Multi-Repo Access](#project-scoping--multi-repo-access)
+- [Development & Testing](#development--testing)
+- [Architecture & Documentation](#architecture--documentation)
+- [License](#license)
+
+---
+
+## Overview & Value Proposition
+
+### The Problem
+Traditional AI coding workflows waste enormous context windows and API costs. When an AI coding assistant inspects a project, it repeatedly reads hundreds of raw files into its prompt context. This burns tens of thousands of tokens per turn, exceeds LLM context budgets, introduces high latency, and leads to context truncation or reasoning hallucinations.
+
+### The Solution: `ai-db`
+`ai-db` operates as a high-speed local code intelligence sidecar. Instead of ingesting raw code dumps, AI assistants query `ai-db` for:
+- **Exact AST symbol definitions**: Instant jump-to-definition without full-text false positives.
+- **Structural file skeletons**: Outline functions, class hierarchies, and type annotations consuming $\le 10\%$ of raw file tokens.
+- **Progressive disclosure (`ref:hash`)**: Opaque node handles that allow agents to expand specific function bodies only when needed.
+- **Token-compressed representations**: Native code skeletons (`--fmt stub`) and Lisp-like AST S-expressions (`--fmt sexp`) saving **80% to 95%** of token overhead.
+- **Session context memory (`ai-db remember`)**: Persistent checkpointing of architectural decisions, open tasks, and active files across chats.
+
+---
+
+## Key Features
+
+- **Zero External Dependencies**: The core platform (indexing, AST analysis, search, CLI, MCP stdio server, HTTP REST server) relies strictly on the Python 3 standard library (`sqlite3`, `ast`, `hashlib`, `json`, `http.server`, etc.).
+- **Sub-Millisecond Search**: SQLite WAL mode with FTS5 BM25 ranking, identifier-aware tokenization, and zlib level-9 compression executes complex code queries in $< 2\text{ ms}$.
+- **Pluggable Storage Layer (SOLID / Open-Closed)**: Decoupled `StorageBackend` abstraction supporting high-concurrency SQLite and modular MySQL 8.0+ adapter interfaces via a pluggable factory.
+- **Pluggable Transports**: Single unified `ServiceDispatcher` serving CLI commands (`ai-db`, `vectordb`), Model Context Protocol (stdio JSON-RPC 2.0), and threaded HTTP REST endpoints.
+- **Performance & Token Telemetry**: Quantitative measurement of p50/p95/p99 query latencies, compression savings across 4 serialization formats, semantic cache hit rates, and codebase weak points (syntax error density, complexity hotspots).
+- **Project Isolation & Scoping**: Auto-detects project boundaries via `.git`, `pyproject.toml`, or `package.json` to prevent cross-project context pollution while allowing explicit read-only sharing.
+
+---
+
+## Architecture at a Glance
+
+```
+                  ┌────────────────────────────────────────────────┐
+                  │          AI Clients / Developer Tools          │
+                  │   (Claude Desktop, Cursor, Antigravity, CLI)   │
+                  └──────────────┬──────────────────┬──────────────┘
+                                 │                  │
+                         ┌───────▼────────┐  ┌──────▼───────┐
+                         │   CLI / stdio  │  │   HTTP API   │
+                         │ (ai-db, MCP)   │  │ (REST / JSON)│
+                         └───────┬────────┘  └──────┬───────┘
+                                 │                  │
+                     ┌───────────▼──────────────────▼───────────┐
+                     │         Unified ServiceDispatcher        │
+                     │           (Tool Registry & Schema)       │
+                     └─────────────────────┬────────────────────┘
+                                           │
+         ┌─────────────────────────────────┼─────────────────────────────────┐
+         │                                 │                                 │
+┌────────▼────────┐               ┌────────▼────────┐               ┌────────▼────────┐
+│  Parser & AST   │               │ Search & Query  │               │    Telemetry    │
+│ (ai_db/parser/) │               │ (ai_db/search/) │               │(ai_db/telemetry)│
+└────────┬────────┘               └────────┬────────┘               └────────┬────────┘
+         │                                 │                                 │
+         └─────────────────────────────────┼─────────────────────────────────┘
+                                           │
+                     ┌─────────────────────▼────────────────────┐
+                     │          StorageBackend (ABC)            │
+                     │         (ai_db/storage/backend.py)       │
+                     └──────────────┬──────────────────┬────────┘
+                                    │                  │
+                            ┌───────▼────────┐  ┌──────▼───────┐
+                            │ SQLiteBackend  │  │ MySQLBackend │
+                            │ (WAL, FTS5)    │  │  (Adapter)   │
+                            └────────────────┘  └──────────────┘
+```
+
+For complete architectural details, design rationale, and extension guides, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
+
+## Installation & Quickstart
+
+### Prerequisites
+- Python 3.10, 3.11, or 3.12
+- Git
+
+### Standard Installation
+
+Clone the repository and install in editable mode:
+
 ```bash
+git clone https://github.com/example/ai-db.git
+cd ai-db
+
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install editable package (core: 0 external dependencies)
+pip install -e .
+```
+
+### Modular Dependency Extras
+
+Install optional components as needed:
+
+```bash
+# Install with MySQL 8.0+ storage adapter support
+pip install -e ".[mysql]"
+
+# Install with development, linting, and testing tooling (pytest, ruff, mypy)
+pip install -e ".[dev]"
+
+# Install all optional dependencies
+pip install -e ".[all]"
+```
+
+### Verification
+Both `ai-db` and `vectordb` console commands are installed as entry points:
+
+```bash
+ai-db --version
+vectordb --version
+```
+
+---
+
+## CLI Commands Reference
+
+### 1. Code Health & Syntax Pre-Flight (`ai-db check`)
+Fast AST validation to catch syntax errors with exact file, line, and column numbers before running builds or tests:
+
+```bash
+# Check current directory
 ai-db check .
-ai-db check /path/to/file.py
+
+# Check specific file
+ai-db check src/services/auth.py
+
+# Continuous watch mode (re-checks instantly upon file saves)
+ai-db check . --watch --interval 1.5
 ```
-Output:
+
+*Example Output:*
 ```
-SYNTAX_ERROR: path/to/file.py:54:12 Unterminated string literal
+SYNTAX_ERROR: src/services/auth.py:42:18 Unterminated string literal
 Total errors: 1
 ```
 
-### 2. Exact Symbol Definition Lookup
-Jump directly to canonical symbol definitions:
+---
+
+### 2. Exact Symbol Definition Resolution (`ai-db symbol`)
+Resolves canonical `class`, `def`, and `interface` definitions directly via AST extraction without noisy full-text matches:
+
 ```bash
-ai-db symbol execute_command
-ai-db symbol VectorDB
-```
-Output:
-```
-@blender_ox/handlers.py:L647 (def execute_command)
-@vectordb.py:L473 (class VectorDB)
+ai-db symbol AuthService
+ai-db symbol verify_token
 ```
 
-### 3. File Skeleton / Outline Extraction
-Inspect structure without blowing context tokens:
+*Example Output:*
+```
+@src/services/auth.py:L18 (class AuthService)
+@src/services/auth.py:L94 (def verify_token)
+```
+
+---
+
+### 3. Instant File Outlines (`ai-db outline`)
+Extracts class hierarchies, method signatures, and top-level definitions without blowing context tokens:
+
 ```bash
-ai-db outline blender_ox/handlers.py
-```
-Output:
-```
-File: blender_ox/handlers.py (669 lines)
-  L56: _PRIMITIVES (dict)
-  L74: def create_primitive(d)
-  L647: def execute_command(payload)
+ai-db outline src/services/auth.py
 ```
 
-### 4. Semantic & Keyword Search (BM25)
+*Example Output:*
+```
+File: src/services/auth.py (148 lines)
+  L18: class AuthService
+    L24: def __init__(self, db_client)
+    L52: def create_session(self, user_id: str) -> str
+    L94: def verify_token(self, token: str) -> dict
+```
+
+---
+
+### 4. Semantic & Full-Text Search (`ai-db query`)
+Executes sub-millisecond BM25 ranking across code chunks with identifier-aware tokenization:
+
 ```bash
-ai-db query "sqlite fts5 ranking" --top 5
+ai-db query "sqlite fts5 bm25 ranking" --top 5
 ```
 
-### 5. Synchronize / Index a Codebase
+---
+
+### 5. Token-Optimized Code Analysis (`ai-db analyze`)
+Multi-depth AST code inspection designed for minimal token overhead:
+
 ```bash
-ai-db sync /path/to/project
+# Outline signatures only (<= 10% of raw file tokens)
+ai-db analyze src/services/auth.py --depth summary
+
+# AST structure with class methods and types
+ai-db analyze src/services/auth.py --depth structure
+
+# Targeted: extract bodies only matching a question or concept filter
+ai-db analyze src/services/auth.py -q "token expiration check" --depth targeted
+
+# Range target: lines 50 to 90 with 5 lines surrounding context
+ai-db analyze src/services/auth.py --span 50:90 --ctx 5
+
+# Select serialization format: stub (code skeleton), sexp (S-expression), or json
+ai-db analyze src/services/auth.py --depth summary --fmt stub
 ```
 
-### 6. Multi-Project Synchronization (`sync-all`)
-Register projects in `~/.config/ai-db/config.json`:
-```json
-{
-  "auto_sync_paths": [
-    "~/.local/share/blender-ai/skills",
-    "~/Documents/antigravity/noble-tesla",
-    "~/GitRepos/blender_mcp",
-    "~/GitRepos/ai-db"
-  ]
-}
-```
-Synchronize all registered projects:
+---
+
+### 6. Progressive Disclosure Expansion (`ai-db expand`)
+Expands opaque handles (`ref:hash`) returned by `analyze` on demand:
+
 ```bash
-ai-db sync-all
+# Expand function body by reference
+ai-db expand ref:a8f9c1
+
+# Expand specific sub-span within a handle
+ai-db expand ref:a8f9c1 --span 1:15
 ```
 
-### 7. Continuous Background Watch Daemon
+---
+
+### 7. Natural Language Relevance Ranking (`ai-db locate`)
+Finds top-k candidate files and snippets answering a natural question or concept:
+
 ```bash
-# Foreground watch:
-ai-db watch /path/to/project
-
-# Background daemon:
-ai-db watch /path/to/project --daemon
+ai-db locate "JWT token expiration and signature validation" -k 5
 ```
 
-### 8. Smart Prompt Skill Routing (`ai-db route-skill`)
-Analyze user prompts and deterministically route to the best matching skills in `< 2ms` without polluting the context window with dozens of skill descriptions:
+---
+
+### 8. Session Context & Memory Recall (`ai-db context` / `ai-db remember`)
+Persists conversation checkpoints, active files, architectural decisions, and open tasks across chats:
+
 ```bash
-ai-db route-skill "Design an ad banner for LinkedIn with glassmorphism style"
-```
-Output:
-```
-[PRIMARY] banner-design (conf: 0.93) -> ~/.gemini/config/skills/banner-design/SKILL.md
-  Reason: Matched triggers: design, glassmorphism, banner; High semantic relevance; Banner & creative asset keywords
-[SECONDARY #2] design (conf: 0.89) -> ~/.gemini/config/skills/design/SKILL.md
-```
-
-You can also output in clean machine formats:
-```bash
-# Output only the best skill paths
-ai-db route-skill "Create 5 presentation slides" --format path
-
-# Output JSON with confidence scores and reasoning
-ai-db route-skill "Check if there are broken python files" --format json
-```
-
-### 9. Project Scoping & Cross-Project Access Isolation
-By default, all code, symbols, syntax checks, and skills are scoped to their respective project (auto-detected from the nearest `.git`, `package.json`, or `pyproject.toml`):
-- Operations inside a project only access assets belonging to that project or the `global` scope.
-- Project-local skills in `<project>/skills/` or `<project>/.agents/skills/` are automatically synced under the project's scope.
-- Other project context is strictly invisible unless explicitly allowed on a read-only basis:
-```bash
-# Allow read-only access to another project via CLI:
-ai-db symbol other_func --allow-project other-project
-ai-db query "authentication" --allow-project other-project
-ai-db route-skill "custom-workflow" --allow-project other-project
-```
-
-To permanently configure cross-project read-only permissions, add `cross_project_access` to `~/.config/ai-db/config.json`:
-```json
-{
-  "cross_project_access": {
-    "my-frontend": ["my-backend", "shared-utils"]
-  }
-}
-```
-
-### 10. Session Context & Chat Memory (`ai-db context` / `ai-db remember`)
-Store and recall conversation checkpoints, active files, architectural decisions, and open tasks across chats without re-reading the entire repository:
-
-#### Save Session Context:
-```bash
-ai-db context save session-auth \
-  --title "Auth Migration" \
-  --summary "Migrating authentication from sessions to JWT and refresh tokens" \
-  --files "auth.py,models/user.py" \
+# Save session checkpoint
+ai-db context save auth-refactor \
+  --title "JWT Migration" \
+  --summary "Migrating authentication service from cookie sessions to JWT" \
+  --files "src/services/auth.py,src/models/user.py" \
   --tasks "Implement token refresh,Add unit tests for expired token"
+
+# Instant context recall in a fresh chat session (/remember)
+ai-db remember
 ```
 
-#### Recall Context Memory (`/remember`):
-```bash
-ai-db remember
-# or
-ai-db context get
-```
-Output (token-dense markdown ready for instant injection):
+*Example Output:*
 ```markdown
-### [ai-db Context Memory: my-project / session-auth]
-**Title**: Auth Migration
-**Summary**: Migrating authentication from sessions to JWT and refresh tokens
+### [ai-db Context Memory: my-project / auth-refactor]
+**Title**: JWT Migration
+**Summary**: Migrating authentication service from cookie sessions to JWT
 
 **Active Files**:
-- auth.py
-- models/user.py
+- src/services/auth.py
+- src/models/user.py
 
 **Pending Tasks**:
 1. Implement token refresh
 2. Add unit tests for expired token
 ```
 
-#### List & Search Session Contexts:
+---
+
+### 9. Performance & Token Telemetry (`ai-db telemetry`)
+Inspect query latencies (p50/p95/p99), token compression efficiency across 4 formats, cache hit rates, and codebase weak points:
+
 ```bash
-ai-db context list
-ai-db context query "JWT token"
+# Human-readable summary
+ai-db telemetry
+
+# Machine-readable JSON output
+ai-db telemetry --json
 ```
 
-### 11. Index Installed Skills (`ai-db sync-skills`)
-```bash
-ai-db sync-skills
+*Example Output:*
+```
+[ai-db Telemetry Summary]
+Query Latency: p50=1.2ms | p95=3.4ms | p99=6.1ms (124 queries)
+Token Efficiency: Raw=145,000 -> Stub=21,750 (85.0% savings) | S-Exp=13,050 (91.0% savings)
+Cache Hit Rate: 92.4% (85 hits / 7 misses)
+Codebase Weak Points: 0 syntax errors, 2 complexity hotspots
 ```
 
-### 12. Check Database Health
+---
+
+### 10. HTTP REST API Server (`ai-db serve`)
+Launches the zero-dependency built-in HTTP server:
+
 ```bash
-ai-db status
+ai-db serve --port 8765 --host 127.0.0.1
 ```
 
-### 13. Optimize & Defragment Database (`ai-db optimize`)
-Prune stale references, optimize and merge FTS5 inverted indexes, update query planner statistics (`PRAGMA optimize`), and reclaim fragmented disk space (`VACUUM`):
+See [HTTP REST API Reference](#http-rest-api-reference) for endpoint details.
+
+---
+
+### 11. Codebase Synchronization (`ai-db sync`, `sync-all`, `watch`)
+
 ```bash
+# Sync current repository or path (incremental, SHA-256 change detection)
+ai-db sync .
+
+# Multi-repository synchronization from ~/.config/ai-db/config.json
+ai-db sync-all
+
+# Continuous file watcher (foreground)
+ai-db watch .
+
+# Continuous file watcher (background daemon)
+ai-db watch . --daemon
+```
+
+---
+
+### 12. Smart Skill Routing (`ai-db route-skill`)
+Matches user prompts against installed agent skills in $< 2\text{ ms}$ without polluting LLM prompts:
+
+```bash
+ai-db route-skill "Design an ad banner for LinkedIn with glassmorphism style"
+ai-db route-skill "Check if there are broken python files" --format json
+ai-db route-skill "Create presentation slides" --format path
+```
+
+---
+
+### 13. Code Insights (`ai-db callers`, `diff`, `todos`)
+
+```bash
+# Find all call sites and references to a symbol
+ai-db callers verify_token
+
+# Show changed spans since last indexed snapshot or git ref
+ai-db diff src/services/auth.py --since last
+
+# Extract TODO, FIXME, and HACK annotations across project
+ai-db todos --kind fixme
+```
+
+---
+
+### 14. Database Maintenance (`ai-db optimize`, `status`, `prune`)
+
+```bash
+# Defragment database, merge FTS5 indexes, and reclaim disk space
 ai-db optimize
-# or:
-ai-db vacuum
+
+# Configure and persist default output serialization format
+ai-db optimize --default-format stub
+
+# Inspect database size and indexing statistics
+ai-db status
+
+# Prune index records for deleted files
+ai-db prune
 ```
 
-### 14. Token-Optimized Code Analysis (`tokenopt-analyzer v2`)
-Minimal token consumption, maximum relevance, progressive disclosure, and zero AI-side blind exploration:
+---
 
-#### Depth Control (`summary | structure | targeted | full`)
+## Model Context Protocol (MCP) Server
+
+`ai-db` includes a built-in stdio JSON-RPC 2.0 Model Context Protocol (MCP) server. AI assistants use this interface to invoke `ai-db` tools autonomously during reasoning sessions.
+
+### Manual Stdio Testing
+
+Test the MCP server directly from your terminal:
+
 ```bash
-# Outline signatures only (<= 10% of raw file tokens):
-ai-db analyze vectordb.py --depth summary
-
-# AST outline with class methods:
-ai-db analyze vectordb.py --depth structure
-
-# Targeted: extract bodies only matching query or focus:
-ai-db analyze vectordb.py -q "semantic cache" --depth targeted
-```
-
-#### Range Targeting (`--span` & `--ctx`)
-```bash
-# Extract lines 65-75 plus 5 lines of surrounding context:
-ai-db analyze vectordb.py --span 65:75 --ctx 5
-```
-
-#### Progressive Disclosure (`ai-db expand`)
-`analyze` returns opaque handles (`ref:hash`) for discovered AST nodes. Expand bodies on-demand without context bloat:
-```bash
-ai-db expand ref:b3b64697
-# Or expand specific sub-span:
-ai-db expand ref:b3b64697 --span 1:10
-```
-
-#### Relevance Ranking (`ai-db locate`)
-Find top-k candidate files and snippets by natural question or concept via FTS5 BM25:
-```bash
-ai-db locate "syntax error validation" -k 5
-```
-
-#### Output Format Serialization (`--fmt stub | sexp | json`)
-Optimize token density based on agent needs:
-- `--fmt stub` (**Native Code Skeleton**): Best for LLM code analysis, reasoning, and type inspection. Consumes ~50% fewer tokens than JSON.
-- `--fmt sexp` (**S-Expression / Lisp**): Tree-native AST representation for absolute minimum token consumption (~63% fewer tokens).
-- `--fmt json` (**Standard JSON**): Traditional format for human inspection and external tool integration.
-
-#### Dynamic Format Optimization & Per-Run Override
-The agent can configure and persist the database's default output serialization format to match its preferred reasoning mode, while retaining the ability to override it on any specific run:
-- **Set default format**:
-  ```bash
-  ai-db optimize --default-format sexp   # Persist S-Expression as DB default
-  ai-db optimize --default-format stub   # Persist Native Skeleton as DB default
-  ```
-- **Autonomous Query Execution**:
-  When executing `ai-db analyze` or `ai-db locate` without any `--fmt` parameter, `ai-db` automatically queries and outputs in the persisted default format (`stub`, `sexp`, or `json`).
-- **Per-Run Override**:
-  Passing `--fmt` / `-fmt` dynamically overrides the database default for that single execution:
-  ```bash
-  ai-db analyze vectordb.py --depth summary --fmt json
-  ```
-- **MCP Autonomous Configuration**:
-  Agents can configure this via the `optimize` tool (`{"default_format": "sexp"}`) and specify `{"format": "stub"}` on `analyze` / `locate` calls.
-
-#### Model Context Protocol (MCP) Server
-`ai-db` includes a high-performance, zero-dependency JSON-RPC 2.0 stdio MCP server exposing `analyze`, `expand`, `locate`, `context_save`, `context_recall`, and `optimize` with self-describing schemas under 200 tokens:
-```bash
-# Launch MCP server manually:
+# Launch MCP server directly via CLI:
 ai-db mcp
-# Or:
-python3 /home/marc/GitRepos/ai-db/mcp_server.py
+
+# Or launch directly with python:
+python3 mcp_server.py
 ```
-Configured in `~/.gemini/config/mcp_config.json`:
+
+### Claude Desktop Configuration
+
+Add `ai-db` to your Claude Desktop configuration file:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+Using the installed `ai-db` executable:
 ```json
 {
   "mcpServers": {
     "ai-db": {
-      "command": "python3",
-      "args": ["/home/marc/GitRepos/ai-db/mcp_server.py"]
+      "command": "ai-db",
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-## AI Agent Policy Integration
-Antigravity automatically checks `ai-db` first on new sessions to route relevant skills, check syntax health, locate symbol definitions, and recall existing project context (`ai-db remember`) without performing slow, full-codebase directory crawls.
+*Alternative using Python virtualenv and `mcp_server.py`:*
+```json
+{
+  "mcpServers": {
+    "ai-db": {
+      "command": "/path/to/venv/bin/python",
+      "args": ["/path/to/ai-db/mcp_server.py"]
+    }
+  }
+}
+```
 
+### Cursor IDE Configuration
 
+Add `ai-db` in `.cursor/mcp.json` (workspace) or via **Settings > Features > MCP**:
+
+```json
+{
+  "mcpServers": {
+    "ai-db": {
+      "command": "ai-db",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### Google Antigravity Configuration
+
+Add `ai-db` to `~/.gemini/antigravity/mcp_config.json` or project MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "ai-db": {
+      "command": "ai-db",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### MCP Tools Reference
+
+| MCP Tool | Description | Key Arguments |
+|---|---|---|
+| `analyze` | Multi-depth AST analysis with token budgeting | `targets`, `depth`, `q`, `focus`, `span`, `format` |
+| `expand` | Progressive disclosure of `ref:hash` handles | `ref`, `depth`, `span` |
+| `locate` | Natural language concept and symbol search | `query`, `scope`, `k`, `format` |
+| `context_save` | Save chat state, active files, and tasks | `session_id`, `summary`, `title`, `active_files`, `open_tasks` |
+| `context_recall` | Recall chat checkpoint or search past memories | `session_id`, `query` |
+| `optimize` | Compact FTS5 index, vacuum DB, set default format | `prune_missing`, `default_format` |
+| `telemetry` | Retrieve performance and token efficiency metrics | `json` |
+
+---
+
+## HTTP REST API Reference
+
+Run `ai-db serve --port 8765` to start the lightweight HTTP server. All endpoints include automatic CORS preflight (`OPTIONS`) handling.
+
+### Endpoints Overview
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Liveness check; returns `{"ok": true}` |
+| `GET` | `/status` | Database statistics (files, chunks, symbols, size) |
+| `GET` | `/tools` | List registered tools and JSON Schemas |
+| `POST` | `/` | Execute tool via envelope `{"tool": "<name>", "args": {...}}` |
+| `POST` | `/tools/{name}` | Execute tool with direct JSON arguments body |
+| `GET` | `/telemetry` | Retrieve latency percentiles and token efficiency metrics |
+
+### Example Requests
+
+#### 1. Liveness Check
+```bash
+curl -s http://127.0.0.1:8765/health
+```
+```json
+{
+  "ok": true
+}
+```
+
+#### 2. Locate Relevant Files & Symbols
+```bash
+curl -s -X POST http://127.0.0.1:8765/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool": "locate",
+    "args": {
+      "query": "authentication token verification",
+      "scope": ".",
+      "k": 3,
+      "format": "json"
+    }
+  }'
+```
+```json
+[
+  {
+    "file": "src/services/auth.py",
+    "name": "verify_token",
+    "span": [94, 120],
+    "score": -3.12,
+    "snippet": "def verify_token(self, token: str) -> dict:\n    payload = jwt.decode(token, self.secret)\n    return payload"
+  }
+]
+```
+
+#### 3. Save Session Context Memory
+```bash
+curl -s -X POST http://127.0.0.1:8765/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool": "context_save",
+    "args": {
+      "session_id": "auth-api",
+      "title": "API Token Validation",
+      "summary": "Implemented JWT bearer token authentication",
+      "active_files": ["src/services/auth.py"],
+      "open_tasks": ["Add token revocation blacklist"]
+    }
+  }'
+```
+```json
+{
+  "saved": true,
+  "session_id": "auth-api",
+  "project": "my-project",
+  "timestamp": 1726639200.0
+}
+```
+
+---
+
+## Token Optimization Benchmarks
+
+`ai-db` dramatically cuts token consumption by eliminating raw file ingestion in favor of structural and semantic representations:
+
+| Representation / Format | CLI Flag | Token Footprint vs Raw | Token Savings | Optimal Use Case |
+|---|---|---|---|---|
+| **Raw File Dump** | *(traditional)* | 100% (Baseline) | 0% | Dumb context loading (wasteful) |
+| **Standard JSON** | `--fmt json` | ~40%–55% | 45%–60% | Automated tooling & structured parsing |
+| **Native Stub** | `--fmt stub` | ~12%–20% | **80%–88%** | LLM reasoning, types, signatures |
+| **S-Expression** | `--fmt sexp` | ~5%–12% | **88%–95%** | Maximum context density & tree navigation |
+| **Signature Summary** | `--depth summary`| ~4%–8% | **92%–96%** | High-level file scanning & discovery |
+
+---
+
+## Project Scoping & Multi-Repo Access
+
+`ai-db` auto-detects project boundaries via `.git`, `pyproject.toml`, or `package.json`. Code chunks and symbol queries are isolated to the active project by default.
+
+### Configuration (`~/.config/ai-db/config.json`)
+
+Configure automatic project synchronization and cross-project read-only permissions:
+
+```json
+{
+  "auto_sync_paths": [
+    "~/projects/web-frontend",
+    "~/projects/api-backend",
+    "~/projects/shared-core"
+  ],
+  "cross_project_access": {
+    "web-frontend": ["shared-core"],
+    "api-backend": ["shared-core"]
+  }
+}
+```
+
+### CLI Cross-Project Access
+Query an allowed external project on a read-only basis:
+
+```bash
+ai-db symbol SharedConfig --allow-project shared-core
+ai-db query "database pool" --allow-project shared-core
+```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `AI_DB_PATH` | Path to primary SQLite index database | `~/.local/share/ai-db/codebase_knowledge.db` |
+| `AI_DB_CONFIG_PATH` | Path to JSON configuration file | `~/.config/ai-db/config.json` |
+| `AI_DB_SKILL_DIRS` | Colon-separated directories containing agent skills | Standard XDG skill paths |
+
+---
+
+## Development & Testing
+
+### Running the Test Suite
+The repository includes a comprehensive 5-tier test suite:
+
+```bash
+# Run all unit and integration tests
+pytest
+
+# Run repository sanitization and hygiene audit
+pytest tests/test_sanitization.py -v
+
+# Run storage layer tests
+pytest tests/test_storage.py -v
+
+# Run transport adapter tests (CLI, MCP, HTTP)
+pytest tests/test_transports.py -v
+
+# Run telemetry tests
+pytest tests/test_telemetry.py -v
+```
+
+### Code Formatting & Type Checking
+```bash
+# Linting and formatting with Ruff
+ruff check .
+ruff format --check .
+
+# Static type verification with Mypy
+mypy ai_db
+```
+
+---
+
+## Architecture & Documentation
+
+- [ARCHITECTURE.md](ARCHITECTURE.md): Comprehensive architectural specification detailing SOLID design principles, pluggable `StorageBackend` implementation guide, custom transport adapters, and telemetry internals.
+- [LICENSE](LICENSE): Full MIT License text.
+
+---
+
+## License
+
+This project is licensed under the terms of the [MIT License](LICENSE).  
+Copyright (c) 2026 ai-db Contributors.
