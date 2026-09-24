@@ -1,4 +1,4 @@
-# ai-db: Zero-Dependency Code Intelligence & Vector Index Platform
+# ai-db: Code Intelligence & Retrieval Platform for AI Agents
 
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -133,7 +133,7 @@ cd ai-db
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install editable package (core: 0 external dependencies)
+# Install editable package (core: tree-sitter, sqlite-vec, tiktoken, watchfiles)
 pip install -e .
 ```
 
@@ -158,6 +158,56 @@ Both `ai-db` and `vectordb` console commands are installed as entry points:
 ```bash
 ai-db --version
 vectordb --version
+```
+
+### Configuration (required)
+
+Every command except `init` needs a config file; there are no hidden runtime defaults.
+
+```bash
+ai-db init                                        # sqlite + lexical (BM25) retrieval
+ai-db init --force --embedding sentence_transformers   # hybrid BM25 + local vectors
+ai-db init --force --embedding voyage --rerank voyage  # hosted embeddings + rerank
+ai-db init --migrate                              # convert an old unversioned config
+ai-db config show                                 # resolved config (secrets hidden)
+ai-db config check                                # builds every enabled provider, 1 test call each
+```
+
+The file lives at `--config PATH`, `$AI_DB_CONFIG`, `$XDG_CONFIG_HOME/ai-db/config.json`
+or `~/.config/ai-db/config.json` (first match). Sections:
+
+| Section | Values |
+|---|---|
+| `storage.provider` | `sqlite` (built in) or any installed `ai_db.storage` plugin; `storage.options` go to the plugin |
+| `retrieval.mode` | `lexical` or `hybrid` (hybrid requires an embedding provider and a `vector`-capable backend) |
+| `embedding.provider` | `none`, `sentence_transformers`, `openai_compatible`, `voyage`, or an `ai_db.embedding` plugin |
+| `rerank.provider` | `none`, `sentence_transformers`, `voyage`, `cohere`, or an `ai_db.rerank` plugin |
+| `access.cross_project` | `{"project": ["other-project", ...]}` read access grants |
+
+Model names are only ever read from the config. `ai-db init` writes suggested models
+(see `ai_db/embed/defaults.py`) with a `_note` to verify them on MTEB-Code/CoIR.
+Changing the embedding model requires `ai-db reindex --embeddings`. Hosted providers
+read their API key from the environment variable named in `api_key_env`.
+
+### One-call analysis for agents (`ai-db investigate`)
+
+```bash
+ai-db investigate "how are search results ranked"            # mode: explain
+ai-db investigate "search_chunks" --mode impact --budget 6000
+ai-db investigate "where is the config validated" --mode locate
+```
+
+Returns a JSON evidence pack under the token budget: entry points with reasons, full
+bodies of the best matches, stubs + `ref:` handles (`ai-db expand`) for classes, callees,
+callers and covering tests, the call graph, recent commits and unresolved names. Also
+available as the `investigate` MCP tool and `POST /investigate`.
+
+### Measuring retrieval quality
+
+```bash
+ai-db eval --golden eval/golden/ai_db.jsonl --root . --baseline eval/results/lexical.json
+ai-db eval --pack --golden eval/golden/ai_db_pack.jsonl --root .
+ai-db log --slow 500        # slow queries with per-stage latency
 ```
 
 ---
