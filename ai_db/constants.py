@@ -48,3 +48,17 @@ VENDOR_NOISE_EXTENSIONS = {
 
 # Syncs with at least this many changed files parse in a process pool.
 PARALLEL_PARSE_MIN_FILES = 32
+
+# Chunking
+MAX_CHUNK_TOKENS = 512  # tiktoken o200k_base
+TEXT_WINDOW_LINES = 60
+TEXT_WINDOW_OVERLAP = 10
+EXT_TO_LANG = {
+    ".py": "python", ".pyi": "python",
+    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    ".ts": "typescript", ".tsx": "tsx",
+    ".go": "go", ".rs": "rust",
+    ".c": "c", ".h": "c",
+    ".cpp": "cpp", ".hpp": "cpp", ".cc": "cpp",
+    ".java": "java",
+}

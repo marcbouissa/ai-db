@@ -34,6 +34,20 @@ class ChunkRecord:
     content: str
     project: str = "global"
     id: Optional[int] = None
+    qualified_name: str = ""
+    language: str = ""
+    token_count: int = 0
+    content_hash: str = ""
+    parent_id: Optional[int] = None
+    # Index of the parent within the list passed to insert/replace (transient).
+    parent_index: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if not self.content_hash:
+            import hashlib
+            self.content_hash = hashlib.sha256(self.content.encode("utf-8")).hexdigest()
+        if not self.qualified_name:
+            self.qualified_name = self.name
 
 
 @dataclass(slots=True)
@@ -135,6 +149,9 @@ class SearchResult:
     end_line: int
     score: float
     snippet: str
+    qualified_name: str = ""
+    language: str = ""
+    parent_id: Optional[int] = None
 
 
 @dataclass(slots=True)

@@ -133,7 +133,7 @@ class TestParserTier1FeatureCoverage:
         assert any("def standalone_func" in name for name in chunk_names)
 
         for c in chunks:
-            assert c["chunk_type"] == "code"
+            assert c["chunk_type"] in ("code", "module", "class_header")
             assert c["start_line"] <= c["end_line"]
             assert len(c["content"]) > 0
 

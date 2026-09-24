@@ -397,8 +397,8 @@ class TestSearchTier3Combinations:
         hits_v2 = vdb.query("worker_task", project="cycle_proj")
         assert len(hits_v2) == 1
         assert "return 200" in hits_v2[0]["snippet"]
-        # Line numbers updated
-        assert hits_v2[0]["lines"] == "L3-4"
+        # Line numbers updated (leading comments are attached to the definition)
+        assert hits_v2[0]["lines"] == "L1-4"
 
     def test_search_prune_and_symbol_consistency(self, search_env):
         """Deleting a file and re-syncing removes its symbols and chunks from search."""

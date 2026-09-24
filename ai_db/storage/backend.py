@@ -91,6 +91,17 @@ class StorageBackend(ABC):
         """Persist chunk records and synchronize full-text search index."""
         pass
 
+    def replace_file_chunks(self, filepath: str, chunks: List[ChunkRecord]) -> Dict[str, int]:
+        """Make ``chunks`` the stored chunks of ``filepath``, keeping ids of unchanged
+        chunks (matched by ``(content_hash, name)``) and resolving ``parent_index``.
+        Returns ``{"kept", "inserted", "deleted"}`` counts."""
+        raise NotImplementedError(f"{type(self).__name__} must implement replace_file_chunks")
+
+    def clear_file_metadata(self, filepath: str) -> None:
+        """Delete symbols, refs, annotations, syntax errors and analysis refs of a file
+        (but not its file row or chunks)."""
+        raise NotImplementedError(f"{type(self).__name__} must implement clear_file_metadata")
+
     @abstractmethod
     def get_chunks_for_file(self, filepath: str) -> List[ChunkRecord]:
         """Retrieve all chunks for a file, ordered by start_line, uncompressed."""

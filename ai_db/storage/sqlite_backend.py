@@ -26,6 +26,10 @@ from ai_db.storage.models import (
 
 
 ZLIB_LEVEL = 6
+SCHEMA_VERSION = "5"
+# Tables rebuilt (not migrated) when SCHEMA_VERSION changes; the next sync re-indexes.
+INDEX_TABLES = ("fts_index", "chunks", "symbols", "symbol_refs", "annotations",
+                "syntax_errors", "analysis_refs", "files", "semantic_cache")
 MIN_SQLITE_VERSION = (3, 35, 0)  # INSERT ... RETURNING
 
 
@@ -147,6 +151,21 @@ class SQLiteBackend(StorageBackend):
         cur = self.conn.cursor()
 
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS session_state (
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL,
+                updated REAL NOT NULL
+            )
+        """)
+        cur.execute("SELECT value_json FROM session_state WHERE key = 'schema_version'")
+        row = cur.fetchone()
+        stored_ver = json.loads(row["value_json"]) if row else None
+        if stored_ver is not None and stored_ver != SCHEMA_VERSION:
+            for table in INDEX_TABLES:
+                cur.execute(f"DROP TABLE IF EXISTS {table}")
+            self._drop_extra_index_tables(cur)
+
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS files (
                 filepath TEXT PRIMARY KEY,
                 sha256 TEXT NOT NULL,
@@ -166,10 +185,17 @@ class SQLiteBackend(StorageBackend):
                 end_line INTEGER NOT NULL,
                 zcontent BLOB NOT NULL,
                 project TEXT DEFAULT 'global',
+                qualified_name TEXT NOT NULL DEFAULT '',
+                language TEXT NOT NULL DEFAULT '',
+                token_count INTEGER NOT NULL DEFAULT 0,
+                content_hash TEXT NOT NULL DEFAULT '',
+                parent_id INTEGER NULL REFERENCES chunks(id) ON DELETE SET NULL,
                 FOREIGN KEY (filepath) REFERENCES files(filepath) ON DELETE CASCADE
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_filepath ON chunks(filepath)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_file_hash ON chunks(filepath, content_hash)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_parent ON chunks(parent_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_project ON chunks(project)")
 
         cur.execute("""
@@ -282,14 +308,6 @@ class SQLiteBackend(StorageBackend):
         """)
 
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS session_state (
-                key TEXT PRIMARY KEY,
-                value_json TEXT NOT NULL,
-                updated REAL NOT NULL
-            )
-        """)
-
-        cur.execute("""
             CREATE TABLE IF NOT EXISTS analysis_refs (
                 ref_id TEXT PRIMARY KEY,
                 filepath TEXT NOT NULL,
@@ -332,19 +350,21 @@ class SQLiteBackend(StorageBackend):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_annotations_filepath ON annotations(filepath)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_annotations_kind ON annotations(kind, project)")
 
-        # Invalidate cache on schema version bump
-        SCHEMA_VERSION = "4"
-        cur.execute("SELECT value_json FROM session_state WHERE key = 'schema_version'")
-        row = cur.fetchone()
-        stored_ver = json.loads(row["value_json"]) if row else None
+        self._create_extra_tables(cur)
+
         if stored_ver != SCHEMA_VERSION:
-            cur.execute("DELETE FROM semantic_cache")
             cur.execute(
                 "INSERT OR REPLACE INTO session_state (key, value_json, updated) VALUES (?, ?, ?)",
                 ("schema_version", json.dumps(SCHEMA_VERSION), time.time())
             )
 
         self.conn.commit()
+
+    def _drop_extra_index_tables(self, cur: sqlite3.Cursor) -> None:
+        """Hook: drop tables added by later features on schema rebuild."""
+
+    def _create_extra_tables(self, cur: sqlite3.Cursor) -> None:
+        """Hook: create tables added by later features."""
 
     def close(self) -> None:
         if self._closed:
@@ -523,39 +543,110 @@ class SQLiteBackend(StorageBackend):
     # Chunks & Full-Text Search (BM25)
     # =========================================================================
 
-    def insert_chunks(self, chunks: List[ChunkRecord]) -> None:
-        self._check_closed()
+    _CHUNK_COLS = ("filepath, chunk_type, name, start_line, end_line, zcontent, project, "
+                   "qualified_name, language, token_count, content_hash")
+
+    def _insert_chunk_rows(self, chunks: List[ChunkRecord]) -> None:
+        """Insert chunks + FTS rows and assign ``c.id``. Does not resolve parents."""
         if not chunks:
             return
         cur = self.conn.cursor()
         rows = [
             (c.filepath, c.chunk_type, c.name, c.start_line, c.end_line,
-             zlib.compress(c.content.encode("utf-8"), level=ZLIB_LEVEL), c.project)
+             zlib.compress(c.content.encode("utf-8"), level=ZLIB_LEVEL), c.project,
+             c.qualified_name, c.language, c.token_count, c.content_hash)
             for c in chunks
         ]
-        # One multi-row INSERT ... RETURNING per batch (SQLite variable limit: 32766).
-        batch = 4000
+        width = len(rows[0])
+        batch = 32000 // width  # SQLite host-parameter limit is 32766
         ids: List[int] = []
         for i in range(0, len(rows), batch):
             part = rows[i:i + batch]
-            placeholders = ",".join(["(?, ?, ?, ?, ?, ?, ?)"] * len(part))
-            flat = [v for row in part for v in row]
+            placeholders = ",".join(["(" + ",".join("?" * width) + ")"] * len(part))
             cur.execute(
-                "INSERT INTO chunks (filepath, chunk_type, name, start_line, end_line, zcontent, project) "
-                f"VALUES {placeholders} RETURNING id",
-                flat,
+                f"INSERT INTO chunks ({self._CHUNK_COLS}) VALUES {placeholders} RETURNING id",
+                [v for row in part for v in row],
             )
-            ids.extend(r[0] for r in cur.fetchall())
+            # RETURNING order is unspecified; AUTOINCREMENT ids ascend in insertion order.
+            ids.extend(sorted(r[0] for r in cur.fetchall()))
         if len(ids) != len(chunks):
             raise AiDbStorageError(f"inserted {len(chunks)} chunks but got {len(ids)} ids")
-        # RETURNING order is not guaranteed; ids are assigned ascending within a statement.
-        ids.sort()
         for c, chunk_id in zip(chunks, ids):
             c.id = chunk_id
+        self._index_chunks_fts(cur, chunks)
+
+    def _index_chunks_fts(self, cur: sqlite3.Cursor, chunks: List[ChunkRecord]) -> None:
         cur.executemany(
             "INSERT INTO fts_index (content, filepath, name, chunk_id) VALUES (?, ?, ?, ?)",
             [(f"{c.name} {c.content}", c.filepath, c.name, c.id) for c in chunks],
         )
+
+    def _resolve_parents(self, chunks: List[ChunkRecord]) -> None:
+        updates = []
+        for c in chunks:
+            if c.parent_index is not None:
+                if not 0 <= c.parent_index < len(chunks):
+                    raise AiDbStorageError(f"chunk {c.name}: parent_index {c.parent_index} out of range")
+                c.parent_id = chunks[c.parent_index].id
+            updates.append((c.parent_id, c.id))
+        self.conn.executemany("UPDATE chunks SET parent_id = ? WHERE id = ?", updates)
+
+    def _delete_chunk_ids(self, ids: List[int]) -> None:
+        if not ids:
+            return
+        cur = self.conn.cursor()
+        cur.executemany("DELETE FROM fts_index WHERE chunk_id = ?", [(i,) for i in ids])
+        cur.executemany("DELETE FROM chunks WHERE id = ?", [(i,) for i in ids])
+
+    def insert_chunks(self, chunks: List[ChunkRecord]) -> None:
+        self._check_closed()
+        self._insert_chunk_rows(chunks)
+        self._resolve_parents(chunks)
+        self._auto_commit()
+
+    def replace_file_chunks(self, filepath: str, chunks: List[ChunkRecord]) -> Dict[str, int]:
+        """Diff ``chunks`` against the stored chunks of ``filepath`` by (content_hash, name).
+
+        Unchanged chunks keep their id (and therefore their embedding); their line span
+        and parent are updated. Returns counts of kept/inserted/deleted chunks.
+        """
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute("SELECT id, content_hash, name FROM chunks WHERE filepath = ? ORDER BY id", (filepath,))
+        pool: Dict[Tuple[str, str], List[int]] = {}
+        for r in cur.fetchall():
+            pool.setdefault((r["content_hash"], r["name"]), []).append(r["id"])
+        kept: List[ChunkRecord] = []
+        new: List[ChunkRecord] = []
+        for c in chunks:
+            ids = pool.get((c.content_hash, c.name))
+            if ids:
+                c.id = ids.pop(0)
+                kept.append(c)
+            else:
+                new.append(c)
+        stale = [i for ids in pool.values() for i in ids]
+        self._delete_chunk_ids(stale)
+        cur.executemany(
+            "UPDATE chunks SET start_line = ?, end_line = ?, chunk_type = ?, project = ?, "
+            "qualified_name = ?, language = ? WHERE id = ?",
+            [(c.start_line, c.end_line, c.chunk_type, c.project, c.qualified_name, c.language, c.id)
+             for c in kept],
+        )
+        self._insert_chunk_rows(new)
+        self._resolve_parents(chunks)
+        self._auto_commit()
+        return {"kept": len(kept), "inserted": len(new), "deleted": len(stale)}
+
+    def clear_file_metadata(self, filepath: str) -> None:
+        """Delete everything derived from ``filepath`` except its file row and chunks."""
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM symbols WHERE filepath = ?", (filepath,))
+        cur.execute("DELETE FROM symbol_refs WHERE caller_filepath = ?", (filepath,))
+        cur.execute("DELETE FROM annotations WHERE filepath = ?", (filepath,))
+        cur.execute("DELETE FROM syntax_errors WHERE filepath = ?", (filepath,))
+        cur.execute("DELETE FROM analysis_refs WHERE filepath = ?", (filepath,))
         self._auto_commit()
 
     def get_chunks_for_file(self, filepath: str) -> List[ChunkRecord]:
@@ -563,8 +654,9 @@ class SQLiteBackend(StorageBackend):
         cur = self.conn.cursor()
         cur.execute(
             """
-            SELECT id, filepath, chunk_type, name, start_line, end_line, zcontent, project
-            FROM chunks WHERE filepath = ? ORDER BY start_line ASC
+            SELECT id, filepath, chunk_type, name, start_line, end_line, zcontent, project,
+                   qualified_name, language, token_count, content_hash, parent_id
+            FROM chunks WHERE filepath = ? ORDER BY start_line ASC, id ASC
             """,
             (filepath,)
         )
@@ -579,7 +671,12 @@ class SQLiteBackend(StorageBackend):
                 start_line=r["start_line"],
                 end_line=r["end_line"],
                 content=content,
-                project=r["project"]
+                project=r["project"],
+                qualified_name=r["qualified_name"],
+                language=r["language"],
+                token_count=r["token_count"],
+                content_hash=r["content_hash"],
+                parent_id=r["parent_id"],
             ))
         return result
 

@@ -137,3 +137,32 @@ class BackendConformance:
         vb.ensure_vector_index(3, "test:model")
         vb.drop_vector_index()
         assert vb.get_embed_meta() is None
+
+    # --- incremental chunk replacement ---------------------------------------
+
+    def test_replace_file_chunks_keeps_unchanged_ids(self, backend):
+        path = "/r/inc.py"
+        backend.upsert_file(FileRecord(path, "s1", 1.0, 2, "p"))
+        v1 = [
+            ChunkRecord(path, "class_header", "class A", 1, 2, "class A:", "p"),
+            ChunkRecord(path, "code", "def A.f", 3, 4, "def f(): return 1", "p", parent_index=0),
+        ]
+        assert backend.replace_file_chunks(path, v1) == {"kept": 0, "inserted": 2, "deleted": 0}
+        header_id, f_id = v1[0].id, v1[1].id
+        v2 = [
+            ChunkRecord(path, "class_header", "class A", 1, 2, "class A:", "p"),
+            ChunkRecord(path, "code", "def A.g", 3, 4, "def g(): return 2", "p", parent_index=0),
+        ]
+        assert backend.replace_file_chunks(path, v2) == {"kept": 1, "inserted": 1, "deleted": 1}
+        assert v2[0].id == header_id and v2[1].id != f_id
+        stored = {c.name: c for c in backend.get_chunks_for_file(path)}
+        assert set(stored) == {"class A", "def A.g"}
+        assert stored["def A.g"].parent_id == header_id
+        assert backend.search_chunks(["return"], allowed_projects=["p"], top_k=5)[0].name == "def A.g"
+
+    def test_clear_file_metadata_keeps_chunks(self, backend):
+        self._seed(backend)
+        backend.insert_symbols([SymbolRecord("alpha", "function", "/r/a.py", 1, "def alpha()", "p")])
+        backend.clear_file_metadata("/r/a.py")
+        assert backend.query_symbols(name="alpha", allowed_projects=["p"]) == []
+        assert len(backend.get_chunks_for_file("/r/a.py")) == 2

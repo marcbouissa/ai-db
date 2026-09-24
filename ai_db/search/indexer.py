@@ -59,6 +59,11 @@ def parse_file(filepath: str, file_hash: str, project: str) -> ParsedFile:
             end_line=c["end_line"],
             content=c["content"],
             project=project,
+            qualified_name=c["qualified_name"],
+            language=c["language"],
+            token_count=c["token_count"],
+            content_hash=c["content_hash"],
+            parent_index=c["parent_index"],
         )
         for c in chunk_file(filepath, content)
     ]
@@ -155,7 +160,8 @@ class Indexer:
                 self.prune_file(stored_path)
             for parsed in parsed_files:
                 if parsed.filepath in updated_paths:
-                    self.prune_file(parsed.filepath)
+                    # chunks are diffed in _write_parsed so unchanged ones keep their ids
+                    self.db.clear_file_metadata(parsed.filepath)
                 self._write_parsed(parsed)
 
         changed = bool(to_prune or parsed_files)
@@ -186,8 +192,7 @@ class Indexer:
             filepath=parsed.filepath, sha256=parsed.sha256, last_modified=parsed.last_modified,
             chunk_count=len(parsed.chunks), project=parsed.project,
         ))
-        if parsed.chunks:
-            self.db.insert_chunks(parsed.chunks)
+        self.db.replace_file_chunks(parsed.filepath, parsed.chunks)
         if parsed.symbols:
             self.db.insert_symbols(parsed.symbols)
         if parsed.refs:
@@ -197,6 +202,7 @@ class Indexer:
 
     def _index_file(self, filepath: str, file_hash: str, project: str = "global") -> None:
         with self.db.transaction():
+            self.db.clear_file_metadata(filepath)
             self._write_parsed(parse_file(filepath, file_hash, project))
         for hook in self.post_sync_hooks:
             hook(True)
