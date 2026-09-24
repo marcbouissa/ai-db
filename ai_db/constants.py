@@ -62,3 +62,11 @@ EXT_TO_LANG = {
     ".cpp": "cpp", ".hpp": "cpp", ".cc": "cpp",
     ".java": "java",
 }
+
+# Lexical search
+CODE_STOPWORDS = frozenset({
+    "self", "return", "def", "the", "a", "an", "of", "to", "in", "is", "are", "be",
+    "and", "or", "for", "on", "by", "with", "from", "this", "that", "it", "its",
+    "where", "what", "how", "which", "does", "do", "done", "when", "why", "who",
+    "can", "should", "would", "there", "into", "as", "at",
+})

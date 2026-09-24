@@ -17,6 +17,7 @@ from typing import Optional, List, Dict, Any, Tuple, Generator
 
 from ai_db.constants import DEFAULT_DB_FILE
 from ai_db.errors import AiDbConfigError, AiDbQueryError, AiDbStorageError
+from ai_db.search.query_builder import build_fts, identifier_words, split_identifier
 from ai_db.storage.backend import StorageBackend
 from ai_db.storage.models import (
     FileRecord, ChunkRecord, SymbolRecord, SymbolRefRecord,
@@ -26,7 +27,7 @@ from ai_db.storage.models import (
 
 
 ZLIB_LEVEL = 6
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 # Tables rebuilt (not migrated) when SCHEMA_VERSION changes; the next sync re-indexes.
 INDEX_TABLES = ("fts_index", "chunks", "symbols", "symbol_refs", "annotations",
                 "syntax_errors", "analysis_refs", "files", "semantic_cache")
@@ -200,10 +201,11 @@ class SQLiteBackend(StorageBackend):
 
         cur.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS fts_index USING fts5(
+                name,
+                qualified_name,
+                filepath,
                 content,
-                filepath UNINDEXED,
-                name UNINDEXED,
-                chunk_id UNINDEXED,
+                idents,
                 tokenize = 'porter unicode61'
             )
         """)
@@ -365,6 +367,12 @@ class SQLiteBackend(StorageBackend):
 
     def _create_extra_tables(self, cur: sqlite3.Cursor) -> None:
         """Hook: create tables added by later features."""
+
+    def _before_delete_chunk_ids(self, cur: sqlite3.Cursor, ids: List[int]) -> None:
+        """Hook: remove rows keyed by chunk id before chunks are deleted."""
+
+    def _before_delete_file_chunks(self, cur: sqlite3.Cursor, filepath: str) -> None:
+        """Hook: remove rows keyed by chunk id before a file's chunks are deleted."""
 
     def close(self) -> None:
         if self._closed:
@@ -529,7 +537,9 @@ class SQLiteBackend(StorageBackend):
     def delete_file(self, filepath: str) -> None:
         self._check_closed()
         cur = self.conn.cursor()
-        cur.execute("DELETE FROM fts_index WHERE filepath = ?", (filepath,))
+        cur.execute("DELETE FROM fts_index WHERE rowid IN (SELECT id FROM chunks WHERE filepath = ?)",
+                    (filepath,))
+        self._before_delete_file_chunks(cur, filepath)
         cur.execute("DELETE FROM chunks WHERE filepath = ?", (filepath,))
         cur.execute("DELETE FROM symbols WHERE filepath = ?", (filepath,))
         cur.execute("DELETE FROM symbol_refs WHERE caller_filepath = ?", (filepath,))
@@ -577,8 +587,11 @@ class SQLiteBackend(StorageBackend):
 
     def _index_chunks_fts(self, cur: sqlite3.Cursor, chunks: List[ChunkRecord]) -> None:
         cur.executemany(
-            "INSERT INTO fts_index (content, filepath, name, chunk_id) VALUES (?, ?, ?, ?)",
-            [(f"{c.name} {c.content}", c.filepath, c.name, c.id) for c in chunks],
+            "INSERT INTO fts_index (rowid, name, qualified_name, filepath, content, idents) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [(c.id, c.name, " ".join(split_identifier(c.qualified_name.replace(".", "_"))) + " "
+              + c.qualified_name, c.filepath, c.content,
+              identifier_words(c.name + " " + c.content)) for c in chunks],
         )
 
     def _resolve_parents(self, chunks: List[ChunkRecord]) -> None:
@@ -595,7 +608,8 @@ class SQLiteBackend(StorageBackend):
         if not ids:
             return
         cur = self.conn.cursor()
-        cur.executemany("DELETE FROM fts_index WHERE chunk_id = ?", [(i,) for i in ids])
+        cur.executemany("DELETE FROM fts_index WHERE rowid = ?", [(i,) for i in ids])
+        self._before_delete_chunk_ids(cur, ids)
         cur.executemany("DELETE FROM chunks WHERE id = ?", [(i,) for i in ids])
 
     def insert_chunks(self, chunks: List[ChunkRecord]) -> None:
@@ -680,70 +694,59 @@ class SQLiteBackend(StorageBackend):
             ))
         return result
 
+    # bm25 column weights: name, qualified_name, filepath, content, idents
+    BM25_WEIGHTS = (8.0, 6.0, 2.0, 1.0, 1.0)
+
     def search_chunks(
         self,
         query_tokens: List[str],
         allowed_projects: Optional[List[str]] = None,
         top_k: int = 5,
         path_prefix: Optional[str] = None,
+        core_terms: Optional[List[str]] = None,
+        languages: Optional[List[str]] = None,
+        chunk_types: Optional[List[str]] = None,
+        modified_since: Optional[float] = None,
     ) -> List[SearchResult]:
+        """BM25 search. ``query_tokens`` are all (expanded) terms; ``core_terms`` the
+        user's base words used for the AND/NEAR groups (defaults to all terms)."""
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
-        clean_tokens = [t.replace("\x00", "").strip() for t in query_tokens if t.replace("\x00", "").strip()]
+        clean_tokens = [t.replace("\x00", "").strip() for t in query_tokens]
+        clean_tokens = [t for t in clean_tokens if t]
         if not clean_tokens:
             return []
-
-        # Sanitize query tokens to defend against malformed FTS syntax
-        safe_parts = []
-        for token in clean_tokens:
-            escaped = token.replace('"', '""')
-            safe_parts.append(f'"{escaped}"')
-        fts_query = " OR ".join(safe_parts)
-
-        cur = self.conn.cursor()
+        fts_query = build_fts(clean_tokens, core_terms)
 
         where_clauses = ["fts_index MATCH ?"]
         params: List[Any] = [fts_query]
-
-        if allowed_projects is not None:
-            placeholders = ",".join("?" for _ in allowed_projects)
-            where_clauses.append(f"chunks.project IN ({placeholders})")
-            params.extend(allowed_projects)
-
-        if path_prefix:
-            clean_prefix = path_prefix.replace("\x00", "")
-            where_clauses.append("chunks.filepath LIKE ?")
-            params.append(f"{clean_prefix.rstrip('/')}/%")
-
-        where_sql = " AND ".join(where_clauses)
-        params.append(top_k * 2)
-
+        self._append_filters(where_clauses, params, allowed_projects, path_prefix,
+                             languages, chunk_types, modified_since)
+        params.append(top_k)
+        w = ", ".join(str(x) for x in self.BM25_WEIGHTS)
         sql = f"""
-            SELECT fts_index.chunk_id, fts_index.filepath, fts_index.name,
-                   bm25(fts_index) as bm25_rank,
-                   chunks.start_line, chunks.end_line, chunks.zcontent, chunks.chunk_type, chunks.project
+            SELECT chunks.id AS chunk_id, chunks.filepath, chunks.name,
+                   bm25(fts_index, {w}) AS bm25_rank,
+                   snippet(fts_index, 3, '«', '»', '…', 32) AS snip,
+                   chunks.start_line, chunks.end_line, chunks.chunk_type, chunks.project,
+                   chunks.qualified_name, chunks.language, chunks.parent_id
             FROM fts_index
-            JOIN chunks ON fts_index.chunk_id = chunks.id
-            WHERE {where_sql}
+            JOIN chunks ON fts_index.rowid = chunks.id
+            JOIN files ON files.filepath = chunks.filepath
+            WHERE {" AND ".join(where_clauses)}
             ORDER BY bm25_rank
             LIMIT ?
         """
-
+        cur = self.conn.cursor()
         try:
             cur.execute(sql, params)
         except sqlite3.OperationalError as exc:
             raise AiDbQueryError(fts_query, exc) from exc
-        rows = cur.fetchall()
 
         results = []
-        for r in rows:
-            decompressed = _decompress(r["zcontent"], f"chunk {r['chunk_id']}")
-
-            snippet = decompressed[:300].strip() if decompressed else ""
+        for r in cur.fetchall():
             raw_score = abs(float(r["bm25_rank"]))
-            score = round(raw_score, 8) if raw_score else 0.001
-
             results.append(SearchResult(
                 chunk_id=r["chunk_id"],
                 filepath=r["filepath"],
@@ -752,12 +755,35 @@ class SQLiteBackend(StorageBackend):
                 project=r["project"],
                 start_line=r["start_line"],
                 end_line=r["end_line"],
-                score=score,
-                snippet=snippet
+                score=round(raw_score, 8) if raw_score else 0.001,
+                snippet=(r["snip"] or "").strip(),
+                qualified_name=r["qualified_name"],
+                language=r["language"],
+                parent_id=r["parent_id"],
             ))
-            if len(results) >= top_k:
-                break
         return results
+
+    @staticmethod
+    def _append_filters(where: List[str], params: List[Any],
+                        allowed_projects: Optional[List[str]], path_prefix: Optional[str],
+                        languages: Optional[List[str]], chunk_types: Optional[List[str]],
+                        modified_since: Optional[float]) -> None:
+        """Shared chunk filters (expects ``chunks`` and ``files`` in the FROM clause)."""
+        if allowed_projects is not None:
+            where.append(f"chunks.project IN ({','.join('?' * len(allowed_projects))})")
+            params.extend(allowed_projects)
+        if path_prefix:
+            where.append("chunks.filepath LIKE ?")
+            params.append(f"{path_prefix.replace(chr(0), '').rstrip('/')}/%")
+        if languages:
+            where.append(f"chunks.language IN ({','.join('?' * len(languages))})")
+            params.extend(languages)
+        if chunk_types:
+            where.append(f"chunks.chunk_type IN ({','.join('?' * len(chunk_types))})")
+            params.extend(chunk_types)
+        if modified_since is not None:
+            where.append("files.last_modified >= ?")
+            params.append(float(modified_since))
 
     # =========================================================================
     # Symbols & Cross-References

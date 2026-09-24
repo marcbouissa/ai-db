@@ -131,6 +131,9 @@ def _main(argv: Optional[List[str]] = None) -> int:
     query_p.add_argument("--top", type=int, default=5)
     query_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
     query_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
+    query_p.add_argument("--lang", action="append", default=None, help="Only this language (repeatable)")
+    query_p.add_argument("--type", dest="chunk_type", action="append", default=None, help="Only this chunk type (repeatable)")
+    query_p.add_argument("--since", type=float, default=None, help="Only files modified at/after this unix timestamp")
     query_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # check / lint
@@ -406,7 +409,10 @@ def _main(argv: Optional[List[str]] = None) -> int:
             "query": args.search,
             "top": args.top,
             "project": active_proj,
-            "allow_project": allowed_projs
+            "allow_project": allowed_projs,
+            "languages": args.lang,
+            "chunk_types": args.chunk_type,
+            "modified_since": args.since,
         })
         if not hits:
             print("NO_HITS")

@@ -416,7 +416,7 @@ class ServiceDispatcher:
         # 16. query
         self.register_tool(
             name="query",
-            description="Query knowledge chunks using BM25 lexical ranking.",
+            description="Search code/doc chunks (retriever configured by retrieval.mode: lexical BM25 or hybrid BM25+vector).",
             parameters_schema={
                 "type": "object",
                 "properties": {
@@ -424,6 +424,9 @@ class ServiceDispatcher:
                     "top": {"type": "integer", "default": 5, "description": "Number of chunks to retrieve"},
                     "project": {"type": "string", "description": "Project scope"},
                     "allow_project": {"type": "array", "items": {"type": "string"}, "description": "Allowed projects"},
+                    "languages": {"type": "array", "items": {"type": "string"}, "description": "Only these languages (python, typescript, go, markdown, text, ...)"},
+                    "chunk_types": {"type": "array", "items": {"type": "string"}, "description": "Only these chunk types (code, class_header, module, md, txt, lib_meta)"},
+                    "modified_since": {"type": "number", "description": "Only files modified at/after this unix timestamp"},
                 },
                 "required": ["query"],
             },
@@ -775,7 +778,9 @@ class ServiceDispatcher:
         top_k = int(args.get("top", 5))
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
-        return db.query(search_str, top=top_k, project=project, allowed_projects=allow_projects)
+        return db.query(search_str, top=top_k, project=project, allowed_projects=allow_projects,
+                        languages=args.get("languages"), chunk_types=args.get("chunk_types"),
+                        modified_since=args.get("modified_since"))
 
     def _handle_prune(self, args: Dict[str, Any]) -> Any:
         db = self._get_db(args)

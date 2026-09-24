@@ -1,6 +1,7 @@
 import os
 from typing import List, Dict, Any, Optional
-from ai_db.utils import get_allowed_projects, tokenize
+from ai_db.search.query_builder import base_terms, expand_terms
+from ai_db.utils import get_allowed_projects
 
 
 class QueryEngine:
@@ -10,14 +11,19 @@ class QueryEngine:
 
     def query(
         self, search_text: str, top_k: int = 5, relative_to: Optional[str] = None,
-        project: Optional[str] = None, allowed_projects: Optional[List[str]] = None
+        project: Optional[str] = None, allowed_projects: Optional[List[str]] = None,
+        languages: Optional[List[str]] = None, chunk_types: Optional[List[str]] = None,
+        modified_since: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        tokens = tokenize(search_text)
+        tokens = expand_terms(search_text)
         if not tokens:
             return []
 
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
-        search_results = self.db.search_chunks(tokens, allowed_projects=allowed, top_k=top_k)
+        search_results = self.db.search_chunks(
+            tokens, allowed_projects=allowed, top_k=top_k, core_terms=base_terms(search_text),
+            languages=languages, chunk_types=chunk_types, modified_since=modified_since,
+        )
 
         results = []
         for r in search_results:
@@ -37,6 +43,8 @@ class QueryEngine:
                 "file": path_display,
                 "abs_path": r.filepath,
                 "name": r.name,
+                "qualified_name": getattr(r, "qualified_name", "") or r.name,
+                "language": getattr(r, "language", ""),
                 "type": r.chunk_type,
                 "project": r.project,
                 "lines": f"L{r.start_line}-{r.end_line}",

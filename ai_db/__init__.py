@@ -121,7 +121,10 @@ class VectorDB:
         k = kwargs.get("top", top_k)
         t0 = time.perf_counter()
         results = self.query_engine.query(search_text, top_k=k, relative_to=relative_to,
-                                          project=project, allowed_projects=allowed_projects)
+                                          project=project, allowed_projects=allowed_projects,
+                                          languages=kwargs.get("languages"),
+                                          chunk_types=kwargs.get("chunk_types"),
+                                          modified_since=kwargs.get("modified_since"))
         if getattr(self, "telemetry_tracker", None) is not None:
             latency_ms = (time.perf_counter() - t0) * 1000.0
             backend_name = "sqlite_wal" if "sqlite" in getattr(self.backend, "__class__", type(self.backend)).__name__.lower() else "generic"

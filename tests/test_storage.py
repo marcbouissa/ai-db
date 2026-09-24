@@ -591,8 +591,10 @@ class TestStorageTier2:
         backend.conn.commit()
 
         from ai_db.errors import AiDbStorageError
+        # search serves FTS snippets; corruption surfaces when the body is read
+        assert backend.search_chunks(["bad_fn"], allowed_projects=["global"], top_k=5)
         with pytest.raises(AiDbStorageError, match="corrupt"):
-            backend.search_chunks(["bad_fn"], allowed_projects=["global"], top_k=5)
+            backend.get_chunks_for_file("bad_zlib.py")
         backend.close()
 
     @pytest.mark.skipif(not HAS_STORAGE_FACTORY, reason="StorageBackendFactory not available")

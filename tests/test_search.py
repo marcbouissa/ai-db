@@ -338,8 +338,9 @@ class TestSearchTier2BoundaryAndCorner:
         vdb.conn.commit()
 
         from ai_db.errors import AiDbStorageError
+        assert vdb.query("healthy_function", project="corrupt_test")  # FTS snippet only
         with pytest.raises(AiDbStorageError):
-            vdb.query("healthy_function", project="corrupt_test")
+            vdb.backend.get_chunks_for_file(str(src / "valid.py"))
 
     def test_query_unicode_multilingual_terms(self, search_env):
         """Verify queries containing non-ASCII Unicode terms return indexed documents."""
