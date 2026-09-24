@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Create CI config
+        run: |
+          cat > ci.json << 'EOF'
+          {
+            "version": 1,
+            "storage": {"provider": "sqlite", "options": {"path": null}},
+            "retrieval": {"mode": "lexical"},
+            "embedding": {"provider": "none"},
+            "rerank": {"provider": "none"},
+            "access": {"cross_project": {}},
+            "auto_sync_paths": []
+          }
+          EOF
+
+      - name: Initialize database
+        run: ai-db --config ci.json init
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Lint
+        run: ruff check . --exclude token_benchmark.py
+
+      - name: Type check
+        run: mypy ai_db mcp_server.py
+
+      - name: Eval lexical baseline
+        env:
+          AI_DB_PATH: ${{ runner.temp }}/e.db
+        run: |
+          ai-db --config ci.json eval --golden eval/golden/ai_db.jsonl --root . --baseline eval/baseline.json
+
+      - name: Eval pack baseline
+        env:
+          AI_DB_PATH: ${{ runner.temp }}/p.db
+        run: |
+          ai-db --config ci.json eval --pack --golden eval/golden/ai_db_pack.jsonl --root . --baseline eval/baseline_pack.json

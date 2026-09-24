@@ -1,0 +1,130 @@
+{
+  "queries": 20,
+  "budget_tokens": 8000,
+  "pack_recall": 0.9,
+  "tokens_mean": 7268.4,
+  "latency_ms_p50": 24.06,
+  "latency_ms_p95": 42.93,
+  "per_query": [
+    {
+      "query": "how does hybrid retrieval fuse bm25 and vector results",
+      "mode": "explain",
+      "pack_recall": 1.0,
+      "tokens": 7984
+    },
+    {
+      "query": "how is the final ranking of search candidates computed",
+      "mode": "explain",
+      "pack_recall": 0.5,
+      "tokens": 7934
+    },
+    {
+      "query": "how does sync decide which files to reindex",
+      "mode": "explain",
+      "pack_recall": 1.0,
+      "tokens": 7937
+    },
+    {
+      "query": "how are oversized code chunks split into parts",
+      "mode": "explain",
+      "pack_recall": 1.0,
+      "tokens": 7916
+    },
+    {
+      "query": "how is the config file validated",
+      "mode": "explain",
+      "pack_recall": 0.5,
+      "tokens": 5438
+    },
+    {
+      "query": "how are storage providers discovered from entry points",
+      "mode": "explain",
+      "pack_recall": 0.5,
+      "tokens": 5132
+    },
+    {
+      "query": "how are embeddings computed for chunks without vectors",
+      "mode": "explain",
+      "pack_recall": 1.0,
+      "tokens": 6408
+    },
+    {
+      "query": "how are hosted provider http requests retried",
+      "mode": "explain",
+      "pack_recall": 1.0,
+      "tokens": 4838
+    },
+    {
+      "query": "how is the fts match expression built from a query",
+      "mode": "explain",
+      "pack_recall": 0.5,
+      "tokens": 7865
+    },
+    {
+      "query": "how does investigate fit the pack into the token budget",
+      "mode": "explain",
+      "pack_recall": 1.0,
+      "tokens": 7991
+    },
+    {
+      "query": "search_chunks",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 7890
+    },
+    {
+      "query": "count_tokens",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 7839
+    },
+    {
+      "query": "expand_terms",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 7914
+    },
+    {
+      "query": "get_chunks_by_ids",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 7586
+    },
+    {
+      "query": "build_fts",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 7980
+    },
+    {
+      "query": "parse_config",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 7460
+    },
+    {
+      "query": "embed_missing",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 7953
+    },
+    {
+      "query": "post_json",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 5492
+    },
+    {
+      "query": "split_identifier",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 7884
+    },
+    {
+      "query": "materialize_tracked",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 7926
+    }
+  ]
+}

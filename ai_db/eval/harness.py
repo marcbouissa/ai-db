@@ -118,6 +118,18 @@ def compare_to_baseline(result: dict[str, Any], baseline: dict[str, Any],
     return None
 
 
+def compare_pack_to_baseline(result: dict[str, Any], baseline: dict[str, Any],
+                             tolerance: float = 0.02) -> str | None:
+    """Return an error message when pack_recall regressed more than ``tolerance``."""
+    key = "pack_recall"
+    if key not in baseline:
+        raise ValueError(f"baseline has no '{key}' entry")
+    drop = baseline[key] - result[key]
+    if drop > tolerance:
+        return f"{key} regressed by {drop:.4f} (baseline {baseline[key]}, now {result[key]})"
+    return None
+
+
 def run_pack(golden_path: str, root: str, db: Any, budget_tokens: int = 8000,
              sync: bool = True) -> dict[str, Any]:
     """Pack recall: fraction of expected symbols present in ``investigate`` evidence.

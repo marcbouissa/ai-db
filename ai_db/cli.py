@@ -11,6 +11,7 @@ from ai_db import (
     run_watch,
 )
 from ai_db.config import AppConfig, config_path, load_config, masked_dict
+from ai_db.constants import TRACE_DEPTH, TRACE_MAX_NODES
 from ai_db.dispatcher import ServiceDispatcher
 from ai_db.errors import AiDbConfigError
 
@@ -18,7 +19,13 @@ from ai_db.errors import AiDbConfigError
 def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
     import tempfile
 
-    from ai_db.eval.harness import compare_to_baseline, materialize_tracked, run, run_pack
+    from ai_db.eval.harness import (
+        compare_pack_to_baseline,
+        compare_to_baseline,
+        materialize_tracked,
+        run,
+        run_pack,
+    )
 
     with tempfile.TemporaryDirectory(prefix="ai_db_eval_") as tmp:
         root = os.path.abspath(args.root)
@@ -39,11 +46,12 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
             json.dump(result, f, indent=2)
             f.write("\n")
     if args.baseline:
-        if args.pack:
-            raise AiDbConfigError("--baseline gates recall@k; it cannot be combined with --pack")
         with open(args.baseline, "r", encoding="utf-8") as f:
             baseline = json.load(f)
-        err = compare_to_baseline(result, baseline)
+        if args.pack:
+            err = compare_pack_to_baseline(result, baseline)
+        else:
+            err = compare_to_baseline(result, baseline)
         if err:
             print(f"[ai-db eval] FAIL: {err}", file=sys.stderr)
             return 1
@@ -327,6 +335,19 @@ def _main(argv: list[str] | None = None) -> int:
     callers_p.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
     callers_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
     callers_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
+
+    # trace
+    trace_p = subparsers.add_parser("trace", help="Trace call flow from an entry point (symbol, file:line, or script)")
+    trace_p.add_argument("entry", help="Entry point: symbol name, file:line, or script path")
+    trace_p.add_argument("--direction", choices=["down", "up"], default="down", help="Trace direction: down=callees, up=callers (default: down)")
+    trace_p.add_argument("--depth", type=int, default=None, help=f"Maximum depth (default: {TRACE_DEPTH})")
+    trace_p.add_argument("--max-nodes", type=int, default=None, help=f"Maximum nodes to visit (default: {TRACE_MAX_NODES})")
+    trace_p.add_argument("--include-tests", action="store_true", help="Include test callers when tracing up")
+    trace_p.add_argument("--format", choices=["tree", "json", "mermaid"], default="tree", help="Output format (default: tree)")
+    trace_p.add_argument("--with-code", action="store_true", help="Include source code context at call sites")
+    trace_p.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
+    trace_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
+    trace_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # todos
     todos_p = subparsers.add_parser("todos", help="List TODO/FIXME/HACK annotations")
@@ -876,6 +897,34 @@ def _main(argv: list[str] | None = None) -> int:
                     print(f"~ L{span[0]}-{span[1]}")
                 for span in removed:
                     print(f"- L{span[0]}-{span[1]}")
+
+    elif args.command == "trace":
+        from ai_db.analysis.trace import TraceEngine
+        from ai_db.analysis.trace_format import format_json, format_mermaid, format_tree
+
+        depth = args.depth if args.depth is not None else TRACE_DEPTH
+        max_nodes = args.max_nodes if args.max_nodes is not None else TRACE_MAX_NODES
+
+        trace_engine = TraceEngine(
+            dispatcher._get_db({"db": args.db}).backend,
+            allowed_projects=[active_proj] + allowed_projs if allowed_projs else [active_proj],
+            trace_wait_patterns=cfg.trace_wait_patterns,
+            trace_wait_patterns_extend=cfg.trace_wait_patterns_extend,
+        )
+        result = trace_engine.trace(
+            entry=args.entry,
+            depth=depth,
+            max_nodes=max_nodes,
+            direction=args.direction,
+            include_tests=args.include_tests,
+        )
+
+        if args.format == "json":
+            print(format_json(result))
+        elif args.format == "mermaid":
+            print(format_mermaid(result))
+        else:
+            print(format_tree(result, with_code=args.with_code, context_lines=3))
 
     elif args.command == "callers":
         hits = dispatcher.execute("callers", {

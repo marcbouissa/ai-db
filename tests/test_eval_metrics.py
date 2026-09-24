@@ -5,7 +5,7 @@ import math
 
 import pytest
 
-from ai_db.eval.harness import compare_to_baseline, load_golden
+from ai_db.eval.harness import compare_pack_to_baseline, compare_to_baseline, load_golden
 from ai_db.eval.metrics import mrr, ndcg_at_k, recall_at_k, relevance_vector
 
 EXP = [("a.py", "foo"), ("b.py", None)]
@@ -50,3 +50,17 @@ def test_load_golden_rejects_bad_kind(tmp_path):
 def test_compare_to_baseline():
     assert compare_to_baseline({"k": 10, "recall@10": 0.5}, {"recall@10": 0.51}) is None
     assert compare_to_baseline({"k": 10, "recall@10": 0.4}, {"recall@10": 0.5}) is not None
+
+
+def test_compare_pack_to_baseline():
+    assert compare_pack_to_baseline({"pack_recall": 0.5}, {"pack_recall": 0.51}) is None
+    assert compare_pack_to_baseline({"pack_recall": 0.4}, {"pack_recall": 0.5}) is not None
+
+
+def test_compare_pack_to_baseline_missing_key():
+    try:
+        compare_pack_to_baseline({"pack_recall": 0.5}, {})
+    except ValueError as e:
+        assert "baseline has no 'pack_recall' entry" in str(e)
+    else:
+        raise AssertionError("expected ValueError")
