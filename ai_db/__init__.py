@@ -75,11 +75,40 @@ class VectorDB:
         self.formatters = Formatters
         for component in (self.context_memory, self.query_engine, self.skill_router):
             component.cross_project = self.config.cross_project
+        self._configure_retrieval()
         try:
             from ai_db.telemetry.tracker import TelemetryTracker
             self.telemetry_tracker = TelemetryTracker(conn=self.conn, db_path=self.db_path)
         except Exception:
             self.telemetry_tracker = None
+
+    def _configure_retrieval(self) -> None:
+        """Pick the single retriever for ``retrieval.mode`` (no runtime switching)."""
+        from ai_db.embed.registry import build_embedder
+        from ai_db.search.retriever import HybridRetriever, LexicalRetriever
+
+        self.embedder = build_embedder(self.config.embedding)
+        if self.config.retrieval_mode == "hybrid":
+            if self.embedder is None:
+                raise AiDbConfigError("retrieval.mode 'hybrid' requires an embedding provider")
+            if "vector" not in self.backend.capabilities():
+                raise AiDbConfigError(
+                    f"retrieval.mode 'hybrid' needs a backend with the 'vector' capability; "
+                    f"{self.backend.backend_name} has {sorted(self.backend.capabilities())}")
+            self.backend.ensure_vector_index(self.embedder.dim, self.embedder.model_id)
+            self.query_engine.retriever = HybridRetriever(self.backend, self.embedder)
+            self.indexer.post_sync_hooks.append(lambda _changed: self.embed_missing())
+        else:
+            self.query_engine.retriever = LexicalRetriever(self.backend)
+
+    def embed_missing(self) -> int:
+        """Embed chunks that have no vector yet (hybrid mode only)."""
+        from ai_db.embed.indexing import embed_missing
+
+        if self.embedder is None:
+            raise AiDbConfigError("embed_missing needs an embedding provider")
+        batch = int(self.config.embedding.options.get("batch_size", 64))
+        return embed_missing(self.backend, self.embedder, batch_size=batch)
 
     # Storage & DB management
     def status(self) -> Dict[str, Any]:

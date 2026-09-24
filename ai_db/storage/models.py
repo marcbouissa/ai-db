@@ -152,6 +152,8 @@ class SearchResult:
     qualified_name: str = ""
     language: str = ""
     parent_id: Optional[int] = None
+    # Per-stage ranking signals, e.g. {"bm25_rank": 1, "vec_rank": 3, "rrf": 0.03}
+    signals: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

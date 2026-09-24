@@ -2,7 +2,9 @@
 
 import json
 import os
+import shutil
 import statistics
+import subprocess
 import time
 from typing import Any
 
@@ -32,6 +34,24 @@ def load_golden(golden_path: str) -> list[dict[str, Any]]:
                     raise TypeError(f"{golden_path}:{lineno}: expected.filepath must be a string")
             items.append(item)
     return items
+
+
+def materialize_tracked(root: str, dest: str) -> str:
+    """Copy the git-tracked files of ``root`` (working-tree versions) into ``dest``.
+
+    Makes eval results independent of untracked/ignored local files.
+    """
+    out = subprocess.run(["git", "-C", root, "ls-files", "-z"], capture_output=True, check=True)
+    for rel in out.stdout.decode("utf-8").split("\0"):
+        if not rel:
+            continue
+        src = os.path.join(root, rel)
+        if not os.path.isfile(src):
+            continue  # deleted in the working tree
+        target = os.path.join(dest, rel)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copy2(src, target)
+    return dest
 
 
 def _expected_tuples(item: dict[str, Any]) -> list[tuple[str, str | None]]:

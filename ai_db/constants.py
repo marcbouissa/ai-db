@@ -70,3 +70,7 @@ CODE_STOPWORDS = frozenset({
     "where", "what", "how", "which", "does", "do", "done", "when", "why", "who",
     "can", "should", "would", "there", "into", "as", "at",
 })
+
+# Retrieval
+CANDIDATE_POOL = 50  # candidates per retriever list before fusion/rerank
+RRF_K = 60

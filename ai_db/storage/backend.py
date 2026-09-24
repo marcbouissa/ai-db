@@ -97,6 +97,10 @@ class StorageBackend(ABC):
         Returns ``{"kept", "inserted", "deleted"}`` counts."""
         raise NotImplementedError(f"{type(self).__name__} must implement replace_file_chunks")
 
+    def get_chunks_by_ids(self, ids: List[int]) -> List[ChunkRecord]:
+        """Chunks (with content) for ``ids``, in the given order; unknown ids are skipped."""
+        raise NotImplementedError(f"{type(self).__name__} must implement get_chunks_by_ids")
+
     def clear_file_metadata(self, filepath: str) -> None:
         """Delete symbols, refs, annotations, syntax errors and analysis refs of a file
         (but not its file row or chunks)."""

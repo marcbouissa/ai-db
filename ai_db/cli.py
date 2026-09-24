@@ -22,12 +22,15 @@ from ai_db.errors import AiDbConfigError
 
 def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
     import tempfile
-    from ai_db.eval.harness import run, compare_to_baseline
+    from ai_db.eval.harness import run, compare_to_baseline, materialize_tracked
 
     with tempfile.TemporaryDirectory(prefix="ai_db_eval_") as tmp:
+        root = os.path.abspath(args.root)
+        if not args.all_files:
+            root = materialize_tracked(root, os.path.join(tmp, "corpus"))
         db = VectorDB(os.path.join(tmp, "eval.db"), config=cfg)
         try:
-            result = run(args.golden, args.root, db, k=args.k)
+            result = run(args.golden, root, db, k=args.k)
         finally:
             db.close()
     summary = {k: v for k, v in result.items() if k != "per_query"}
@@ -84,6 +87,23 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_reindex(args: argparse.Namespace, cfg: AppConfig) -> int:
+    from ai_db.storage.factory import StorageBackendFactory
+
+    if cfg.retrieval_mode != "hybrid":
+        raise AiDbConfigError("reindex --embeddings needs retrieval.mode 'hybrid'")
+    backend = StorageBackendFactory.from_config(cfg, db_path=args.db)
+    backend.initialize()
+    backend.drop_vector_index()  # must happen before VectorDB checks the model guard
+    db = VectorDB(backend, config=cfg)
+    try:
+        count = db.embed_missing()
+    finally:
+        db.close()
+    print(f"[ai-db reindex] embedded {count} chunks with {db.embedder.model_id}")
+    return 0
+
+
 def _cmd_config(args: argparse.Namespace, cfg: AppConfig) -> int:
     if args.config_action == "show":
         print(json.dumps({"path": cfg.source_path, **masked_dict(cfg)}, indent=2))
@@ -114,6 +134,12 @@ def _main(argv: Optional[List[str]] = None) -> int:
     init_p.add_argument("--mode", choices=["lexical", "hybrid"], default=None, help="Retrieval mode (default: derived from --embedding)")
     init_p.add_argument("--force", action="store_true", help="Overwrite an existing config")
     init_p.add_argument("--migrate", action="store_true", help="Rewrite a legacy (unversioned) config into version 1")
+
+    # reindex
+    reindex_p = subparsers.add_parser("reindex", help="Rebuild derived indexes")
+    reindex_p.add_argument("--embeddings", action="store_true", required=True,
+                           help="Drop all vectors and re-embed every chunk with the configured model")
+    reindex_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # config
     config_p = subparsers.add_parser("config", help="Inspect or verify the active config")
@@ -314,6 +340,8 @@ def _main(argv: Optional[List[str]] = None) -> int:
     eval_p.add_argument("-k", type=int, default=10, help="Cutoff for recall/nDCG (default: 10)")
     eval_p.add_argument("--baseline", default=None, help="Baseline JSON; fail if recall@k drops > 0.02")
     eval_p.add_argument("--save", default=None, help="Write the result JSON to this path")
+    eval_p.add_argument("--all-files", action="store_true",
+                        help="Index every file under --root (default: only git-tracked files)")
 
     args = parser.parse_args(argv)
 
@@ -333,6 +361,9 @@ def _main(argv: Optional[List[str]] = None) -> int:
 
     if args.command == "eval":
         return _run_eval(args, cfg)
+
+    if args.command == "reindex":
+        return _cmd_reindex(args, cfg)
 
     # Transport and long-running server/daemon commands
     if args.command == "mcp":

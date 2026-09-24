@@ -25,6 +25,7 @@ SUGGESTED_EMBEDDING: dict[str, dict[str, object]] = {
     "voyage": {
         "model": "voyage-code-3",
         "api_key_env": "VOYAGE_API_KEY",
+        "dimensions": 1024,
         "batch_size": 64,
     },
 }

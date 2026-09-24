@@ -33,8 +33,8 @@ EMBEDDING_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset({"_note"}),
     ),
     "voyage": (
-        frozenset({"model", "api_key_env", "batch_size"}),
-        frozenset({"_note"}),
+        frozenset({"model", "api_key_env", "dimensions", "batch_size"}),
+        frozenset({"base_url", "_note"}),
     ),
 }
 

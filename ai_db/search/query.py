@@ -1,6 +1,7 @@
 import os
 from typing import List, Dict, Any, Optional
-from ai_db.search.query_builder import base_terms, expand_terms
+from ai_db.constants import CANDIDATE_POOL
+from ai_db.search.retriever import LexicalRetriever, Retriever
 from ai_db.utils import get_allowed_projects
 
 
@@ -8,6 +9,8 @@ class QueryEngine:
     def __init__(self, db: Any = None, conn: Any = None):
         self.db = db if db is not None else conn
         self.cross_project: Dict[str, List[str]] = {}
+        # Replaced once by VectorDB according to retrieval.mode.
+        self.retriever: Retriever = LexicalRetriever(self.db)
 
     def query(
         self, search_text: str, top_k: int = 5, relative_to: Optional[str] = None,
@@ -15,15 +18,10 @@ class QueryEngine:
         languages: Optional[List[str]] = None, chunk_types: Optional[List[str]] = None,
         modified_since: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        tokens = expand_terms(search_text)
-        if not tokens:
-            return []
-
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
-        search_results = self.db.search_chunks(
-            tokens, allowed_projects=allowed, top_k=top_k, core_terms=base_terms(search_text),
-            languages=languages, chunk_types=chunk_types, modified_since=modified_since,
-        )
+        filters = {"allowed_projects": allowed, "languages": languages,
+                   "chunk_types": chunk_types, "modified_since": modified_since}
+        search_results = self.search(search_text, filters, top_k)
 
         results = []
         for r in search_results:
@@ -53,6 +51,11 @@ class QueryEngine:
             })
 
         return results[:top_k]
+
+    def search(self, text: str, filters: Dict[str, Any], top_k: int) -> List[Any]:
+        """Ranked SearchResults for ``text`` (retriever candidates, then final ranking)."""
+        pool = max(top_k, CANDIDATE_POOL)
+        return self.retriever.candidates(text, filters, pool)[:top_k]
 
     def query_symbol(
         self, name: str, relative_to: Optional[str] = None,

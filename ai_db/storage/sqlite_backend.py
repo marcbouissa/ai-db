@@ -18,7 +18,7 @@ from typing import Optional, List, Dict, Any, Tuple, Generator
 from ai_db.constants import DEFAULT_DB_FILE
 from ai_db.errors import AiDbConfigError, AiDbQueryError, AiDbStorageError
 from ai_db.search.query_builder import build_fts, identifier_words, split_identifier
-from ai_db.storage.backend import StorageBackend
+from ai_db.storage.backend import StorageBackend, VectorCapable
 from ai_db.storage.models import (
     FileRecord, ChunkRecord, SymbolRecord, SymbolRefRecord,
     AnnotationRecord, SyntaxErrorRecord, SkillRecord,
@@ -27,7 +27,7 @@ from ai_db.storage.models import (
 
 
 ZLIB_LEVEL = 6
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 # Tables rebuilt (not migrated) when SCHEMA_VERSION changes; the next sync re-indexes.
 INDEX_TABLES = ("fts_index", "chunks", "symbols", "symbol_refs", "annotations",
                 "syntax_errors", "analysis_refs", "files", "semantic_cache")
@@ -41,7 +41,7 @@ def _decompress(blob: bytes, what: str) -> str:
         raise AiDbStorageError(f"corrupt compressed payload for {what}: {exc}") from exc
 
 
-class SQLiteBackend(StorageBackend):
+class SQLiteBackend(StorageBackend, VectorCapable):
     """SQLite implementation of the StorageBackend interface."""
 
     OPTION_KEYS = frozenset({"path"})
@@ -108,7 +108,17 @@ class SQLiteBackend(StorageBackend):
         return conn
 
     def _configure_connection(self, conn: sqlite3.Connection) -> None:
-        """Hook for per-connection setup (extensions)."""
+        """Load sqlite-vec on every connection (provides vec_distance_cosine)."""
+        import sqlite_vec
+
+        if not hasattr(conn, "enable_load_extension"):
+            raise AiDbConfigError("this Python's sqlite3 cannot load extensions (needed for sqlite-vec)")
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+
+    def capabilities(self) -> frozenset:
+        return frozenset({"fts", "vector", "graph"})
 
     @property
     def conn(self) -> Optional[sqlite3.Connection]:
@@ -363,10 +373,18 @@ class SQLiteBackend(StorageBackend):
         self.conn.commit()
 
     def _drop_extra_index_tables(self, cur: sqlite3.Cursor) -> None:
-        """Hook: drop tables added by later features on schema rebuild."""
+        cur.execute("DROP TABLE IF EXISTS chunk_vectors")
+        cur.execute("DELETE FROM session_state WHERE key = 'embed_meta'")
 
     def _create_extra_tables(self, cur: sqlite3.Cursor) -> None:
-        """Hook: create tables added by later features."""
+        # Exact filtered KNN: vectors live in a plain table (FK-cascaded with chunks) and are
+        # scored with sqlite-vec's vec_distance_cosine under the same filters as FTS.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS chunk_vectors (
+                chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+                embedding BLOB NOT NULL
+            )
+        """)
 
     def _before_delete_chunk_ids(self, cur: sqlite3.Cursor, ids: List[int]) -> None:
         """Hook: remove rows keyed by chunk id before chunks are deleted."""
@@ -784,6 +802,121 @@ class SQLiteBackend(StorageBackend):
         if modified_since is not None:
             where.append("files.last_modified >= ?")
             params.append(float(modified_since))
+
+    # =========================================================================
+    # Vectors (VectorCapable)
+    # =========================================================================
+
+    def get_embed_meta(self) -> Optional[Dict[str, Any]]:
+        self._check_closed()
+        return self.get_state("embed_meta")
+
+    def ensure_vector_index(self, dim: int, model_id: str) -> None:
+        self._check_closed()
+        meta = self.get_embed_meta()
+        wanted = {"model_id": model_id, "dim": int(dim)}
+        if meta is None:
+            self.set_state("embed_meta", wanted)
+        elif meta != wanted:
+            raise AiDbConfigError(
+                f"vector index was built with {meta}, config wants {wanted}; "
+                "run: ai-db reindex --embeddings"
+            )
+
+    def upsert_embeddings(self, items: List[Tuple[int, List[float]]]) -> None:
+        self._check_closed()
+        import sqlite_vec
+
+        meta = self.get_embed_meta()
+        if meta is None:
+            raise AiDbStorageError("upsert_embeddings called before ensure_vector_index")
+        for chunk_id, vec in items:
+            if len(vec) != meta["dim"]:
+                raise AiDbStorageError(f"chunk {chunk_id}: vector dim {len(vec)} != index dim {meta['dim']}")
+        self.conn.executemany(
+            "INSERT OR REPLACE INTO chunk_vectors (chunk_id, embedding) VALUES (?, ?)",
+            [(cid, sqlite_vec.serialize_float32(vec)) for cid, vec in items],
+        )
+        self._auto_commit()
+
+    def search_vectors(self, vector: List[float], k: int,
+                       filters: Optional[Dict[str, Any]] = None) -> List[Tuple[int, float]]:
+        self._check_closed()
+        import sqlite_vec
+
+        f = dict(filters or {})
+        allowed = f.pop("allowed_projects", None)
+        if allowed is not None and len(allowed) == 0:
+            return []
+        where: List[str] = []
+        params: List[Any] = [sqlite_vec.serialize_float32(vector)]
+        self._append_filters(where, params, allowed, f.pop("path_prefix", None),
+                             f.pop("languages", None), f.pop("chunk_types", None),
+                             f.pop("modified_since", None))
+        if f:
+            raise ValueError(f"unknown vector filter(s): {sorted(f)}")
+        params.append(int(k))
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+        cur = self.conn.execute(
+            f"""
+            SELECT chunks.id AS chunk_id, vec_distance_cosine(cv.embedding, ?) AS distance
+            FROM chunk_vectors cv
+            JOIN chunks ON chunks.id = cv.chunk_id
+            JOIN files ON files.filepath = chunks.filepath
+            {where_sql}
+            ORDER BY distance ASC
+            LIMIT ?
+            """,
+            params,
+        )
+        return [(r["chunk_id"], float(r["distance"])) for r in cur.fetchall()]
+
+    def chunks_missing_embeddings(self, limit: int) -> List[ChunkRecord]:
+        self._check_closed()
+        cur = self.conn.execute(
+            """
+            SELECT c.id FROM chunks c
+            LEFT JOIN chunk_vectors cv ON cv.chunk_id = c.id
+            WHERE cv.chunk_id IS NULL
+            ORDER BY c.id LIMIT ?
+            """,
+            (int(limit),),
+        )
+        return self.get_chunks_by_ids([r["id"] for r in cur.fetchall()])
+
+    def drop_vector_index(self) -> None:
+        self._check_closed()
+        self.conn.execute("DELETE FROM chunk_vectors")
+        self.conn.execute("DELETE FROM session_state WHERE key = 'embed_meta'")
+        self._auto_commit()
+
+    def get_chunks_by_ids(self, ids: List[int]) -> List[ChunkRecord]:
+        """Chunks for ``ids`` in the same order (missing ids are skipped)."""
+        self._check_closed()
+        if not ids:
+            return []
+        rows: Dict[int, Any] = {}
+        for i in range(0, len(ids), 900):
+            part = ids[i:i + 900]
+            cur = self.conn.execute(
+                f"""SELECT id, filepath, chunk_type, name, start_line, end_line, zcontent, project,
+                           qualified_name, language, token_count, content_hash, parent_id
+                    FROM chunks WHERE id IN ({",".join("?" * len(part))})""",
+                part,
+            )
+            for r in cur.fetchall():
+                rows[r["id"]] = r
+        return [self._row_to_chunk(rows[i]) for i in ids if i in rows]
+
+    @staticmethod
+    def _row_to_chunk(r: Any) -> ChunkRecord:
+        return ChunkRecord(
+            id=r["id"], filepath=r["filepath"], chunk_type=r["chunk_type"], name=r["name"],
+            start_line=r["start_line"], end_line=r["end_line"],
+            content=_decompress(r["zcontent"], f"chunk {r['id']}"), project=r["project"],
+            qualified_name=r["qualified_name"], language=r["language"],
+            token_count=r["token_count"], content_hash=r["content_hash"], parent_id=r["parent_id"],
+        )
 
     # =========================================================================
     # Symbols & Cross-References
