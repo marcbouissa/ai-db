@@ -1,11 +1,10 @@
 """
 ai_db: High-Performance Vector & Code Intelligence Database.
-Modular architecture with zero external dependencies (Python standard library only).
+Code intelligence and retrieval for AI agents.
 """
 
-import os
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 __version__ = "0.1.0"
 
@@ -353,3 +352,45 @@ class VectorDB:
 
 def run_watch(db_path: str | None, target_dir: str, debounce_ms: int = 300):
     return _run_watch(VectorDB, db_path, target_dir, debounce_ms)
+
+__all__ = [
+    "DEFAULT_CONFIG_FILE",
+    "DEFAULT_DB_FILE",
+    "DEFAULT_SKILL_DIRS",
+    "HARD_IGNORE_DIRS",
+    "INDEXABLE_EXTENSIONS",
+    "VENDOR_NOISE_EXTENSIONS",
+    "AiDbConfigError",
+    "AiDbError",
+    "AiDbQueryError",
+    "AnalyzerEngine",
+    "AppConfig",
+    "ContextMemory",
+    "Database",
+    "Formatters",
+    "Indexer",
+    "QueryEngine",
+    "ReferenceStore",
+    "SkillRouter",
+    "StorageBackend",
+    "StorageBackendFactory",
+    "VectorDB",
+    "__version__",
+    "chunk_file",
+    "compute_sha256",
+    "config_path",
+    "detect_project_name",
+    "extract_file_outline",
+    "extract_symbols",
+    "format_as_sexp",
+    "format_as_stub",
+    "get_allowed_projects",
+    "get_session_state",
+    "load_config",
+    "run_watch",
+    "set_session_state",
+    "should_index_path",
+    "strip_code_bloat",
+    "tokenize",
+    "validate_python_syntax",
+]

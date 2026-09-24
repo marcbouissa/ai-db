@@ -28,9 +28,7 @@ def get_tracked_files() -> list[str]:
 
 def is_non_test_tracked_file(rel_path: str) -> bool:
     """Filter out test files and .agents metadata to avoid self-referential false positives."""
-    if rel_path.startswith("tests/") or rel_path.startswith(".agents/"):
-        return False
-    return True
+    return not rel_path.startswith(("tests/", ".agents/"))
 
 
 # ==============================================================================
@@ -47,7 +45,7 @@ class TestSanitizationTier1:
             ["git", "grep", "-n", "/home/marc"],
             cwd=str(REPO_ROOT),
             capture_output=True,
-            text=True
+            text=True, check=False
         )
         # Filter out tests/ to prevent self-matching
         violations = [
@@ -226,7 +224,7 @@ class TestSanitizationTier2:
         for path in test_paths:
             proc = subprocess.run(
                 ["git", "check-ignore", "-q", path],
-                cwd=str(REPO_ROOT)
+                cwd=str(REPO_ROOT), check=False
             )
             assert proc.returncode == 0, f".gitignore failed to ignore database path '{path}'"
 
@@ -236,7 +234,7 @@ class TestSanitizationTier2:
         for path in test_paths:
             proc = subprocess.run(
                 ["git", "check-ignore", "-q", path],
-                cwd=str(REPO_ROOT)
+                cwd=str(REPO_ROOT), check=False
             )
             assert proc.returncode == 0, f".gitignore failed to ignore venv path '{path}'"
 
@@ -249,7 +247,7 @@ class TestSanitizationTier2:
         for path in test_paths:
             proc = subprocess.run(
                 ["git", "check-ignore", "-q", path],
-                cwd=str(REPO_ROOT)
+                cwd=str(REPO_ROOT), check=False
             )
             assert proc.returncode == 0, f".gitignore failed to ignore pycache path '{path}'"
 
@@ -339,7 +337,7 @@ class TestSanitizationTier3:
             ["git", "check-ignore", "-q", "temp_e2e_check.db"],
             cwd=str(REPO_ROOT),
             capture_output=True,
-            text=True
+            text=True, check=False
         )
         assert res.returncode == 0, "git check-ignore failed to recognize *.db pattern"
 
@@ -378,7 +376,7 @@ class TestSanitizationTier4:
             ["git", "archive", "--format=tar", "-o", str(archive_tar), "HEAD"],
             cwd=str(REPO_ROOT),
             capture_output=True,
-            text=True
+            text=True, check=False
         )
         assert proc.returncode == 0, f"git archive failed: {proc.stderr}"
         assert archive_tar.is_file()
@@ -413,7 +411,7 @@ class TestSanitizationTier4:
             ["git", "diff", "--name-only"],
             cwd=str(REPO_ROOT),
             capture_output=True,
-            text=True
+            text=True, check=False
         )
         modified_tracked = [line.strip() for line in res.stdout.splitlines() if line.strip()]
         # No binary files should be modified in tracked tree

@@ -5,7 +5,8 @@ parsing, and search algorithms from database engine implementations.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, ContextManager
+from contextlib import AbstractContextManager
+from typing import Any
 
 from ai_db.storage.models import (
     AnalysisRefRecord,
@@ -46,7 +47,7 @@ class StorageBackend(ABC):
         """Gracefully close connections and release storage resources. Idempotent."""
 
     @abstractmethod
-    def transaction(self) -> ContextManager[None]:
+    def transaction(self) -> AbstractContextManager[None]:
         """Context manager yielding an atomic transaction (commit on exit, rollback on exception)."""
 
     # =========================================================================

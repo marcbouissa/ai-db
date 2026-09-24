@@ -214,9 +214,8 @@ class AnalyzerEngine:
                 if not matched_q:
                     is_match = False
 
-            if focus:
-                if focus.lower() not in sym["name"].lower():
-                    is_match = False
+            if focus and focus.lower() not in sym["name"].lower():
+                is_match = False
 
             item = {
                 "name": sym["name"],

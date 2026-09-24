@@ -187,7 +187,7 @@ except Exception as exc:
                 [sys.executable, "-c", worker_code],
                 capture_output=True,
                 text=True,
-                timeout=3.0
+                timeout=3.0, check=False
             )
 
         backend.close()
@@ -327,45 +327,44 @@ class TestAtomicTransactionRollback:
         # Verify initial state is empty
         assert backend.status()["files"] == 0
 
-        with pytest.raises(RuntimeError) as exc_info:
-            with backend.transaction():
-                # Step 1: Write file
-                backend.upsert_file(FileRecord("src/atomic.py", "hash_atomic", 1000.0, 2))
+        with pytest.raises(RuntimeError) as exc_info, backend.transaction():
+            # Step 1: Write file
+            backend.upsert_file(FileRecord("src/atomic.py", "hash_atomic", 1000.0, 2))
 
-                # Step 2: Write chunks (updates both chunks table and fts_index)
-                backend.insert_chunks([
-                    ChunkRecord("src/atomic.py", "func", "alpha", 1, 10, "def alpha(): return 'secret_needle_alpha'"),
-                    ChunkRecord("src/atomic.py", "func", "beta", 11, 20, "def beta(): return 'secret_needle_beta'")
-                ])
+            # Step 2: Write chunks (updates both chunks table and fts_index)
+            backend.insert_chunks([
+                ChunkRecord("src/atomic.py", "func", "alpha", 1, 10, "def alpha(): return 'secret_needle_alpha'"),
+                ChunkRecord("src/atomic.py", "func", "beta", 11, 20, "def beta(): return 'secret_needle_beta'")
+            ])
 
-                # Step 3: Write symbols
-                backend.insert_symbols([
-                    SymbolRecord("alpha", "func", "src/atomic.py", 1, signature="def alpha()"),
-                    SymbolRecord("beta", "func", "src/atomic.py", 11, signature="def beta()")
-                ])
+            # Step 3: Write symbols
+            backend.insert_symbols([
+                SymbolRecord("alpha", "func", "src/atomic.py", 1, signature="def alpha()"),
+                SymbolRecord("beta", "func", "src/atomic.py", 11, signature="def beta()")
+            ])
 
-                # Step 4: Write symbol references
-                backend.insert_symbol_refs([
-                    SymbolRefRecord("src/atomic.py", "alpha", 5, "external_api", "call")
-                ])
+            # Step 4: Write symbol references
+            backend.insert_symbol_refs([
+                SymbolRefRecord("src/atomic.py", "alpha", 5, "external_api", "call")
+            ])
 
-                # Step 5: Write annotations
-                backend.insert_annotations([
-                    AnnotationRecord("src/atomic.py", 2, "todo", "alpha", "TODO: implement")
-                ])
+            # Step 5: Write annotations
+            backend.insert_annotations([
+                AnnotationRecord("src/atomic.py", 2, "todo", "alpha", "TODO: implement")
+            ])
 
-                # Step 6: Write syntax error
-                backend.upsert_syntax_error(
-                    SyntaxErrorRecord("src/atomic.py", 15, 4, "unexpected token", 1000.0)
-                )
+            # Step 6: Write syntax error
+            backend.upsert_syntax_error(
+                SyntaxErrorRecord("src/atomic.py", 15, 4, "unexpected token", 1000.0)
+            )
 
-                # Step 7: Write analysis ref
-                backend.store_analysis_ref(
-                    AnalysisRefRecord("ref_atomic_1", "src/atomic.py", "alpha", 1, 10, "func", "body text", 1000.0)
-                )
+            # Step 7: Write analysis ref
+            backend.store_analysis_ref(
+                AnalysisRefRecord("ref_atomic_1", "src/atomic.py", "alpha", 1, 10, "func", "body text", 1000.0)
+            )
 
-                # Step 8: Catastrophic mid-transaction failure
-                raise RuntimeError("Catastrophic failure before commit")
+            # Step 8: Catastrophic mid-transaction failure
+            raise RuntimeError("Catastrophic failure before commit")
 
         assert "Catastrophic failure" in str(exc_info.value)
 
@@ -486,19 +485,18 @@ class TestAtomicTransactionRollback:
         backend = SQLiteBackend(temp_db_path)
         backend.initialize()
 
-        with pytest.raises(sqlite3.IntegrityError):
-            with backend.transaction():
-                # Write a valid file
-                backend.upsert_file(FileRecord("src/valid.py", "vhash", 1000.0, 1))
+        with pytest.raises(sqlite3.IntegrityError), backend.transaction():
+            # Write a valid file
+            backend.upsert_file(FileRecord("src/valid.py", "vhash", 1000.0, 1))
 
-                # Direct FK violation: insert chunk referencing non-existent file
-                backend.conn.execute(
-                    """
-                    INSERT INTO chunks (filepath, chunk_type, name, start_line, end_line, zcontent, project)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    ("src/nonexistent_parent.py", "func", "orphan", 1, 5, b"dummy", "global")
-                )
+            # Direct FK violation: insert chunk referencing non-existent file
+            backend.conn.execute(
+                """
+                INSERT INTO chunks (filepath, chunk_type, name, start_line, end_line, zcontent, project)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("src/nonexistent_parent.py", "func", "orphan", 1, 5, b"dummy", "global")
+            )
 
         # Preceding write must be rolled back
         assert backend.get_file("src/valid.py") is None
@@ -673,9 +671,8 @@ class TestNestedTransactions:
         # Sequence of failing transactions
         for i in range(5):
             try:
-                with backend.transaction(), backend.transaction():
-                    with backend.transaction():
-                        raise ValueError(f"Crash {i}")
+                with backend.transaction(), backend.transaction(), backend.transaction():
+                    raise ValueError(f"Crash {i}")
             except ValueError:
                 pass
             assert backend._tx_depth == 0, f"Depth leaked on iteration {i}: depth={backend._tx_depth}"

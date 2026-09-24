@@ -139,7 +139,7 @@ class TestPackagingTier1:
             [sys.executable, str(facade_path), "--help"],
             capture_output=True,
             text=True,
-            cwd=str(REPO_ROOT)
+            cwd=str(REPO_ROOT), check=False
         )
         assert proc.returncode == 0, f"vectordb.py --help failed: {proc.stderr}"
         assert "usage" in proc.stdout.lower() or "ai-db" in proc.stdout.lower()
@@ -225,7 +225,7 @@ class TestPackagingTier1:
         """TC-PKG-T1-22 (F4): All extra group keys are normalized lowercase strings."""
         pyproject = load_pyproject()
         extras = pyproject.get("project", {}).get("optional-dependencies", {})
-        for key in extras.keys():
+        for key in extras:
             assert key == key.lower(), f"Extra key '{key}' is not lowercased"
 
     def test_gitignore_file_exists_at_root(self):
@@ -288,7 +288,7 @@ class TestPackagingTier2:
 
     def test_cli_invocation_no_args(self, cli_runner):
         """TC-PKG-T2-03: CLI executed with zero arguments exits cleanly with usage."""
-        code, stdout, stderr = cli_runner.run()
+        _code, stdout, stderr = cli_runner.run()
         # Should exit with code 0 or 1/2 and print help/usage, not traceback crash
         assert "Traceback" not in stderr, f"Unhandled traceback when CLI called with no args: {stderr}"
         combined = (stdout + stderr).lower()
@@ -296,7 +296,7 @@ class TestPackagingTier2:
 
     def test_cli_invocation_invalid_command(self, cli_runner):
         """TC-PKG-T2-04: CLI executed with invalid command exits with error code."""
-        code, stdout, stderr = cli_runner.run("nonexistent_subcmd_xyz_1234")
+        code, _stdout, stderr = cli_runner.run("nonexistent_subcmd_xyz_1234")
         assert code != 0, f"Expected non-zero exit code for invalid subcommand, got {code}"
         assert "Traceback" not in stderr, f"Unhandled traceback for invalid subcommand: {stderr}"
 
@@ -339,7 +339,7 @@ class TestPackagingTier2:
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
-            cwd=str(REPO_ROOT)
+            cwd=str(REPO_ROOT), check=False
         )
         assert proc.returncode == 0, f"Importing ai_db failed: {proc.stderr}"
         assert proc.stdout == "", f"Importing ai_db emitted unexpected stdout: {proc.stdout}"
@@ -461,7 +461,7 @@ class TestPackagingTier2:
         """TC-PKG-T2-22 (F4): Any environment markers in optional dependencies are valid."""
         pyproject = load_pyproject()
         extras = pyproject.get("project", {}).get("optional-dependencies", {})
-        for group, deps in extras.items():
+        for deps in extras.values():
             for dep in deps:
                 if ";" in dep:
                     marker = dep.split(";", 1)[1].strip()
@@ -486,7 +486,7 @@ class TestPackagingTier2:
             ["git", "status", "--porcelain"],
             cwd=str(REPO_ROOT),
             capture_output=True,
-            text=True
+            text=True, check=False
         )
         untracked = [line for line in res.stdout.splitlines() if line.startswith("??")]
         assert not any(f.endswith(".pyc") or "__pycache__" in f for f in untracked), (
@@ -505,18 +505,18 @@ class TestPackagingTier3:
     def test_pairwise_packaging_clean_build(self, tmp_path):
         """TC-PAIR-01: Packaging metadata build creates zero untracked git status dirtying."""
         # Check git status before and after inspecting metadata
-        res = subprocess.run(
+        subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=str(REPO_ROOT),
             capture_output=True,
-            text=True
+            text=True, check=False
         )
         # Parse pyproject metadata in clean process
         proc = subprocess.run(
             [sys.executable, "-c", "import tomllib; tomllib.load(open('pyproject.toml', 'rb'))"],
             cwd=str(REPO_ROOT),
             capture_output=True,
-            text=True
+            text=True, check=False
         )
         assert proc.returncode == 0
 
@@ -528,7 +528,7 @@ class TestPackagingTier3:
                     [sys.executable, str(REPO_ROOT / "vectordb.py"), "--help"],
                     capture_output=True,
                     text=True,
-                    cwd=str(REPO_ROOT)
+                    cwd=str(REPO_ROOT), check=False
                 )
                 output = proc.stdout + proc.stderr
             else:
@@ -550,15 +550,14 @@ class TestPackagingTier3:
     def test_pairwise_dual_scripts_env_isolation(self, isolated_env, cli_runner):
         """TC-PAIR-04: Dual entry points respect isolated environment variables identically."""
         # Both entry points should point to the virtualized AI_DB_PATH
-        target_db = os.environ["AI_DB_PATH"]
-        code1, out1, err1 = cli_runner.run("status", use_subprocess=True)
+        _code1, out1, err1 = cli_runner.run("status", use_subprocess=True)
         # Subprocess run of vectordb.py with same env
         proc2 = subprocess.run(
             [sys.executable, str(REPO_ROOT / "vectordb.py"), "status"],
             capture_output=True,
             text=True,
             env=os.environ.copy(),
-            cwd=str(REPO_ROOT)
+            cwd=str(REPO_ROOT), check=False
         )
         # Both must succeed and execute without pointing to default home dir
         assert "/home/marc" not in (out1 + err1 + proc2.stdout + proc2.stderr)
@@ -591,7 +590,7 @@ class TestPackagingTier3:
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
-            cwd=str(REPO_ROOT)
+            cwd=str(REPO_ROOT), check=False
         )
         assert proc.returncode == 0, f"CLI requires non-stdlib dependency at import: {proc.stderr}"
 
@@ -599,7 +598,7 @@ class TestPackagingTier3:
         """TC-PAIR-08: Check gitignore ignores *.db files without writing to repo root."""
         res = subprocess.run(
             ["git", "check-ignore", "-q", "test_scratch_temp.db"],
-            cwd=str(REPO_ROOT)
+            cwd=str(REPO_ROOT), check=False
         )
         assert res.returncode == 0, "git check-ignore failed to ignore test_scratch_temp.db"
 
@@ -683,7 +682,7 @@ class TestPackagingTier4:
                 [sys.executable, str(REPO_ROOT / "vectordb.py")] + cmd,
                 capture_output=True,
                 text=True,
-                cwd=str(REPO_ROOT)
+                cwd=str(REPO_ROOT), check=False
             )
             assert code1 == proc2.returncode, f"Exit code mismatch on {cmd}: {code1} vs {proc2.returncode}"
             combined = (out1 + err1 + proc2.stdout + proc2.stderr).lower()
@@ -706,7 +705,7 @@ class TestPackagingTier4:
             capture_output=True,
             text=True,
             env=os.environ.copy(),
-            cwd=str(REPO_ROOT)
+            cwd=str(REPO_ROOT), check=False
         )
         assert proc.returncode == 0, f"Air-gapped execution failed: {proc.stderr}"
         assert "usage" in proc.stdout.lower() or "ai-db" in proc.stdout.lower()

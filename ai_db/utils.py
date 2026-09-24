@@ -78,9 +78,7 @@ def should_index_path(rel_path: str, filename: str) -> bool:
             return True
         if filename.endswith(".d.ts") or ext in (".ts", ".pyi"):
             return True
-        if filename in ("index.js", "main.js", "README.md"):
-            return True
-        return False
+        return filename in ("index.js", "main.js", "README.md")
     if any(p in (".venv", "venv") for p in parts):
         if any(filename.endswith(ne) for ne in VENDOR_NOISE_EXTENSIONS):
             return False
@@ -88,13 +86,9 @@ def should_index_path(rel_path: str, filename: str) -> bool:
             return True
         if filename.endswith(".pyi"):
             return True
-        if filename == "__init__.py":
-            return True
-        return False
+        return filename == "__init__.py"
     if any(p in (".vscode", ".idea") for p in parts):
         return ext in (".json", ".xml", ".yaml", ".yml")
     if ext in INDEXABLE_EXTENSIONS:
-        if any(filename.endswith(ne) for ne in VENDOR_NOISE_EXTENSIONS):
-            return False
-        return True
+        return not any(filename.endswith(ne) for ne in VENDOR_NOISE_EXTENSIONS)
     return False

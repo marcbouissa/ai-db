@@ -408,11 +408,10 @@ def _main(argv: list[str] | None = None) -> int:
                 sys.exit(0)
             sys.stdout.flush()
             sys.stderr.flush()
-            devnull = open(os.devnull, "wb+")
-            os.dup2(devnull.fileno(), sys.stdin.fileno())
-            os.dup2(devnull.fileno(), sys.stdout.fileno())
-            os.dup2(devnull.fileno(), sys.stderr.fileno())
-            devnull.close()
+            with open(os.devnull, "wb+") as devnull:
+                os.dup2(devnull.fileno(), sys.stdin.fileno())
+                os.dup2(devnull.fileno(), sys.stdout.fileno())
+                os.dup2(devnull.fileno(), sys.stderr.fileno())
 
         run_watch(args.db, args.path, debounce_ms=args.debounce_ms)
         return 0

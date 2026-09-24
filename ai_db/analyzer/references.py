@@ -85,7 +85,7 @@ class ReferenceStore:
                 repo_root_res = _sp.run(
                     ["git", "rev-parse", "--show-toplevel"],
                     capture_output=True, text=True, timeout=5,
-                    cwd=os.path.dirname(os.path.abspath(filepath))
+                    cwd=os.path.dirname(os.path.abspath(filepath)), check=False
                 )
                 if repo_root_res.returncode == 0:
                     repo_root = repo_root_res.stdout.strip()
@@ -93,7 +93,7 @@ class ReferenceStore:
                     result = _sp.run(
                         ["git", "show", f"{since}:{rel_path}"],
                         capture_output=True, text=True, timeout=10,
-                        cwd=repo_root
+                        cwd=repo_root, check=False
                     )
                     if result.returncode == 0:
                         old_text = result.stdout

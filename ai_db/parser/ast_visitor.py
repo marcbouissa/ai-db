@@ -102,7 +102,6 @@ def extract_file_outline(filepath: str, content: str) -> list[tuple[int, str]]:
     """Extracts file outline lines (line number and label) for fast inspection."""
     ext = os.path.splitext(filepath)[1].lower()
     lines = content.splitlines()
-    total_lines = len(lines)
     outline = []
 
     if ext in (".py", ".pyi"):

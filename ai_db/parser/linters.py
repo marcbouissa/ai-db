@@ -87,7 +87,7 @@ class ExternalLinter:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=15, check=False,
             )
             if result.returncode != 0:
                 output = (result.stderr or result.stdout or "").strip()

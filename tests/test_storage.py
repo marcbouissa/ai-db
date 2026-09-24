@@ -19,13 +19,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Progressive check for storage implementation availability (M2)
 try:
     from ai_db.storage.models import (
-        AnalysisRefRecord,
-        AnnotationRecord,
         ChunkRecord,
         ContextRecord,
         FileRecord,
         SearchResult,
-        SkillRecord,
         SymbolRecord,
         SymbolRefRecord,
         SyntaxErrorRecord,
@@ -361,9 +358,8 @@ class TestStorageTier1:
                     for alias in node.names:
                         if alias.name == "sqlite3":
                             violations.append(f"{target.name}:{node.lineno}")
-                elif isinstance(node, ast.ImportFrom):
-                    if node.module == "sqlite3":
-                        violations.append(f"{target.name}:{node.lineno}")
+                elif isinstance(node, ast.ImportFrom) and node.module == "sqlite3":
+                    violations.append(f"{target.name}:{node.lineno}")
         assert len(violations) == 0, f"Direct sqlite3 imports found in: {violations}"
 
     @pytest.mark.skipif(not HAS_STORAGE_BACKEND, reason="Decoupled storage (M2) not yet available")
@@ -375,9 +371,9 @@ class TestStorageTier1:
                 continue
             tree = ast.parse(py_file.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                    if node.func.attr == "cursor":
-                        violations.append(f"{py_file.relative_to(REPO_ROOT)}:{node.lineno}")
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "cursor"):
+                    violations.append(f"{py_file.relative_to(REPO_ROOT)}:{node.lineno}")
         assert len(violations) == 0, f"Direct .cursor() calls found outside storage: {violations}"
 
     @pytest.mark.skipif(not HAS_STORAGE_BACKEND, reason="Decoupled storage (M2) not yet available")
@@ -468,7 +464,7 @@ class TestStorageTier2:
         backend = SQLiteBackend(temp_db_path)
         backend.initialize()
         backend.close()
-        with pytest.raises(Exception):
+        with pytest.raises(RuntimeError, match="closed"):
             backend.get_file("src/foo.py")
 
     @pytest.mark.skipif(not HAS_SQLITE_BACKEND, reason="SQLiteBackend not available")

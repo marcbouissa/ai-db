@@ -93,7 +93,7 @@ class ServiceDispatcher:
         if arguments is None:
             arguments = {}
         if not isinstance(arguments, dict):
-            raise ValueError(f"Arguments must be a dictionary, got {type(arguments).__name__}")
+            raise TypeError(f"Arguments must be a dictionary, got {type(arguments).__name__}")
 
         tool = self._tools.get(tool_name)
         if not tool:
@@ -102,16 +102,13 @@ class ServiceDispatcher:
         args = dict(arguments)
 
         # Legacy parameter normalization
-        if tool_name == "analyze":
-            if "targets" not in args and ("filepath" in args or "path" in args):
-                single = args.get("filepath") or args.get("path")
-                args["targets"] = [single] if single else []
-        elif tool_name == "locate":
-            if "query" not in args and "q" in args:
-                args["query"] = args["q"]
-        elif tool_name == "diff":
-            if "path" not in args and "filepath" in args:
-                args["path"] = args["filepath"]
+        if tool_name == "analyze" and "targets" not in args and ("filepath" in args or "path" in args):
+            single = args.get("filepath") or args.get("path")
+            args["targets"] = [single] if single else []
+        elif tool_name == "locate" and "query" not in args and "q" in args:
+            args["query"] = args["q"]
+        elif tool_name == "diff" and "path" not in args and "filepath" in args:
+            args["path"] = args["filepath"]
 
         # Validate required schema fields
         schema = tool.parameters_schema or {}

@@ -203,7 +203,7 @@ def cli_runner(isolated_env: Path):
                     capture_output=True,
                     text=True,
                     env=env,
-                    cwd=str(REPO_ROOT)
+                    cwd=str(REPO_ROOT), check=False
                 )
                 return proc.returncode, proc.stdout, proc.stderr
             else:
