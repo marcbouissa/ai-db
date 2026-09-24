@@ -192,7 +192,7 @@ def _main(argv: Optional[List[str]] = None) -> int:
     watch_p = subparsers.add_parser("watch", help="Watch directory and auto-sync on changes")
     watch_p.add_argument("path", nargs="?", default=".", help="Target directory to watch")
     watch_p.add_argument("--daemon", action="store_true", help="Run watcher in background daemon mode")
-    watch_p.add_argument("--interval", type=float, default=2.0, help="Polling/check interval in seconds")
+    watch_p.add_argument("--debounce-ms", type=int, default=300, help="Group file events arriving within this window (default: 300)")
     watch_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # sync-all
@@ -411,7 +411,7 @@ def _main(argv: Optional[List[str]] = None) -> int:
             os.dup2(devnull.fileno(), sys.stderr.fileno())
             devnull.close()
 
-        run_watch(args.db, args.path, interval=args.interval)
+        run_watch(args.db, args.path, debounce_ms=args.debounce_ms)
         return 0
 
     # Initialize unified ServiceDispatcher for all domain service commands

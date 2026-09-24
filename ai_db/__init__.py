@@ -76,11 +76,16 @@ class VectorDB:
         for component in (self.context_memory, self.query_engine, self.skill_router):
             component.cross_project = self.config.cross_project
         self._configure_retrieval()
+        # Last hook: any change to the index (chunks, vectors, graph) invalidates cached results.
+        self.indexer.post_sync_hooks.append(
+            lambda changed: self.backend.bump_index_generation() if changed else None)
         try:
             from ai_db.telemetry.tracker import TelemetryTracker
             self.telemetry_tracker = TelemetryTracker(conn=self.conn, db_path=self.db_path)
         except Exception:
             self.telemetry_tracker = None
+
+    last_cache_hit: bool = False
 
     def _configure_retrieval(self) -> None:
         """Pick the single retriever for ``retrieval.mode`` (no runtime switching)."""
@@ -108,6 +113,28 @@ class VectorDB:
             self.indexer.post_sync_hooks.append(lambda _changed: self.embed_missing())
         else:
             self.query_engine.retriever = LexicalRetriever(self.backend)
+
+    def retrieval_signature(self) -> Dict[str, Any]:
+        return {
+            "mode": self.config.retrieval_mode,
+            "embedding_model": self.embedder.model_id if self.embedder else None,
+            "rerank_model": self.reranker.model_id if self.reranker else None,
+        }
+
+    def _cached(self, tool: str, query: str, params: Dict[str, Any], compute: Any) -> Any:
+        """Return the cached result for this exact request at the current index generation,
+        computing and storing it on a miss."""
+        from ai_db.search.cache import cache_key
+
+        key = cache_key(tool, query, params, self.retrieval_signature())
+        gen = self.backend.get_index_generation()
+        hit = self.backend.get_query_cache(key, gen)
+        self.last_cache_hit = hit is not None
+        if hit is not None:
+            return hit
+        result = compute()
+        self.backend.set_query_cache(key, gen, result)
+        return result
 
     def embed_missing(self) -> int:
         """Embed chunks that have no vector yet (hybrid mode only)."""
@@ -149,7 +176,13 @@ class VectorDB:
         return self.indexer._index_file(filepath, file_hash, project=project)
 
     def prune_file(self, filepath: str):
-        return self.indexer.prune_file(filepath)
+        result = self.indexer.prune_file(filepath)
+        self.backend.bump_index_generation()
+        return result
+
+    def sync_paths(self, root_dir: str, paths: List[str], project: Optional[str] = None) -> Dict[str, int]:
+        """Incrementally sync only ``paths`` (from a file watcher) under ``root_dir``."""
+        return self.indexer.sync_paths(root_dir, paths, project=project)
 
     # Search & Code Query
     def query(self, search_text: str, top_k: int = 5, relative_to: Optional[str] = None,
@@ -157,11 +190,14 @@ class VectorDB:
               **kwargs: Any) -> List[Dict[str, Any]]:
         k = kwargs.get("top", top_k)
         t0 = time.perf_counter()
-        results = self.query_engine.query(search_text, top_k=k, relative_to=relative_to,
-                                          project=project, allowed_projects=allowed_projects,
-                                          languages=kwargs.get("languages"),
-                                          chunk_types=kwargs.get("chunk_types"),
-                                          modified_since=kwargs.get("modified_since"))
+        params = {"top_k": k, "relative_to": relative_to, "project": project,
+                  "allowed_projects": allowed_projects, "languages": kwargs.get("languages"),
+                  "chunk_types": kwargs.get("chunk_types"),
+                  "modified_since": kwargs.get("modified_since")}
+        results = self._cached("query", search_text, params, lambda: self.query_engine.query(
+            search_text, top_k=k, relative_to=relative_to, project=project,
+            allowed_projects=allowed_projects, languages=params["languages"],
+            chunk_types=params["chunk_types"], modified_since=params["modified_since"]))
         if getattr(self, "telemetry_tracker", None) is not None:
             latency_ms = (time.perf_counter() - t0) * 1000.0
             backend_name = "sqlite_wal" if "sqlite" in getattr(self.backend, "__class__", type(self.backend)).__name__.lower() else "generic"
@@ -264,8 +300,9 @@ class VectorDB:
     def investigate(self, query: str, budget_tokens: int = 8000, mode: str = "explain",
                     **kwargs: Any) -> Dict[str, Any]:
         from ai_db.analysis.investigate import Investigator
-        return Investigator(self).investigate(query, budget_tokens=budget_tokens, mode=mode,
-                                              **kwargs).to_dict()
+        params = {"budget_tokens": budget_tokens, "mode": mode, **kwargs}
+        return self._cached("investigate", query, params, lambda: Investigator(self).investigate(
+            query, budget_tokens=budget_tokens, mode=mode, **kwargs).to_dict())
 
     # F2: Cross-reference / callers
     def query_callers(self, symbol_name: str, relative_to: Optional[str] = None,
@@ -291,5 +328,5 @@ class VectorDB:
                                                    project=project, allowed_projects=allowed_projects)
 
 
-def run_watch(db_path: str, target_dir: str, interval: float = 2.0):
-    return _run_watch(VectorDB, db_path, target_dir, interval)
+def run_watch(db_path: Optional[str], target_dir: str, debounce_ms: int = 300):
+    return _run_watch(VectorDB, db_path, target_dir, debounce_ms)

@@ -1,20 +1,7 @@
 #!/usr/bin/env bash
-# Background file watcher that automatically synchronizes ai-db when files change
+# Keep the ai-db index in sync with a directory (event-driven, re-indexes changed files only).
 TARGET_DIR="${1:-.}"
-DB_PATH="${2:-${AI_DB_PATH:-$HOME/.local/share/ai-db/codebase_knowledge.db}}"
-
-echo "[ai-db watcher] Monitoring '$TARGET_DIR' -> DB: '$DB_PATH'"
-
-if command -v inotifywait >/dev/null 2>&1; then
-    inotifywait -m -r -e modify,create,delete,move \
-        --exclude '(\.git|\.venv|node_modules|__pycache__|\.db|\.sqlite)' \
-        "$TARGET_DIR" 2>/dev/null | while read -r directory events filename; do
-            ai-db sync "$TARGET_DIR" --db "$DB_PATH" >/dev/null 2>&1
-        done
-else
-    # Fallback polling loop every 10 seconds if inotifywait is not installed
-    while true; do
-        sleep 10
-        ai-db sync "$TARGET_DIR" --db "$DB_PATH" >/dev/null 2>&1
-    done
+if [ -n "$2" ]; then
+    exec ai-db watch "$TARGET_DIR" --db "$2"
 fi
+exec ai-db watch "$TARGET_DIR"

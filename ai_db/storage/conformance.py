@@ -166,3 +166,14 @@ class BackendConformance:
         backend.clear_file_metadata("/r/a.py")
         assert backend.query_symbols(name="alpha", allowed_projects=["p"]) == []
         assert len(backend.get_chunks_for_file("/r/a.py")) == 2
+
+    # --- query cache -----------------------------------------------------------
+
+    def test_query_cache_invalidated_by_generation(self, backend):
+        gen = backend.get_index_generation()
+        backend.set_query_cache("k", gen, {"hits": [1]})
+        assert backend.get_query_cache("k", gen) == {"hits": [1]}
+        new_gen = backend.bump_index_generation()
+        assert new_gen == gen + 1
+        assert backend.get_query_cache("k", gen) is None
+        assert backend.get_query_cache("k", new_gen) is None

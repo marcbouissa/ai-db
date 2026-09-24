@@ -183,6 +183,57 @@ class Indexer:
             print(f"[{db_name}] Sync ({project}): +{added} ~{len(updated_paths)} -{len(to_prune)} ={skipped}")
         return result
 
+    def sync_paths(self, root_dir: str, paths: list[str],
+                   project: str | None = None) -> dict[str, int]:
+        """Sync only ``paths`` (absolute, under ``root_dir``): re-index changed files, prune
+        deleted ones, skip unchanged and ignored ones. Used by the file watcher."""
+        root_dir = os.path.abspath(root_dir)
+        if project is None:
+            project = detect_project_name(root_dir)
+        ignorer = AidbIgnore(root_dir)
+        to_prune: list[str] = []
+        jobs: list[tuple[str, str, str]] = []
+        updated = set()
+        skipped = 0
+        for path in sorted({os.path.abspath(p) for p in paths}):
+            rel = os.path.relpath(path, root_dir)
+            if rel.startswith("..") or ignorer.should_ignore(rel):
+                continue
+            if any(part in HARD_IGNORE_DIRS for part in rel.split(os.sep)[:-1]):
+                continue
+            if not should_index_path(rel, os.path.basename(path)):
+                continue
+            stored = self.db.get_file(path)
+            if not os.path.isfile(path):
+                if stored is not None:
+                    to_prune.append(path)
+                continue
+            try:
+                sha = compute_sha256(path)
+            except OSError as e:
+                _logger.debug(f"Skipping unreadable file {path}: {e}")
+                continue
+            if stored is not None and stored.sha256 == sha:
+                skipped += 1
+                continue
+            if stored is not None:
+                updated.add(path)
+            jobs.append((path, sha, project))
+
+        parsed_files = self._parse_many(jobs)
+        with self.db.transaction():
+            for path in to_prune:
+                self.prune_file(path)
+            for parsed in parsed_files:
+                if parsed.filepath in updated:
+                    self.db.clear_file_metadata(parsed.filepath)
+                self._write_parsed(parsed)
+        changed = bool(to_prune or parsed_files)
+        for hook in self.post_sync_hooks:
+            hook(changed)
+        return {"added": len(parsed_files) - len(updated), "updated": len(updated),
+                "pruned": len(to_prune), "skipped": skipped}
+
     def _write_parsed(self, parsed: ParsedFile) -> None:
         if parsed.syntax_error is not None:
             self.db.upsert_syntax_error(parsed.syntax_error)

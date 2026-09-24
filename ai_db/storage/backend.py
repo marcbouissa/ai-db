@@ -125,6 +125,21 @@ class StorageBackend(ABC):
         """First chunk of ``qualified_name`` in ``filepath`` or None."""
         raise NotImplementedError(f"{type(self).__name__} must implement get_chunk_by_qualified_name")
 
+    def get_index_generation(self) -> int:
+        """Counter incremented by every sync that changed the index."""
+        raise NotImplementedError(f"{type(self).__name__} must implement get_index_generation")
+
+    def bump_index_generation(self) -> int:
+        """Increment the generation, delete cache rows of older generations, return it."""
+        raise NotImplementedError(f"{type(self).__name__} must implement bump_index_generation")
+
+    def get_query_cache(self, cache_key: str, index_gen: int) -> Optional[Any]:
+        """Cached JSON result for ``cache_key`` at ``index_gen`` or None (miss)."""
+        raise NotImplementedError(f"{type(self).__name__} must implement get_query_cache")
+
+    def set_query_cache(self, cache_key: str, index_gen: int, result: Any) -> None:
+        raise NotImplementedError(f"{type(self).__name__} must implement set_query_cache")
+
     def clear_file_metadata(self, filepath: str) -> None:
         """Delete symbols, refs, annotations, syntax errors and analysis refs of a file
         (but not its file row or chunks)."""

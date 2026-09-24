@@ -378,11 +378,21 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     def _drop_extra_index_tables(self, cur: sqlite3.Cursor) -> None:
         cur.execute("DROP TABLE IF EXISTS chunk_vectors")
         cur.execute("DROP TABLE IF EXISTS symbol_centrality")
+        cur.execute("DROP TABLE IF EXISTS query_cache")
+        cur.execute("DELETE FROM session_state WHERE key = 'index_gen'")
         cur.execute("DELETE FROM session_state WHERE key = 'embed_meta'")
 
     def _create_extra_tables(self, cur: sqlite3.Cursor) -> None:
         # Exact filtered KNN: vectors live in a plain table (FK-cascaded with chunks) and are
         # scored with sqlite-vec's vec_distance_cosine under the same filters as FTS.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS query_cache (
+                cache_key TEXT PRIMARY KEY,
+                index_gen INTEGER NOT NULL,
+                result_json TEXT NOT NULL,
+                timestamp REAL NOT NULL
+            )
+        """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS symbol_centrality (
                 project TEXT NOT NULL,
@@ -1028,6 +1038,38 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         if row is None:
             return None
         return self.get_chunks_by_ids([row["id"]])[0]
+
+    # =========================================================================
+    # Query-result cache (invalidated by index generation)
+    # =========================================================================
+
+    def get_index_generation(self) -> int:
+        self._check_closed()
+        return int(self.get_state("index_gen") or 0)
+
+    def bump_index_generation(self) -> int:
+        """Increment the generation and drop cache rows from older generations."""
+        self._check_closed()
+        gen = self.get_index_generation() + 1
+        self.set_state("index_gen", gen)
+        self.conn.execute("DELETE FROM query_cache WHERE index_gen != ?", (gen,))
+        self._auto_commit()
+        return gen
+
+    def get_query_cache(self, cache_key: str, index_gen: int) -> Optional[Any]:
+        self._check_closed()
+        row = self.conn.execute(
+            "SELECT result_json FROM query_cache WHERE cache_key = ? AND index_gen = ?",
+            (cache_key, index_gen)).fetchone()
+        return json.loads(row["result_json"]) if row else None
+
+    def set_query_cache(self, cache_key: str, index_gen: int, result: Any) -> None:
+        self._check_closed()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO query_cache (cache_key, index_gen, result_json, timestamp) "
+            "VALUES (?, ?, ?, ?)",
+            (cache_key, index_gen, json.dumps(result, ensure_ascii=False), time.time()))
+        self._auto_commit()
 
     # =========================================================================
     # Symbols & Cross-References
