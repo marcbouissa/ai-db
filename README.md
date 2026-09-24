@@ -66,7 +66,7 @@ Traditional AI coding workflows waste enormous context windows and API costs. Wh
 
 - **Zero External Dependencies**: The core platform (indexing, AST analysis, search, CLI, MCP stdio server, HTTP REST server) relies strictly on the Python 3 standard library (`sqlite3`, `ast`, `hashlib`, `json`, `http.server`, etc.).
 - **Sub-Millisecond Search**: SQLite WAL mode with FTS5 BM25 ranking, identifier-aware tokenization, and zlib level-9 compression executes complex code queries in $< 2\text{ ms}$.
-- **Pluggable Storage Layer (SOLID / Open-Closed)**: Decoupled `StorageBackend` abstraction supporting high-concurrency SQLite and modular MySQL 8.0+ adapter interfaces via a pluggable factory.
+- **Pluggable Storage Layer (SOLID / Open-Closed)**: Decoupled `StorageBackend` abstraction with a built-in SQLite backend; other databases plug in as separate packages via the `ai_db.storage` entry-point group (see ARCHITECTURE.md §3.4).
 - **Pluggable Transports**: Single unified `ServiceDispatcher` serving CLI commands (`ai-db`, `vectordb`), Model Context Protocol (stdio JSON-RPC 2.0), and threaded HTTP REST endpoints.
 - **Performance & Token Telemetry**: Quantitative measurement of p50/p95/p99 query latencies, compression savings across 4 serialization formats, semantic cache hit rates, and codebase weak points (syntax error density, complexity hotspots).
 - **Project Isolation & Scoping**: Auto-detects project boundaries via `.git`, `pyproject.toml`, or `package.json` to prevent cross-project context pollution while allowing explicit read-only sharing.
@@ -106,8 +106,8 @@ Traditional AI coding workflows waste enormous context windows and API costs. Wh
                      └──────────────┬──────────────────┬────────┘
                                     │                  │
                             ┌───────▼────────┐  ┌──────▼───────┐
-                            │ SQLiteBackend  │  │ MySQLBackend │
-                            │ (WAL, FTS5)    │  │  (Adapter)   │
+                            │ SQLiteBackend  │  │ Plugin (e.p.)│
+                            │ (WAL,FTS5,vec) │  │  backends    │
                             └────────────────┘  └──────────────┘
 ```
 
@@ -142,8 +142,8 @@ pip install -e .
 Install optional components as needed:
 
 ```bash
-# Install with MySQL 8.0+ storage adapter support
-pip install -e ".[mysql]"
+# Install local embedding / rerank model support (sentence-transformers + torch)
+pip install -e ".[local-embed]"
 
 # Install with development, linting, and testing tooling (pytest, ruff, mypy)
 pip install -e ".[dev]"

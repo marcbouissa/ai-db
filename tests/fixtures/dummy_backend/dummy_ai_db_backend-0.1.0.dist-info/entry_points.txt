@@ -1,0 +1,2 @@
+[ai_db.storage]
+dummy = dummy_ai_db_backend:create

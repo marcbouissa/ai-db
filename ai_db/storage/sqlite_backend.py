@@ -1,7 +1,8 @@
 """High-performance SQLite storage backend for ai-db (Milestone 2, Feature 8).
 
 Implements StorageBackend ABC with WAL mode, FTS5 porter unicode61 full-text search,
-BM25 scoring, transparent Zlib level 9 compression, and savepoint-based nested transactions.
+BM25 scoring, transparent zlib (level 6) compression, savepoint-based nested
+transactions, and one connection per thread (WAL allows concurrent readers).
 """
 
 import os
@@ -10,10 +11,12 @@ import json
 import time
 import zlib
 import sqlite3
+import threading
 from contextlib import contextmanager
 from typing import Optional, List, Dict, Any, Tuple, Generator
 
 from ai_db.constants import DEFAULT_DB_FILE
+from ai_db.errors import AiDbConfigError, AiDbQueryError, AiDbStorageError
 from ai_db.storage.backend import StorageBackend
 from ai_db.storage.models import (
     FileRecord, ChunkRecord, SymbolRecord, SymbolRefRecord,
@@ -22,10 +25,39 @@ from ai_db.storage.models import (
 )
 
 
+ZLIB_LEVEL = 6
+MIN_SQLITE_VERSION = (3, 35, 0)  # INSERT ... RETURNING
+
+
+def _decompress(blob: bytes, what: str) -> str:
+    try:
+        return zlib.decompress(blob).decode("utf-8", errors="replace")
+    except zlib.error as exc:
+        raise AiDbStorageError(f"corrupt compressed payload for {what}: {exc}") from exc
+
+
 class SQLiteBackend(StorageBackend):
     """SQLite implementation of the StorageBackend interface."""
 
+    OPTION_KEYS = frozenset({"path"})
+
+    @classmethod
+    def from_options(cls, options: Dict[str, Any]) -> "SQLiteBackend":
+        """Entry-point constructor: ``options = {"path": str | None}``."""
+        unknown = set(options) - cls.OPTION_KEYS
+        if unknown:
+            raise AiDbConfigError(f"unknown sqlite storage option(s): {sorted(unknown)}")
+        path = options.get("path")
+        if path is not None and not isinstance(path, str):
+            raise AiDbConfigError("storage.options.path must be a string or null")
+        return cls(path)  # None -> $AI_DB_PATH or the XDG default location
+
     def __init__(self, db_path: Optional[str] = None):
+        if sqlite3.sqlite_version_info < MIN_SQLITE_VERSION:
+            raise AiDbConfigError(
+                f"SQLite >= {'.'.join(map(str, MIN_SQLITE_VERSION))} required, "
+                f"found {sqlite3.sqlite_version}"
+            )
         if db_path is None:
             db_path = os.environ.get("AI_DB_PATH", DEFAULT_DB_FILE)
 
@@ -38,7 +70,9 @@ class SQLiteBackend(StorageBackend):
                 db_path = sub
 
         self._closed = False
-        self._tx_depth = 0
+        self._local = threading.local()
+        self._conns: List[sqlite3.Connection] = []
+        self._conns_lock = threading.Lock()
 
         if isinstance(db_path, str) and db_path.lower() in (":memory:", "/:memory:"):
             self.db_path = ":memory:"
@@ -48,22 +82,56 @@ class SQLiteBackend(StorageBackend):
             if parent:
                 os.makedirs(parent, exist_ok=True)
 
-        self.conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
+        # An in-memory database exists only inside one connection, so it is shared.
+        self._shared: Optional[sqlite3.Connection] = (
+            self._open_connection() if self.db_path == ":memory:" else None
+        )
+        if self._shared is None:
+            self._local.conn = self._open_connection()
 
-        # Concurrency & performance pragmas
-        self.conn.execute("PRAGMA journal_mode = WAL;")
-        self.conn.execute("PRAGMA synchronous = NORMAL;")
-        self.conn.execute("PRAGMA foreign_keys = ON;")
-        self.conn.execute("PRAGMA temp_store = MEMORY;")
-        self.conn.execute("PRAGMA cache_size = -64000;")
+    def _open_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.execute("PRAGMA cache_size = -64000;")
+        self._configure_connection(conn)
+        with self._conns_lock:
+            self._conns.append(conn)
+        return conn
+
+    def _configure_connection(self, conn: sqlite3.Connection) -> None:
+        """Hook for per-connection setup (extensions)."""
+
+    @property
+    def conn(self) -> Optional[sqlite3.Connection]:
+        """The calling thread's connection (created on first use)."""
+        if self._closed:
+            return None
+        if self._shared is not None:
+            return self._shared
+        existing = getattr(self._local, "conn", None)
+        if existing is None:
+            existing = self._open_connection()
+            self._local.conn = existing
+        return existing
+
+    @property
+    def _tx_depth(self) -> int:
+        return getattr(self._local, "tx_depth", 0)
+
+    @_tx_depth.setter
+    def _tx_depth(self, value: int) -> None:
+        self._local.tx_depth = value
 
     @property
     def backend_name(self) -> str:
         return "sqlite"
 
     def _check_closed(self) -> None:
-        if self._closed or self.conn is None:
+        if self._closed:
             raise RuntimeError("Storage backend is closed")
 
     def _auto_commit(self) -> None:
@@ -270,10 +338,7 @@ class SQLiteBackend(StorageBackend):
         row = cur.fetchone()
         stored_ver = json.loads(row["value_json"]) if row else None
         if stored_ver != SCHEMA_VERSION:
-            try:
-                cur.execute("DELETE FROM semantic_cache")
-            except Exception:
-                pass
+            cur.execute("DELETE FROM semantic_cache")
             cur.execute(
                 "INSERT OR REPLACE INTO session_state (key, value_json, updated) VALUES (?, ?, ?)",
                 ("schema_version", json.dumps(SCHEMA_VERSION), time.time())
@@ -282,14 +347,14 @@ class SQLiteBackend(StorageBackend):
         self.conn.commit()
 
     def close(self) -> None:
-        if not self._closed:
-            self._closed = True
-            if self.conn is not None:
-                try:
-                    self.conn.close()
-                except Exception:
-                    pass
-                self.conn = None
+        if self._closed:
+            return
+        self._closed = True
+        with self._conns_lock:
+            conns, self._conns = self._conns, []
+        for c in conns:
+            c.close()
+        self._shared = None
 
     @contextmanager
     def transaction(self) -> Generator[None, None, None]:
@@ -308,7 +373,9 @@ class SQLiteBackend(StorageBackend):
                 self.conn.execute(f"RELEASE SAVEPOINT {sp_name}")
                 if self._tx_depth == 1:
                     self.conn.rollback()
-            except Exception:
+            except sqlite3.Error:
+                # The rollback itself failed (connection already rolled back by
+                # SQLite); the original exception is the one worth surfacing.
                 pass
             raise
         finally:
@@ -359,20 +426,10 @@ class SQLiteBackend(StorageBackend):
                     pruned_files += 1
 
         for fts in ["fts_index", "fts_skills", "fts_contexts"]:
-            try:
-                cur.execute(f"INSERT INTO {fts}({fts}) VALUES('optimize')")
-            except Exception:
-                pass
-
-        try:
-            cur.execute("PRAGMA optimize")
-        except Exception:
-            pass
-
-        try:
-            cur.execute("VACUUM")
-        except Exception:
-            pass
+            cur.execute(f"INSERT INTO {fts}({fts}) VALUES('optimize')")
+        self.conn.commit()
+        cur.execute("PRAGMA optimize")
+        cur.execute("VACUUM")
 
         # Evict stale analysis refs older than 7 days
         self.evict_stale_analysis_refs(86400 * 7)
@@ -468,22 +525,37 @@ class SQLiteBackend(StorageBackend):
 
     def insert_chunks(self, chunks: List[ChunkRecord]) -> None:
         self._check_closed()
+        if not chunks:
+            return
         cur = self.conn.cursor()
-        for c in chunks:
-            zcontent = zlib.compress(c.content.encode("utf-8"), level=9)
+        rows = [
+            (c.filepath, c.chunk_type, c.name, c.start_line, c.end_line,
+             zlib.compress(c.content.encode("utf-8"), level=ZLIB_LEVEL), c.project)
+            for c in chunks
+        ]
+        # One multi-row INSERT ... RETURNING per batch (SQLite variable limit: 32766).
+        batch = 4000
+        ids: List[int] = []
+        for i in range(0, len(rows), batch):
+            part = rows[i:i + batch]
+            placeholders = ",".join(["(?, ?, ?, ?, ?, ?, ?)"] * len(part))
+            flat = [v for row in part for v in row]
             cur.execute(
-                """
-                INSERT INTO chunks (filepath, chunk_type, name, start_line, end_line, zcontent, project)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (c.filepath, c.chunk_type, c.name, c.start_line, c.end_line, zcontent, c.project)
+                "INSERT INTO chunks (filepath, chunk_type, name, start_line, end_line, zcontent, project) "
+                f"VALUES {placeholders} RETURNING id",
+                flat,
             )
-            chunk_id = cur.lastrowid
+            ids.extend(r[0] for r in cur.fetchall())
+        if len(ids) != len(chunks):
+            raise AiDbStorageError(f"inserted {len(chunks)} chunks but got {len(ids)} ids")
+        # RETURNING order is not guaranteed; ids are assigned ascending within a statement.
+        ids.sort()
+        for c, chunk_id in zip(chunks, ids):
             c.id = chunk_id
-            cur.execute(
-                "INSERT INTO fts_index (content, filepath, name, chunk_id) VALUES (?, ?, ?, ?)",
-                (f"{c.name} {c.content}", c.filepath, c.name, chunk_id)
-            )
+        cur.executemany(
+            "INSERT INTO fts_index (content, filepath, name, chunk_id) VALUES (?, ?, ?, ?)",
+            [(f"{c.name} {c.content}", c.filepath, c.name, c.id) for c in chunks],
+        )
         self._auto_commit()
 
     def get_chunks_for_file(self, filepath: str) -> List[ChunkRecord]:
@@ -498,10 +570,7 @@ class SQLiteBackend(StorageBackend):
         )
         result = []
         for r in cur.fetchall():
-            try:
-                content = zlib.decompress(r["zcontent"]).decode("utf-8", errors="replace")
-            except Exception:
-                content = ""
+            content = _decompress(r["zcontent"], f"chunk {r['id']}")
             result.append(ChunkRecord(
                 id=r["id"],
                 filepath=r["filepath"],
@@ -564,21 +633,15 @@ class SQLiteBackend(StorageBackend):
             LIMIT ?
         """
 
-        rows = []
         try:
             cur.execute(sql, params)
-            rows = cur.fetchall()
-        except sqlite3.OperationalError:
-            return []
-        except Exception:
-            return []
+        except sqlite3.OperationalError as exc:
+            raise AiDbQueryError(fts_query, exc) from exc
+        rows = cur.fetchall()
 
         results = []
         for r in rows:
-            try:
-                decompressed = zlib.decompress(r["zcontent"]).decode("utf-8", errors="replace")
-            except Exception:
-                decompressed = ""
+            decompressed = _decompress(r["zcontent"], f"chunk {r['chunk_id']}")
 
             snippet = decompressed[:300].strip() if decompressed else ""
             raw_score = abs(float(r["bm25_rank"]))
@@ -950,7 +1013,7 @@ class SQLiteBackend(StorageBackend):
     def save_context(self, context: ContextRecord) -> None:
         self._check_closed()
         cur = self.conn.cursor()
-        zcontent = zlib.compress(context.full_notes.encode("utf-8"), level=9)
+        zcontent = zlib.compress(context.full_notes.encode("utf-8"), level=ZLIB_LEVEL)
         active_json = json.dumps(context.active_files)
         tasks_json = json.dumps(context.open_tasks)
 
@@ -1132,7 +1195,7 @@ class SQLiteBackend(StorageBackend):
     def store_analysis_ref(self, ref: AnalysisRefRecord) -> None:
         self._check_closed()
         cur = self.conn.cursor()
-        zbody = zlib.compress(ref.body_text.encode("utf-8"), level=9)
+        zbody = zlib.compress(ref.body_text.encode("utf-8"), level=ZLIB_LEVEL)
         cur.execute(
             """
             INSERT OR REPLACE INTO analysis_refs (ref_id, filepath, name, start_line, end_line, kind, zbody, timestamp)

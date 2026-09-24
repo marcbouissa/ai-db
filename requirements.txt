@@ -1,4 +1,3 @@
-# Core runtime dependencies for ai-db
-# ai-db is designed following minimal-dependency principles and relies exclusively on the Python standard library.
+# Core runtime dependencies for ai-db (declared in pyproject.toml).
 # Installing in editable mode provides the 'ai-db' and 'vectordb' CLI commands.
 -e .

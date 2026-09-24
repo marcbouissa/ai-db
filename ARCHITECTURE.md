@@ -57,8 +57,8 @@ Core tenets of the architecture:
                               └───────┬───────────────┬───────┘
                                       │               │
                       ┌───────────────▼──┐         ┌──▼────────────────┐
-                      │  SQLiteBackend   │         │   MySQLBackend    │
-                      │ (WAL, FTS5, zlib)│         │(Relational Adapter│
+                      │  SQLiteBackend   │         │ Plugin backends   │
+                      │(WAL, FTS5, vec0) │         │ (entry points)    │
                       └──────────────────┘         └───────────────────┘
 ```
 
@@ -72,9 +72,9 @@ Core tenets of the architecture:
 |-----------|------------------------------------------|------------------------|
 | **Single Responsibility Principle (SRP)** | Every module has one, and only one, reason to change. Parsing ASTs does not query databases; storage backends do not format CLI output; transports do not parse ASTs. | `ai_db/parser/` (AST parsing only)<br>`ai_db/storage/` (persistence only)<br>`ai_db/search/` (indexing/ranking only)<br>`ai_db/transports/` (protocol handling only) |
 | **Open/Closed Principle (OCP)** | Core indexing, querying, and analysis services are closed for modification but open for extension. New storage engines (e.g. DuckDB, PostgreSQL) and new transport adapters (e.g. WebSocket, gRPC) can be plugged in without modifying existing domain code. | `ai_db/storage/backend.py`<br>`ai_db/storage/factory.py`<br>`ai_db/dispatcher.py` |
-| **Liskov Substitution Principle (LSP)** | Any storage backend implementing `StorageBackend` can be substituted into `VectorDB` or `Indexer` without altering the correctness of the system. Implementations communicate strictly through typed `slots=True` domain DTOs. | `ai_db/storage/models.py`<br>`ai_db/storage/sqlite_backend.py`<br>`ai_db/storage/mysql_backend.py` |
+| **Liskov Substitution Principle (LSP)** | Any storage backend implementing `StorageBackend` can be substituted into `VectorDB` or `Indexer` without altering the correctness of the system. Implementations communicate strictly through typed `slots=True` domain DTOs. | `ai_db/storage/models.py`<br>`ai_db/storage/sqlite_backend.py`<br>`ai_db/storage/conformance.py` |
 | **Interface Segregation Principle (ISP)** | The storage contract is cleanly segregated into focused functional areas (Files, Chunks, Symbols, Cross-Refs, Diagnostics, Skills, Context Memory, Analysis Refs, State/Cache). Domain services invoke only the interface subsets they need. | `ai_db/storage/backend.py` |
-| **Dependency Inversion Principle (DIP)** | High-level business logic (`VectorDB`, `Indexer`, `QueryEngine`, `SkillRouter`, `ContextMemory`, `AnalyzerEngine`) depends on the abstract `StorageBackend` contract, never on concrete database connection drivers (`sqlite3.Connection`, PyMySQL). Dependencies are injected via constructors. | `ai_db/__init__.py`<br>`ai_db/search/indexer.py`<br>`ai_db/search/query.py` |
+| **Dependency Inversion Principle (DIP)** | High-level business logic (`VectorDB`, `Indexer`, `QueryEngine`, `SkillRouter`, `ContextMemory`, `AnalyzerEngine`) depends on the abstract `StorageBackend` contract, never on concrete database connection drivers (`sqlite3.Connection`). Dependencies are injected via constructors. | `ai_db/__init__.py`<br>`ai_db/search/indexer.py`<br>`ai_db/search/query.py` |
 
 ---
 
@@ -165,116 +165,77 @@ The default engine (`ai_db/storage/sqlite_backend.py`) provides zero-dependency 
 - **zlib Level 9 Compression**: Code chunks are compressed into binary blobs (`zcontent`) upon insertion and decompressed transparently on retrieval, saving 60–80% disk space.
 - **Cascading Deletions**: Deleting a file cascades to associated chunks, symbols, and cross-references.
 
-### 3.4 Step-by-Step Guide: Implementing a Custom Storage Backend
+### 3.4 Writing a storage connector
 
-To implement a new backend (e.g. DuckDB, PostgreSQL, or an In-Memory engine):
+ai-db ships only the SQLite backend. Other databases are separate pip packages that
+register an entry point in the `ai_db.storage` group. The built-in backend is
+registered the same way (`sqlite = "ai_db.storage.sqlite_backend:SQLiteBackend.from_options"`),
+so there is one discovery path for every backend.
 
-#### Step 1: Subclass `StorageBackend`
-Implement the abstract methods using your database driver, mapping results to the domain DTOs.
+**Contract**
+
+1. The entry point loads a callable `(options: dict) -> StorageBackend`. `options` is
+   `storage.options` from the config file. Reject unknown keys with `AiDbConfigError`.
+2. Subclass `ai_db.storage.backend.StorageBackend` and implement every abstract method.
+3. Override `capabilities()` to return the features you support, from
+   `{"fts", "vector", "graph"}`. `retrieval.mode = "hybrid"` requires `"vector"`; if you
+   declare it, also subclass `ai_db.storage.backend.VectorCapable`.
+4. Run the shipped conformance kit (`ai_db.storage.conformance.BackendConformance`)
+   in your own test suite.
+
+**Skeleton**
 
 ```python
-# custom_backend.py
-import contextlib
-from typing import Optional, List, Dict, Any, Tuple, ContextManager
-from ai_db.storage.backend import StorageBackend
-from ai_db.storage.models import (
-    FileRecord, ChunkRecord, SymbolRecord, SymbolRefRecord,
-    AnnotationRecord, SyntaxErrorRecord, SkillRecord, ContextRecord,
-    AnalysisRefRecord, SearchResult
-)
+# my_ai_db_postgres/__init__.py
+from ai_db.errors import AiDbConfigError
+from ai_db.storage.backend import StorageBackend, VectorCapable
 
-class InMemoryStorageBackend(StorageBackend):
-    """Minimal in-memory storage backend demonstration."""
 
-    def __init__(self, uri: str = "memory://"):
-        self.uri = uri
-        self._files: Dict[str, FileRecord] = {}
-        self._chunks: Dict[str, List[ChunkRecord]] = {}
-        self._symbols: List[SymbolRecord] = []
-        self._state: Dict[str, Any] = {}
+class PostgresBackend(StorageBackend, VectorCapable):
+    def __init__(self, dsn: str):
+        self.dsn = dsn
 
     @property
     def backend_name(self) -> str:
-        return "in_memory"
+        return "postgres"
 
-    def initialize(self) -> None:
-        pass  # Initialize memory structures
+    def capabilities(self) -> frozenset:
+        return frozenset({"fts", "vector", "graph"})
 
-    def close(self) -> None:
-        self._files.clear()
-        self._chunks.clear()
+    # ... implement every StorageBackend and VectorCapable method ...
 
-    @contextlib.contextmanager
-    def transaction(self) -> ContextManager[None]:
-        # Atomic transaction context
-        yield
 
-    def upsert_file(self, record: FileRecord) -> None:
-        self._files[record.filepath] = record
-
-    def get_file(self, filepath: str) -> Optional[FileRecord]:
-        return self._files.get(filepath)
-
-    def delete_file(self, filepath: str) -> None:
-        self._files.pop(filepath, None)
-        self._chunks.pop(filepath, None)
-
-    def get_files_by_prefix(self, prefix: str) -> Dict[str, str]:
-        return {fp: rec.sha256 for fp, rec in self._files.items() if fp.startswith(prefix)}
-
-    def get_all_filepaths(self) -> List[str]:
-        return list(self._files.keys())
-
-    def insert_chunks(self, chunks: List[ChunkRecord]) -> None:
-        for chunk in chunks:
-            self._chunks.setdefault(chunk.filepath, []).append(chunk)
-
-    def get_chunks_for_file(self, filepath: str) -> List[ChunkRecord]:
-        return self._chunks.get(filepath, [])
-
-    def search_chunks(
-        self, query_tokens: List[str], allowed_projects: Optional[List[str]] = None,
-        top_k: int = 5, path_prefix: Optional[str] = None
-    ) -> List[SearchResult]:
-        hits = []
-        tokens_lower = [t.lower() for t in query_tokens]
-        for fp, chunks in self._chunks.items():
-            for c in chunks:
-                if any(t in c.content.lower() for t in tokens_lower):
-                    hits.append(SearchResult(
-                        chunk_id=c.id or 1, filepath=c.filepath, name=c.name,
-                        chunk_type=c.chunk_type, project=c.project,
-                        start_line=c.start_line, end_line=c.end_line,
-                        score=1.0, snippet=c.content[:100]
-                    ))
-        return hits[:top_k]
-
-    # Implement remaining abstract methods (symbols, diagnostics, state, etc.)...
+def create(options: dict) -> PostgresBackend:
+    unknown = set(options) - {"dsn"}
+    if unknown or "dsn" not in options:
+        raise AiDbConfigError("postgres storage needs exactly {'dsn': str}")
+    return PostgresBackend(options["dsn"])
 ```
 
-#### Step 2: Register with `StorageBackendFactory`
-Register the custom scheme in `StorageBackendFactory`:
+```toml
+# my_ai_db_postgres/pyproject.toml
+[project.entry-points."ai_db.storage"]
+postgres = "my_ai_db_postgres:create"
+```
 
 ```python
-from ai_db.storage.factory import StorageBackendFactory
+# tests/test_conformance.py
+import pytest
+from ai_db.storage.conformance import BackendConformance
+from my_ai_db_postgres import create
 
-# Register custom URI scheme
-StorageBackendFactory.register_backend("memory", InMemoryStorageBackend)
 
-# Instantiate via URI
-backend = StorageBackendFactory.create("memory://")
+class TestPostgres(BackendConformance):
+    @pytest.fixture
+    def backend(self):
+        b = create({"dsn": "postgresql://localhost/aidb_test"})
+        b.initialize()
+        yield b
+        b.close()
 ```
 
-#### Step 3: Pass into VectorDB
-Inject the backend into `VectorDB` without modifying any indexing or analysis logic:
-
-```python
-from ai_db import VectorDB
-
-vdb = VectorDB(backend)
-vdb.sync("/path/to/project")
-results = vdb.query("MyClass")
-```
+Select it with `ai-db init --storage postgres`, then set `storage.options` in the config.
+If the provider name is not installed, ai-db stops with the list of installed providers.
 
 ---
 
@@ -452,7 +413,7 @@ The telemetry subsystem (`ai_db/telemetry/`) provides non-intrusive, zero-overhe
 ai-db/
 ├── pyproject.toml              # PEP 517/518 build config, metadata, console scripts, extras
 ├── requirements.txt            # Zero third-party runtime dependencies (-e .)
-├── requirements-dev.txt        # Development dependencies (-e .[dev,mysql])
+├── requirements-dev.txt        # Development dependencies (-e .[dev])
 ├── LICENSE                     # MIT Open-Source License
 ├── README.md                   # Public user guide, quickstart, MCP setup, CLI reference
 ├── ARCHITECTURE.md             # This document: architectural specification and SOLID design
@@ -476,7 +437,7 @@ ai-db/
 │   │   ├── models.py           # Strongly typed slots=True domain DTOs
 │   │   ├── factory.py          # StorageBackendFactory (URI & connection resolution)
 │   │   ├── sqlite_backend.py   # SQLite backend (WAL mode, FTS5, BM25, zlib compression)
-│   │   ├── mysql_backend.py    # MySQL 8.0+ relational adapter interface
+│   │   ├── conformance.py      # Contract tests for third-party backends
 │   │   ├── database.py         # Backward-compatible Database wrapper
 │   │   └── state.py            # Session state persistence helpers
 │   │
@@ -518,7 +479,7 @@ ai-db/
 └── tests/                      # 4-Tier automated test suite
     ├── conftest.py             # Shared fixtures (isolated DBs, temp workspaces)
     ├── test_packaging.py       # Features 1-5: Packaging, entry points, extras, gitignore
-    ├── test_storage.py         # Features 6-11: StorageBackend, SQLite, MySQL, Factory, DTOs
+    ├── test_storage.py         # Features 6-11: StorageBackend, SQLite, Factory, DTOs
     ├── test_transports.py      # Features 12-15: CLI, MCP, HTTP REST, ServiceDispatcher
     ├── test_telemetry.py       # Features 16-20: Latency, token compression, cache, weak points
     ├── test_parser.py          # AST parser, chunker, outlines, syntax diagnostics
@@ -533,7 +494,6 @@ ai-db/
 ### 8.1 Prerequisites
 - Python 3.10 or higher
 - Git
-- (Optional) Docker or MySQL 8.0+ if testing the relational adapter
 
 ### 8.2 Development Setup
 ```bash

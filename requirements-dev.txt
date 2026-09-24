@@ -2,6 +2,5 @@
 # Installs core package in editable mode along with dev tools (pytest, pytest-cov, ruff, mypy)
 -e .[dev]
 
-# Optional database adapters:
-# To install MySQL support alongside dev tools, run:
+# Local embedding / rerank models (sentence-transformers + torch):
 # pip install -e ".[all]"

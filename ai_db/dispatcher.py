@@ -144,8 +144,7 @@ class ServiceDispatcher:
             return self._lazy_db
         if self._lazy_db is None:
             from ai_db import VectorDB
-            from ai_db.constants import DEFAULT_DB_FILE
-            self._lazy_db = VectorDB(target_path or DEFAULT_DB_FILE, config=self.config)
+            self._lazy_db = VectorDB(target_path, config=self.config)
         return self._lazy_db
 
     def close(self) -> None:

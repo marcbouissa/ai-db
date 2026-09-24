@@ -2,7 +2,7 @@
 
 Verifies StorageBackend ABC protocol compliance, domain DTOs, SQLiteBackend
 (WAL mode, FTS5 BM25, zlib level 9, atomic transactions), StorageBackendFactory,
-MySQLBackend adapter interface, and decoupled SQL callers.
+pluggable entry-point backends, and decoupled SQL callers.
 """
 
 import ast
@@ -48,12 +48,6 @@ try:
     HAS_STORAGE_FACTORY = True
 except ImportError:
     HAS_STORAGE_FACTORY = False
-
-try:
-    from ai_db.storage.mysql_backend import MySQLBackend
-    HAS_MYSQL_BACKEND = True
-except ImportError:
-    HAS_MYSQL_BACKEND = False
 
 
 # ==============================================================================
@@ -326,12 +320,6 @@ class TestStorageTier1:
         assert isinstance(backend, SQLiteBackend)
         backend.close()
 
-    @pytest.mark.skipif(not (HAS_STORAGE_FACTORY and HAS_MYSQL_BACKEND), reason="MySQL backend or factory not yet available")
-    def test_factory_resolves_mysql_uri_scheme(self, mock_mysql_connection):
-        """TC-T1-F9-04: mysql:// URI resolves to MySQLBackend instance."""
-        backend = StorageBackendFactory.create("mysql://root:secret@127.0.0.1:3306/aidb")
-        assert isinstance(backend, MySQLBackend)
-        assert backend.backend_name == "mysql"
 
     @pytest.mark.skipif(not HAS_STORAGE_FACTORY, reason="Storage factory not yet available")
     def test_factory_unsupported_scheme_raises_value_error(self):
@@ -340,70 +328,12 @@ class TestStorageTier1:
             StorageBackendFactory.create("postgres://localhost:5432/aidb")
         assert "unsupported" in str(excinfo.value).lower() or "postgres" in str(excinfo.value).lower()
 
-    @pytest.mark.skipif(not (HAS_STORAGE_FACTORY and HAS_SQLITE_BACKEND), reason="Storage factory not yet available")
-    def test_factory_environment_fallback(self, monkeypatch, temp_db_path):
-        """TC-T1-F9-06: Factory falls back to AI_DB_CONNECTION_STRING when URI omitted."""
-        monkeypatch.setenv("AI_DB_CONNECTION_STRING", f"sqlite:///{temp_db_path}")
-        backend = StorageBackendFactory.create()
-        assert isinstance(backend, SQLiteBackend)
-        backend.close()
 
-    # --- Feature 10: MySQL 8.0+ Adapter Interface ---
 
-    @pytest.mark.skipif(not HAS_MYSQL_BACKEND, reason="MySQLBackend (M2) not yet available")
-    def test_mysql_backend_missing_driver_raises_informative_error(self, monkeypatch):
-        """TC-T1-F10-01: Informative ImportError when pymysql driver is absent."""
-        monkeypatch.setitem(sys.modules, "pymysql", None)
-        with pytest.raises(ImportError) as excinfo:
-            MySQLBackend("mysql://root:pass@localhost:3306/db")
-        assert "ai-db[mysql]" in str(excinfo.value) or "pymysql" in str(excinfo.value)
 
-    @pytest.mark.skipif(not HAS_MYSQL_BACKEND, reason="MySQLBackend (M2) not yet available")
-    def test_mysql_backend_schema_ddl_generation(self, mock_mysql_connection):
-        """TC-T1-F10-02: Schema DDL uses VARCHAR(768), LONGBLOB, and FULLTEXT indexes."""
-        backend = MySQLBackend("mysql://root:pass@localhost:3306/db")
-        backend.initialize()
-        cursor = mock_mysql_connection["cursor"]
-        executed_sqls = [call[0][0] for call in cursor.execute.call_args_list if call[0]]
-        all_sql = " ".join(executed_sqls).upper()
-        assert "VARCHAR(768)" in all_sql or "VARCHAR" in all_sql
-        assert "LONGBLOB" in all_sql or "BLOB" in all_sql
 
-    @pytest.mark.skipif(not HAS_MYSQL_BACKEND, reason="MySQLBackend (M2) not yet available")
-    def test_mysql_backend_fts_match_against_translation(self, mock_mysql_connection):
-        """TC-T1-F10-03: FTS search translates to MySQL MATCH ... AGAINST syntax."""
-        backend = MySQLBackend("mysql://root:pass@localhost:3306/db")
-        backend.search_chunks(["indexer", "tokens"], allowed_projects=["global"], top_k=5)
-        cursor = mock_mysql_connection["cursor"]
-        executed_sqls = [call[0][0] for call in cursor.execute.call_args_list if call[0]]
-        assert any("MATCH" in s and "AGAINST" in s for s in executed_sqls), (
-            f"MySQL FTS query did not contain MATCH ... AGAINST: {executed_sqls}"
-        )
 
-    @pytest.mark.skipif(not (HAS_MYSQL_BACKEND and HAS_STORAGE_MODELS), reason="MySQLBackend or models not available")
-    def test_mysql_backend_upsert_on_duplicate_key(self, mock_mysql_connection):
-        """TC-T1-F10-04: Entity upserts translate to ON DUPLICATE KEY UPDATE."""
-        backend = MySQLBackend("mysql://root:pass@localhost:3306/db")
-        backend.upsert_file(FileRecord("src/foo.py", "hash1", 1000.0, 1))
-        cursor = mock_mysql_connection["cursor"]
-        executed_sqls = [call[0][0] for call in cursor.execute.call_args_list if call[0]]
-        assert any("ON DUPLICATE KEY UPDATE" in s.upper() for s in executed_sqls), (
-            f"Expected ON DUPLICATE KEY UPDATE in: {executed_sqls}"
-        )
 
-    @pytest.mark.skipif(not HAS_MYSQL_BACKEND, reason="MySQLBackend (M2) not yet available")
-    def test_mysql_backend_mock_transaction_commit_rollback(self, mock_mysql_connection):
-        """TC-T1-F10-05: MySQL transaction context manager commits or rolls back."""
-        backend = MySQLBackend("mysql://root:pass@localhost:3306/db")
-        conn = mock_mysql_connection["connection"]
-        with backend.transaction():
-            pass
-        conn.commit.assert_called()
-
-        with pytest.raises(RuntimeError):
-            with backend.transaction():
-                raise RuntimeError("Trigger rollback")
-        conn.rollback.assert_called()
 
     # --- Feature 11: Decoupled Leaked SQL Calls ---
 
@@ -649,7 +579,7 @@ class TestStorageTier2:
 
     @pytest.mark.skipif(not (HAS_SQLITE_BACKEND and HAS_STORAGE_MODELS), reason="SQLiteBackend not available")
     def test_sqlite_corrupt_zlib_decompression_graceful_recovery(self, temp_db_path):
-        """TC-T2-F8-02: Corrupted zcontent compressed payloads recover gracefully without crashing."""
+        """TC-T2-F8-02: Corrupted zcontent payloads raise AiDbStorageError (no silent empty result)."""
         backend = SQLiteBackend(temp_db_path)
         backend.initialize()
         backend.upsert_file(FileRecord("bad_zlib.py", "h1", 1.0, 1))
@@ -660,10 +590,9 @@ class TestStorageTier2:
         cur.execute("UPDATE chunks SET zcontent = ? WHERE filepath = 'bad_zlib.py'", [b"GARBAGE_ZLIB_DATA"])
         backend.conn.commit()
 
-        results = backend.search_chunks(["bad_fn"], allowed_projects=["global"], top_k=5)
-        assert isinstance(results, list)
-        if results:
-            assert results[0].snippet == "" or "bad_fn" in results[0].name
+        from ai_db.errors import AiDbStorageError
+        with pytest.raises(AiDbStorageError, match="corrupt"):
+            backend.search_chunks(["bad_fn"], allowed_projects=["global"], top_k=5)
         backend.close()
 
     @pytest.mark.skipif(not HAS_STORAGE_FACTORY, reason="StorageBackendFactory not available")
@@ -690,13 +619,6 @@ class TestStorageTier2:
         assert isinstance(backend, SQLiteBackend)
         backend.close()
 
-    @pytest.mark.skipif(not (HAS_STORAGE_FACTORY and HAS_MYSQL_BACKEND), reason="MySQLBackend not available")
-    def test_factory_url_encoded_credentials_in_mysql_uri(self, mock_mysql_connection):
-        """TC-T2-F9-04: URL-encoded passwords in MySQL URI are decoded correctly."""
-        # user: admin, password: p@ss:word!
-        uri = "mysql://admin:p%40ss%3Aword%21@127.0.0.1:3306/aidb"
-        backend = StorageBackendFactory.create(uri)
-        assert isinstance(backend, MySQLBackend)
 
     @pytest.mark.skipif(not (HAS_STORAGE_FACTORY and HAS_SQLITE_BACKEND), reason="Storage factory not available")
     def test_factory_case_insensitive_scheme_parsing(self, temp_db_path):
@@ -705,55 +627,10 @@ class TestStorageTier2:
         assert isinstance(backend, SQLiteBackend)
         backend.close()
 
-    @pytest.mark.skipif(not HAS_MYSQL_BACKEND, reason="MySQLBackend not available")
-    def test_mysql_credential_masking_in_error_messages(self, monkeypatch):
-        """TC-T2-F10-02: Passwords in MySQL URIs are masked in exceptions and logs."""
-        secret_uri = "mysql://admin:super_secret_pw_12345@127.0.0.1:59999/db"
-        try:
-            backend = MySQLBackend(secret_uri)
-            backend.initialize()
-        except Exception as e:
-            assert "super_secret_pw_12345" not in str(e), "MySQL exception leaked raw password!"
 
-    @pytest.mark.skipif(not HAS_MYSQL_BACKEND, reason="MySQLBackend not available")
-    def test_mysql_sql_injection_defense_in_parameters(self, mock_mysql_connection):
-        """TC-T2-F10-03: Malicious query parameters are safely parameterized without injection."""
-        backend = MySQLBackend("mysql://root:pass@localhost:3306/db")
-        injection_project = "' OR '1'='1"
-        backend.search_chunks(["token"], allowed_projects=[injection_project], top_k=5)
-        cursor = mock_mysql_connection["cursor"]
-        executed_sqls = [call[0][0] for call in cursor.execute.call_args_list if call[0]]
-        # Should not concatenate raw injection into query string
-        for s in executed_sqls:
-            assert "' OR '1'='1" not in s, f"SQL injection detected in query: {s}"
 
-    @pytest.mark.skipif(not HAS_MYSQL_BACKEND, reason="MySQLBackend not available")
-    def test_mysql_unreachable_host_connection_error(self, mock_mysql_connection):
-        """TC-T2-F10-01: Connection attempt to unreachable host raises informative error without leaking secrets."""
-        mock_pymysql = mock_mysql_connection["module"]
-        mock_pymysql.connect.side_effect = Exception("Can't connect to MySQL server on '127.0.0.1'")
-        with pytest.raises(Exception) as exc_info:
-            backend = MySQLBackend("mysql://user:mypassword@127.0.0.1:59998/testdb?connect_timeout=1")
-            backend.initialize()
-        err_msg = str(exc_info.value)
-        assert "mypassword" not in err_msg, "MySQL exception leaked raw password!"
 
-    @pytest.mark.skipif(not HAS_MYSQL_BACKEND, reason="MySQLBackend not available")
-    def test_mysql_empty_search_tokens(self, mock_mysql_connection):
-        """TC-T2-F10-04: Empty or whitespace query tokens to MySQL adapter return empty list."""
-        backend = MySQLBackend("mysql://root:pass@localhost:3306/db")
-        assert backend.search_chunks([], allowed_projects=["global"], top_k=5) == []
-        assert backend.search_chunks(["   ", "\t"], allowed_projects=["global"], top_k=5) == []
 
-    @pytest.mark.skipif(not HAS_MYSQL_BACKEND, reason="MySQLBackend not available")
-    def test_mysql_transaction_rollback_on_failure(self, mock_mysql_connection):
-        """TC-T2-F10-05: Exception inside MySQL transaction context invokes connection rollback."""
-        backend = MySQLBackend("mysql://root:pass@localhost:3306/db")
-        mock_conn = mock_mysql_connection["connection"]
-        with pytest.raises(RuntimeError):
-            with backend.transaction():
-                raise RuntimeError("Crash inside MySQL transaction")
-        assert mock_conn.rollback.called, "Connection rollback was not called on transaction failure"
 
     @pytest.mark.skipif(not (HAS_SQLITE_BACKEND and HAS_STORAGE_MODELS), reason="Storage models not available")
     def test_decoupled_missing_file_snippet_fallback(self, temp_db_path):
@@ -849,13 +726,6 @@ class TestStorageTier3:
         assert backend.get_file("src/pair.py") == file_rec
         backend.close()
 
-    @pytest.mark.skipif(not (HAS_STORAGE_FACTORY and HAS_MYSQL_BACKEND and HAS_STORAGE_BACKEND),
-                        reason="Factory, MySQLBackend, or StorageBackend not available")
-    def test_pairwise_factory_mysql_protocol_compliance(self, mock_mysql_connection):
-        """TC-T3-PAIR-02: Factory creates MySQL backend satisfying StorageBackend protocol."""
-        backend = StorageBackendFactory.create("mysql://user:pass@127.0.0.1:3306/db")
-        assert isinstance(backend, StorageBackend)
-        assert backend.backend_name == "mysql"
 
     @pytest.mark.skipif(not (HAS_SQLITE_BACKEND and HAS_STORAGE_MODELS),
                         reason="SQLiteBackend or models not available")

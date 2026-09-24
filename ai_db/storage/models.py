@@ -135,3 +135,18 @@ class SearchResult:
     end_line: int
     score: float
     snippet: str
+
+
+@dataclass(slots=True)
+class ParsedFile:
+    """Everything extracted from one source file, produced by a parser worker process
+    and written by the single writer (the main process)."""
+    filepath: str
+    sha256: str
+    last_modified: float
+    project: str
+    chunks: List[ChunkRecord] = field(default_factory=list)
+    symbols: List[SymbolRecord] = field(default_factory=list)
+    refs: List[SymbolRefRecord] = field(default_factory=list)
+    annotations: List[AnnotationRecord] = field(default_factory=list)
+    syntax_error: Optional[SyntaxErrorRecord] = None

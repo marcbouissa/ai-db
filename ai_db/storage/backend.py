@@ -355,3 +355,37 @@ class StorageBackend(ABC):
     def search_symbols(self, query: str, limit: int = 10) -> List[SymbolRecord]:
         """Convenience alias for query_symbols."""
         return self.query_symbols(query, limit=limit)
+
+
+class VectorCapable(ABC):
+    """Mixin contract for backends that declare the ``'vector'`` capability.
+
+    Vectors are L2-normalized ``list[float]``; distances are cosine distances
+    (0 = identical). ``filters`` has the same keys as ``search_chunks`` filters.
+    """
+
+    @abstractmethod
+    def ensure_vector_index(self, dim: int, model_id: str) -> None:
+        """Create the vector index for ``dim`` and record ``model_id``/``dim`` in embed meta."""
+
+    @abstractmethod
+    def upsert_embeddings(self, items: List[Tuple[int, List[float]]]) -> None:
+        """Store ``(chunk_id, vector)`` pairs, replacing existing vectors."""
+
+    @abstractmethod
+    def search_vectors(self, vector: List[float], k: int,
+                       filters: Optional[Dict[str, Any]] = None) -> List[Tuple[int, float]]:
+        """Return up to ``k`` ``(chunk_id, distance)`` pairs, nearest first."""
+
+    @abstractmethod
+    def chunks_missing_embeddings(self, limit: int) -> List[ChunkRecord]:
+        """Chunks that have no stored vector yet (with content)."""
+
+    @abstractmethod
+    def get_embed_meta(self) -> Optional[Dict[str, Any]]:
+        """``{"model_id": str, "dim": int}`` of the stored index, or None if never built."""
+
+    @abstractmethod
+    def drop_vector_index(self) -> None:
+        """Delete all vectors and embed meta (used by ``ai-db reindex --embeddings``)."""
+

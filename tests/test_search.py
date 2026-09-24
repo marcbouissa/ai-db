@@ -326,7 +326,7 @@ class TestSearchTier2BoundaryAndCorner:
         assert vdb.check_syntax(target_path="/non/existent/path/file.py") == []
 
     def test_corrupt_zcontent_handling(self, search_env):
-        """Chunks with corrupted binary zcontent decompress gracefully to empty snippet."""
+        """Chunks with corrupted binary zcontent raise AiDbStorageError instead of hiding it."""
         vdb = search_env["vdb"]
         src = search_env["src_dir"]
         (src / "valid.py").write_text("def healthy_function(): pass\n")
@@ -337,10 +337,9 @@ class TestSearchTier2BoundaryAndCorner:
         cur.execute("UPDATE chunks SET zcontent = ? WHERE project = 'corrupt_test'", [b"NOT_ZLIB_DATA"])
         vdb.conn.commit()
 
-        # Query should not raise zlib.error
-        hits = vdb.query("healthy_function", project="corrupt_test")
-        assert len(hits) >= 1
-        assert hits[0]["snippet"] == ""
+        from ai_db.errors import AiDbStorageError
+        with pytest.raises(AiDbStorageError):
+            vdb.query("healthy_function", project="corrupt_test")
 
     def test_query_unicode_multilingual_terms(self, search_env):
         """Verify queries containing non-ASCII Unicode terms return indexed documents."""

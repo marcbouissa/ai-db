@@ -1,112 +1,103 @@
-"""Pluggable StorageBackend Factory for ai-db (Milestone 2, Feature 9).
+"""Storage backend discovery.
 
-Resolves StorageBackend instances based on URI connection strings, environment
-fallbacks, or default filesystem configurations.
+Backends are discovered through the ``ai_db.storage`` entry-point group. Each entry
+point loads a callable ``(options: dict) -> StorageBackend``. The built-in SQLite
+backend is registered the same way (see ``pyproject.toml``), so there is exactly one
+code path for built-in and third-party connectors.
 """
 
-import os
-import re
-from typing import Optional
-from urllib.parse import urlparse
+from __future__ import annotations
+
+from collections.abc import Callable
+from importlib.metadata import entry_points
+from typing import Any
 
 from ai_db.constants import DEFAULT_DB_FILE
+from ai_db.errors import AiDbConfigError
 from ai_db.storage.backend import StorageBackend
 from ai_db.storage.sqlite_backend import SQLiteBackend
 
+ENTRY_POINT_GROUP = "ai_db.storage"
 
-def _mask_uri(uri: str) -> str:
-    """Mask password credentials in URI strings for safe error reporting."""
-    return re.sub(r"(://[^:]*:)([^@]+)(@)", r"\1******\3", uri)
+
+def available_providers() -> dict[str, Any]:
+    return {ep.name: ep for ep in entry_points(group=ENTRY_POINT_GROUP)}
+
+
+def load_provider(name: str) -> Callable[[dict[str, Any]], StorageBackend]:
+    providers = available_providers()
+    if name not in providers:
+        raise AiDbConfigError(
+            f"unknown storage provider '{name}'; installed providers: {sorted(providers)}"
+        )
+    factory = providers[name].load()
+    if not callable(factory):
+        raise AiDbConfigError(f"storage entry point '{name}' does not load a callable")
+    return factory
 
 
 class StorageBackendFactory:
-    """Factory resolving StorageBackend by connection string URI or filesystem path."""
+    """Builds storage backends from config or from an explicit SQLite path."""
 
     @classmethod
-    def from_config(cls, cfg, db_path: Optional[str] = None) -> StorageBackend:
-        """Build the backend named by ``cfg.storage.provider``."""
-        from ai_db.errors import AiDbConfigError
-        if cfg.storage.provider != "sqlite":
-            raise AiDbConfigError(f"unknown storage provider '{cfg.storage.provider}'")
-        path = db_path if db_path is not None else (cfg.storage.options.get("path") or DEFAULT_DB_FILE)
-        return cls.create(path)
+    def from_config(cls, cfg: Any, db_path: str | None = None) -> StorageBackend:
+        """Build the backend named by ``cfg.storage.provider``.
+
+        ``db_path`` (the CLI ``--db`` flag) overrides ``options.path``.
+        """
+        options = dict(cfg.storage.options)
+        if db_path is not None:
+            options["path"] = db_path
+        backend = load_provider(cfg.storage.provider)(options)
+        if not isinstance(backend, StorageBackend):
+            raise AiDbConfigError(
+                f"storage provider '{cfg.storage.provider}' returned {type(backend).__name__}, "
+                "not a StorageBackend"
+            )
+        if cfg.retrieval_mode == "hybrid" and "vector" not in backend.capabilities():
+            raise AiDbConfigError(
+                f"retrieval.mode 'hybrid' needs a backend with the 'vector' capability; "
+                f"'{cfg.storage.provider}' has {sorted(backend.capabilities())}"
+            )
+        return backend
 
     @classmethod
-    def create(cls, connection_string: Optional[str] = None) -> StorageBackend:
-        """Instantiate and return a configured StorageBackend instance.
+    def create(cls, connection_string: str | None = None) -> StorageBackend:
+        """Create a SQLite backend from a filesystem path or ``sqlite:///`` URI.
 
-        Args:
-            connection_string: Optional URI or path. If omitted, falls back to
-                AI_DB_CONNECTION_STRING -> AI_DB_PATH -> DEFAULT_DB_FILE.
-
-        Returns:
-            Configured StorageBackend instance (SQLiteBackend or MySQLBackend).
-
-        Raises:
-            ValueError: If connection_string is empty, malformed, or uses unsupported scheme.
-            ImportError: If required driver for external backend is not installed.
+        Raises ValueError for empty strings, malformed URIs and non-sqlite schemes
+        (other databases are provided by entry-point plugins, see ``from_config``).
         """
         if connection_string is None:
-            connection_string = os.environ.get("AI_DB_CONNECTION_STRING")
-            if not connection_string:
-                connection_string = os.environ.get("AI_DB_PATH", DEFAULT_DB_FILE)
-
+            connection_string = DEFAULT_DB_FILE
         if not isinstance(connection_string, str) or not connection_string.strip():
             raise ValueError("Connection string cannot be empty or whitespace")
+        return SQLiteBackend(parse_sqlite_location(connection_string.strip()))
 
-        raw = connection_string.strip()
 
-        # Handle Windows drive paths (e.g. C:\data\db.sqlite)
-        if len(raw) >= 2 and raw[1] == ":" and raw[0].isalpha():
-            return SQLiteBackend(raw)
-
-        # Handle bare filesystem paths without URI scheme
-        if "://" not in raw:
-            return SQLiteBackend(raw)
-
-        # Malformed URI missing scheme (e.g. ":///")
-        if raw.startswith("://"):
-            raise ValueError(f"Malformed connection URI: missing scheme in '{_mask_uri(raw)}'")
-
-        parsed = urlparse(raw)
-        scheme = parsed.scheme.lower()
-        if not scheme:
-            raise ValueError(f"Malformed connection URI: missing scheme in '{_mask_uri(raw)}'")
-
-        # SQLite schemes
-        if scheme in ("sqlite", "file"):
-            if raw.lower() in ("sqlite://", "sqlite:///", "file://", "file:///"):
-                raise ValueError(f"Malformed SQLite URI: path is missing in '{raw}'")
-
-            if raw.lower().startswith("sqlite:///"):
-                sub = raw[len("sqlite:///"):]
-                if sub.lower() in (":memory:", "/:memory:"):
-                    return SQLiteBackend(":memory:")
-                elif sub:
-                    return SQLiteBackend(sub)
-                else:
-                    raise ValueError(f"Malformed SQLite URI: path is missing in '{raw}'")
-            elif raw.lower() in ("sqlite://:memory:", "sqlite:///:memory:"):
-                return SQLiteBackend(":memory:")
-            else:
-                full_path = f"{parsed.netloc}{parsed.path}"
-                if full_path.lower() in (":memory:", "/:memory:"):
-                    return SQLiteBackend(":memory:")
-                if not full_path:
-                    raise ValueError(f"Malformed SQLite URI: path is missing in '{raw}'")
-                return SQLiteBackend(full_path)
-
-        # MySQL / MariaDB schemes
-        elif scheme in ("mysql", "mysql+pymysql", "mariadb"):
-            if raw.lower() in ("mysql://", "mysql:///", "mariadb://", "mariadb:///"):
-                raise ValueError(f"Malformed MySQL URI: missing host and database in '{_mask_uri(raw)}'")
-            if not parsed.netloc and not parsed.path.lstrip("/"):
-                raise ValueError(f"Malformed MySQL URI: missing host and database in '{_mask_uri(raw)}'")
-
-            from ai_db.storage.mysql_backend import MySQLBackend
-            return MySQLBackend(raw)
-
-        # Unsupported schemes
-        else:
-            masked = _mask_uri(raw)
-            raise ValueError(f"Unsupported storage backend URI scheme: '{scheme}' in '{masked}'")
+def parse_sqlite_location(raw: str) -> str:
+    """Turn a path or sqlite URI into a filesystem path or ``:memory:``."""
+    if len(raw) >= 2 and raw[1] == ":" and raw[0].isalpha():
+        return raw  # Windows drive path
+    if "://" not in raw:
+        return raw
+    if raw.startswith("://"):
+        raise ValueError(f"Malformed connection URI: missing scheme in '{raw}'")
+    scheme, _, rest = raw.partition("://")
+    scheme = scheme.lower()
+    if scheme not in ("sqlite", "file"):
+        raise ValueError(
+            f"Unsupported storage backend URI scheme: '{scheme}'. Non-SQLite databases are "
+            "installed as plugins and selected with storage.provider in the config."
+        )
+    if rest in ("", "/"):
+        raise ValueError(f"Malformed SQLite URI: path is missing in '{raw}'")
+    if rest.lower() in (":memory:", "/:memory:"):
+        return ":memory:"
+    if rest.startswith("/"):
+        # sqlite:///relative/or/abs -> strip the authority slash
+        sub = rest[1:]
+        if not sub:
+            raise ValueError(f"Malformed SQLite URI: path is missing in '{raw}'")
+        return sub
+    return rest

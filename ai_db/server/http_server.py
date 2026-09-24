@@ -233,9 +233,6 @@ def start_http_server(
     config: Optional[Any] = None,
 ):
     """Starts the threaded HTTP server (blocking). Call from CLI."""
-    if db_path is None:
-        db_path = DEFAULT_DB_FILE
-
     if dispatcher is None:
         from ai_db.config import load_config
         from ai_db.dispatcher import ServiceDispatcher

@@ -49,7 +49,6 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("AI_DB_PATH", db_file)
     monkeypatch.setenv("AI_DB_CONFIG", config_file)
     monkeypatch.setenv("AI_DB_SKILL_DIRS", str(skills_dir))
-    monkeypatch.setenv("AI_DB_CONNECTION_STRING", f"sqlite:///{db_file}")
     monkeypatch.setenv("XDG_DATA_HOME", str(data_dir))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_dir))
 
@@ -262,33 +261,6 @@ def memory_sqlite_backend():
         pytest.skip("SQLiteBackend (M2) not yet available")
 
 
-@pytest.fixture
-def mock_mysql_connection(monkeypatch: pytest.MonkeyPatch):
-    """Mock pymysql connection and cursor for testing MySQL adapter without live server."""
-    mock_cursor = MagicMock()
-    mock_cursor.execute.return_value = 0
-    mock_cursor.fetchall.return_value = []
-    mock_cursor.fetchone.return_value = None
-    mock_cursor.lastrowid = 1
-    mock_cursor.rowcount = 1
-
-    mock_conn = MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-    mock_conn.commit.return_value = None
-    mock_conn.rollback.return_value = None
-    mock_conn.close.return_value = None
-
-    mock_pymysql = MagicMock()
-    mock_pymysql.connect.return_value = mock_conn
-
-    monkeypatch.setitem(sys.modules, "pymysql", mock_pymysql)
-    monkeypatch.setitem(sys.modules, "pymysql.cursors", MagicMock())
-
-    return {
-        "module": mock_pymysql,
-        "connection": mock_conn,
-        "cursor": mock_cursor,
-    }
 
 
 @pytest.fixture

@@ -31,12 +31,19 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Database",
 ]
-dependencies = []
+dependencies = [
+    "tree-sitter>=0.23",
+    "tree-sitter-language-pack>=0.7",
+    "sqlite-vec>=0.1.6",
+    "tiktoken>=0.8",
+    "watchfiles>=1.0",
+    "numpy>=2.0",
+]
 
 [project.optional-dependencies]
-mysql = [
-    "pymysql>=1.1.0",
-    "cryptography>=42.0.0",
+local-embed = [
+    "sentence-transformers>=3.3",
+    "torch>=2.4",
 ]
 dev = [
     "pytest>=8.0.0",
@@ -45,12 +52,15 @@ dev = [
     "mypy>=1.10.0",
 ]
 all = [
-    "ai-db[mysql,dev]",
+    "ai-db[local-embed,dev]",
 ]
 
 [project.scripts]
 ai-db = "ai_db.cli:main"
 vectordb = "ai_db.cli:main"
+
+[project.entry-points."ai_db.storage"]
+sqlite = "ai_db.storage.sqlite_backend:SQLiteBackend.from_options"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -64,13 +74,15 @@ py-modules = ["vectordb", "mcp_server"]
 minversion = "8.0"
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m \"not bench and not model\""
 markers = [
     "packaging: packaging and environment tests",
     "sanitization: repository sanitization tests",
     "storage: storage layer tests",
     "transports: communication and transport tests",
     "telemetry: telemetry tests",
+    "bench: performance benchmarks (run with -m bench)",
+    "model: tests that download and run real ML models (run with -m model)",
 ]
 
 [tool.ruff]

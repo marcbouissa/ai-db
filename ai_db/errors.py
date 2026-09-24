@@ -16,3 +16,7 @@ class AiDbQueryError(AiDbError):
         super().__init__(f"query failed: {cause} (query={query!r})")
         self.query = query
         self.cause = cause
+
+
+class AiDbStorageError(AiDbError):
+    """Stored data is corrupt or the storage backend violated its contract."""

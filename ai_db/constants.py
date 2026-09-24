@@ -45,3 +45,6 @@ HARD_IGNORE_DIRS = {
 VENDOR_NOISE_EXTENSIONS = {
     ".map", ".min.js", ".min.css", ".bundle.js", ".chunk.js", ".wasm", ".lock"
 }
+
+# Syncs with at least this many changed files parse in a process pool.
+PARALLEL_PARSE_MIN_FILES = 32

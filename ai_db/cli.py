@@ -123,7 +123,7 @@ def _main(argv: Optional[List[str]] = None) -> int:
     sync_p = subparsers.add_parser("sync", help="Sync files in a directory")
     sync_p.add_argument("path", nargs="?", default=".", help="Target path")
     sync_p.add_argument("--project", default=None, help="Target project scope (default: auto-detected)")
-    sync_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    sync_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # query
     query_p = subparsers.add_parser("query", help="Query knowledge chunks (BM25)")
@@ -131,7 +131,7 @@ def _main(argv: Optional[List[str]] = None) -> int:
     query_p.add_argument("--top", type=int, default=5)
     query_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
     query_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
-    query_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    query_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # check / lint
     check_p = subparsers.add_parser("check", aliases=["lint"], help="Check AST code validation and syntax errors")
@@ -140,30 +140,30 @@ def _main(argv: Optional[List[str]] = None) -> int:
     check_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
     check_p.add_argument("--watch", action="store_true", help="Continuously re-check on file changes (F11)")
     check_p.add_argument("--interval", type=float, default=2.0, help="Poll interval in seconds for --watch mode (default: 2.0)")
-    check_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    check_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # symbol
     symbol_p = subparsers.add_parser("symbol", help="Exact symbol resolution (class, def, interface)")
     symbol_p.add_argument("name", help="Symbol name to find")
     symbol_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
     symbol_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
-    symbol_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    symbol_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # outline
     outline_p = subparsers.add_parser("outline", help="File outline / skeleton extraction")
     outline_p.add_argument("path", help="Filepath to extract outline from")
-    outline_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    outline_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # watch
     watch_p = subparsers.add_parser("watch", help="Watch directory and auto-sync on changes")
     watch_p.add_argument("path", nargs="?", default=".", help="Target directory to watch")
     watch_p.add_argument("--daemon", action="store_true", help="Run watcher in background daemon mode")
     watch_p.add_argument("--interval", type=float, default=2.0, help="Polling/check interval in seconds")
-    watch_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    watch_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # sync-all
     syncall_p = subparsers.add_parser("sync-all", help="Sync all repositories registered in config.json")
-    syncall_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    syncall_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # route-skill
     route_p = subparsers.add_parser("route-skill", aliases=["suggest-skills", "route"], help="Analyze prompt and route to best matching skill(s)")
@@ -173,13 +173,13 @@ def _main(argv: Optional[List[str]] = None) -> int:
     route_p.add_argument("--min-confidence", type=float, default=None, help="Minimum confidence (0.0–1.0) to include a skill result (default: 0.15)")
     route_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
     route_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
-    route_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    route_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # sync-skills
     syncskills_p = subparsers.add_parser("sync-skills", help="Index all installed skills into the knowledge base")
     syncskills_p.add_argument("--project", default="global", help="Project scope for skills (default: global)")
     syncskills_p.add_argument("--dir", action="append", default=None, help="Skill directory to index")
-    syncskills_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    syncskills_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # context (chat / session memory)
     ctx_p = subparsers.add_parser("context", aliases=["ctx"], help="Manage session context and chat memory")
@@ -193,33 +193,33 @@ def _main(argv: Optional[List[str]] = None) -> int:
     ctx_save.add_argument("--tasks", action="append", default=[], help="Open pending tasks (repeatable)")
     ctx_save.add_argument("--notes", default=None, help="Detailed markdown notes/decisions (defaults to summary)")
     ctx_save.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
-    ctx_save.add_argument("--db", default=DEFAULT_DB_FILE)
+    ctx_save.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     ctx_get = ctx_sub.add_parser("get", help="Retrieve latest or specified session context")
     ctx_get.add_argument("session_id", nargs="?", default=None, help="Session ID (default: most recent)")
     ctx_get.add_argument("--format", choices=["dense", "json", "markdown"], default="markdown", help="Output format")
     ctx_get.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
     ctx_get.add_argument("--allow-project", action="append", default=[], help="Allowed project (repeatable)")
-    ctx_get.add_argument("--db", default=DEFAULT_DB_FILE)
+    ctx_get.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     ctx_list = ctx_sub.add_parser("list", help="List stored session contexts")
     ctx_list.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
     ctx_list.add_argument("--allow-project", action="append", default=[], help="Allowed project (repeatable)")
-    ctx_list.add_argument("--db", default=DEFAULT_DB_FILE)
+    ctx_list.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     ctx_query = ctx_sub.add_parser("query", help="Search session contexts with BM25")
     ctx_query.add_argument("search", help="Search query")
     ctx_query.add_argument("--top", type=int, default=3, help="Max results")
     ctx_query.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
     ctx_query.add_argument("--allow-project", action="append", default=[], help="Allowed project (repeatable)")
-    ctx_query.add_argument("--db", default=DEFAULT_DB_FILE)
+    ctx_query.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # remember shortcut command
     remember_p = subparsers.add_parser("remember", help="Recall current project context memory")
     remember_p.add_argument("session_id", nargs="?", default=None, help="Optional session ID")
     remember_p.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
     remember_p.add_argument("--allow-project", action="append", default=[], help="Allowed project (repeatable)")
-    remember_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    remember_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # analyze (RFC: tokenopt-analyzer v2)
     analyze_p = subparsers.add_parser("analyze", help="Token-optimized code analysis (F1-F15)")
@@ -234,7 +234,7 @@ def _main(argv: Optional[List[str]] = None) -> int:
     analyze_p.add_argument("--cursor", default=None, help="Continuation cursor handle")
     analyze_p.add_argument("--format", "--fmt", dest="format", choices=["json", "stub", "sexp", "outline", "prose"], default=None, help="Output format (default: active DB default, initially 'stub')")
     analyze_p.add_argument("--no-cache", action="store_true", help="Bypass semantic cache")
-    analyze_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    analyze_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # expand (F7 progressive disclosure)
     expand_p = subparsers.add_parser("expand", help="Expand progressive disclosure ref handle (pay-per-section)")
@@ -242,7 +242,7 @@ def _main(argv: Optional[List[str]] = None) -> int:
     expand_p.add_argument("--depth", choices=["targeted", "full"], default="full", help="Expansion depth")
     expand_p.add_argument("--span", default=None, help="Sub-span START:END within ref")
     expand_p.add_argument("--format", choices=["json", "raw"], default="json", help="Output format")
-    expand_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    expand_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # locate
     locate_p = subparsers.add_parser("locate", help="Locate files and snippet spans for a question")
@@ -250,39 +250,39 @@ def _main(argv: Optional[List[str]] = None) -> int:
     locate_p.add_argument("--scope", default=".", help="Directory scope to restrict search (default: .)")
     locate_p.add_argument("-k", type=int, default=5, help="Number of target candidates (default: 5)")
     locate_p.add_argument("--format", "--fmt", dest="format", choices=["json", "stub", "sexp"], default=None, help="Output format")
-    locate_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    locate_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # mcp (JSON-RPC MCP Server)
     mcp_p = subparsers.add_parser("mcp", help="Run stdio JSON-RPC MCP server for Claude/Cursor/Antigravity")
-    mcp_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    mcp_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # status
     status_p = subparsers.add_parser("status", help="Show database statistics and index health")
-    status_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    status_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # prune
     prune_p = subparsers.add_parser("prune", help="Remove dead/deleted files from the index")
-    prune_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    prune_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # optimize / vacuum
     opt_p = subparsers.add_parser("optimize", aliases=["vacuum"], help="Defragment database and optimize FTS index")
     opt_p.add_argument("--no-prune", action="store_true", help="Skip pruning missing files before vacuum")
     opt_p.add_argument("--default-format", choices=["stub", "sexp", "json", "outline", "prose"], default=None, help="Configure and persist default output format for future queries")
-    opt_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    opt_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # diff
     diff_p = subparsers.add_parser("diff", help="Show changed line spans in a file since last index or git ref")
     diff_p.add_argument("path", help="Path to file to diff")
     diff_p.add_argument("--since", default="last", help="Git ref/hash/timestamp to compare against, or 'last' for DB snapshot (default: last)")
     diff_p.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
-    diff_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    diff_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # callers
     callers_p = subparsers.add_parser("callers", help="Find all callers/references to a symbol")
     callers_p.add_argument("name", help="Symbol name to find callers of")
     callers_p.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
     callers_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
-    callers_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    callers_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # todos
     todos_p = subparsers.add_parser("todos", help="List TODO/FIXME/HACK annotations")
@@ -290,19 +290,19 @@ def _main(argv: Optional[List[str]] = None) -> int:
     todos_p.add_argument("--file", default=None, help="Filter by specific file path")
     todos_p.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
     todos_p.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
-    todos_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    todos_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # serve (HTTP JSON API server)
     serve_p = subparsers.add_parser("serve", help="Run HTTP JSON API server")
     serve_p.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765)")
     serve_p.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
-    serve_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    serve_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # telemetry
     telemetry_p = subparsers.add_parser("telemetry", help="View performance and token compression telemetry")
     telemetry_p.add_argument("--reset", action="store_true", help="Reset accumulated telemetry metrics")
     telemetry_p.add_argument("--format", "--fmt", dest="format", choices=["dense", "json"], default="dense", help="Output format")
-    telemetry_p.add_argument("--db", default=DEFAULT_DB_FILE)
+    telemetry_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
     # eval (retrieval quality harness)
     eval_p = subparsers.add_parser("eval", help="Evaluate retrieval quality against a golden query set")

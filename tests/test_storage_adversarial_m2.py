@@ -5,7 +5,6 @@ Focus areas:
 2. Atomic transaction rollback (multi-table atomicity, zero orphaned records across all tables, FK enforcement).
 3. Nested transactions (multi-level savepoint rollback and commit, sibling savepoints, depth tracking).
 4. Cascading deletions (delete_file cleanly purges files, chunks, symbols, refs, annotations, syntax_errors, analysis_refs, and FTS index).
-5. Cross-backend behavioral parity (SQLite vs MySQL mock transaction semantics).
 """
 
 import os
@@ -26,7 +25,6 @@ from ai_db.storage.models import (
     ContextRecord, AnalysisRefRecord, SearchResult
 )
 from ai_db.storage.sqlite_backend import SQLiteBackend
-from ai_db.storage.mysql_backend import MySQLBackend
 from ai_db.storage.factory import StorageBackendFactory
 
 
@@ -827,43 +825,3 @@ class TestCascadingDeletions:
         assert len(backend.search_chunks(["restore_token"])) == 1
 
         backend.close()
-
-
-# ==============================================================================
-# 5. Cross-Backend Transaction Protocol Verification (MySQL Adapter)
-# ==============================================================================
-
-@pytest.mark.storage
-class TestMySQLAdapterTransactions:
-    """Verify transaction and error masking behavior of MySQL backend adapter."""
-
-    def test_mysql_transaction_commit_and_rollback(self, mock_mysql_connection):
-        """Verify MySQLBackend transaction commits on clean exit and rolls back on exception."""
-        backend = MySQLBackend("mysql://root:secret@127.0.0.1:3306/aidb")
-        conn = mock_mysql_connection["connection"]
-
-        with backend.transaction():
-            pass
-        assert conn.commit.called
-
-        conn.rollback.reset_mock()
-        with pytest.raises(ValueError):
-            with backend.transaction():
-                raise ValueError("Simulated failure")
-        assert conn.rollback.called
-
-    def test_mysql_nested_transaction_depth(self, mock_mysql_connection):
-        """Verify MySQLBackend tracks transaction depth and only commits at root level."""
-        backend = MySQLBackend("mysql://root:secret@127.0.0.1:3306/aidb")
-        conn = mock_mysql_connection["connection"]
-        conn.commit.reset_mock()
-
-        with backend.transaction():
-            assert backend._tx_depth == 1
-            with backend.transaction():
-                assert backend._tx_depth == 2
-            # Inner transaction should NOT commit the connection
-            assert not conn.commit.called
-        # Outer transaction commits
-        assert conn.commit.called
-        assert backend._tx_depth == 0

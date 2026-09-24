@@ -61,9 +61,7 @@ class VectorDB:
         if isinstance(db_path, StorageBackend):
             self.backend = db_path
         else:
-            cfg_path = self.config.storage.options.get("path")
-            path_or_uri = db_path if db_path is not None else (cfg_path or DEFAULT_DB_FILE)
-            self.backend = StorageBackendFactory.create(path_or_uri)
+            self.backend = StorageBackendFactory.from_config(self.config, db_path=db_path)
             self.backend.initialize()
 
         self.db = self.backend

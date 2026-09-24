@@ -72,11 +72,13 @@ class TestPackagingTier1:
         assert project.get("description"), "project.description must be non-empty"
 
     def test_core_zero_runtime_dependencies(self):
-        """TC-PKG-T1-04: Core package declares zero external runtime dependencies."""
+        """TC-PKG-T1-04: Core runtime deps are the parsing/index stack; ML stays optional."""
         pyproject = load_pyproject()
         dependencies = pyproject.get("project", {}).get("dependencies", None)
-        assert dependencies == [], (
-            f"Core dependencies must be an empty list [] for zero-dep runtime, got {dependencies}"
+        names = {re.split(r"[<>=~!\[ ]", d, maxsplit=1)[0].lower() for d in dependencies}
+        assert {"tree-sitter", "sqlite-vec", "tiktoken"} <= names, dependencies
+        assert not names & {"torch", "sentence-transformers"}, (
+            f"heavy ML deps must live in the local-embed extra, got {dependencies}"
         )
 
     def test_console_scripts_defined(self):
@@ -91,14 +93,14 @@ class TestPackagingTier1:
         )
 
     def test_optional_dependencies_extras(self):
-        """TC-PKG-T1-06: Modular extras [mysql], [dev], and [all] configured."""
+        """TC-PKG-T1-06: Modular extras [local-embed], [dev], and [all] configured."""
         pyproject = load_pyproject()
         extras = pyproject.get("project", {}).get("optional-dependencies", {})
-        assert "mysql" in extras, "Missing [project.optional-dependencies.mysql]"
+        assert "local-embed" in extras, "Missing [project.optional-dependencies.local-embed]"
         assert "dev" in extras, "Missing [project.optional-dependencies.dev]"
         assert "all" in extras, "Missing [project.optional-dependencies.all]"
-        assert any("pymysql" in dep.lower() for dep in extras["mysql"]), (
-            f"mysql extra must contain pymysql, got {extras['mysql']}"
+        assert any("sentence-transformers" in dep.lower() for dep in extras["local-embed"]), (
+            f"local-embed extra must contain sentence-transformers, got {extras['local-embed']}"
         )
         assert any("pytest" in dep.lower() for dep in extras["dev"]), (
             f"dev extra must contain pytest, got {extras['dev']}"
@@ -203,12 +205,6 @@ class TestPackagingTier1:
             decoded = raw.decode("utf-8")
             assert len(decoded) == len(raw.decode("utf-8", errors="replace"))
 
-    def test_extras_mysql_dependency_declared(self):
-        """TC-PKG-T1-19 (F4): [project.optional-dependencies.mysql] declares pymysql."""
-        pyproject = load_pyproject()
-        extras = pyproject.get("project", {}).get("optional-dependencies", {})
-        assert "mysql" in extras, "Missing mysql extras group"
-        assert any("pymysql" in dep for dep in extras["mysql"]), "pymysql missing from mysql extra"
 
     def test_extras_dev_dependency_declared(self):
         """TC-PKG-T1-20 (F4): [project.optional-dependencies.dev] declares dev tools."""
@@ -320,7 +316,7 @@ class TestPackagingTier2:
         spec_pattern = re.compile(r"^[a-zA-Z0-9_\-\.]+(\[[a-zA-Z0-9_,\-]+\])?(\s*[><=~!]=?\s*[0-9a-zA-Z\.\*\+\-]+)?$")
         for group_name, dep_list in extras.items():
             for dep in dep_list:
-                # e.g., "pymysql>=1.1.0", "ai-db[mysql,dev]"
+                # e.g., "torch>=2.4", "ai-db[local-embed,dev]"
                 assert spec_pattern.match(dep.strip()), (
                     f"Dependency specifier '{dep}' in extra '{group_name}' is invalid"
                 )
@@ -330,14 +326,10 @@ class TestPackagingTier2:
         pyproject = load_pyproject()
         extras = pyproject.get("project", {}).get("optional-dependencies", {})
         all_extra = extras.get("all", [])
-        # 'all' should either reference self extras (ai-db[mysql,dev]) or list all sub-packages
         all_str = " ".join(all_extra)
-        if "mysql" in extras and "dev" in extras:
-            has_self_ref = ("mysql" in all_str and "dev" in all_str)
-            has_direct_deps = any("pymysql" in d for d in all_extra) and any("pytest" in d for d in all_extra)
-            assert has_self_ref or has_direct_deps, (
-                f"[all] extra {all_extra} does not encompass [mysql] and [dev] dependencies"
-            )
+        assert "local-embed" in all_str and "dev" in all_str, (
+            f"[all] extra {all_extra} does not encompass [local-embed] and [dev] dependencies"
+        )
 
     def test_import_ai_db_has_no_cli_side_effects(self):
         """TC-PKG-T2-08: Importing ai_db does not produce stdout or create database files."""
@@ -449,12 +441,12 @@ class TestPackagingTier2:
         assert "ruff" in combined or "flake8" in combined, "Linter missing from dev requirements"
 
     def test_extras_mutually_exclusive_isolation(self):
-        """TC-PKG-T2-20 (F4): mysql extras group does not contaminate core or dev-only tools."""
+        """TC-PKG-T2-20 (F4): local-embed extra does not contaminate core or dev-only tools."""
         pyproject = load_pyproject()
         extras = pyproject.get("project", {}).get("optional-dependencies", {})
-        mysql_deps = " ".join(extras.get("mysql", []))
-        assert "pytest" not in mysql_deps, "dev dependency pytest leaked into mysql extra"
-        assert "ruff" not in mysql_deps, "dev dependency ruff leaked into mysql extra"
+        embed_deps = " ".join(extras.get("local-embed", []))
+        assert "pytest" not in embed_deps, "dev dependency pytest leaked into local-embed extra"
+        assert "ruff" not in embed_deps, "dev dependency ruff leaked into local-embed extra"
 
     def test_extras_no_recursive_cycle(self):
         """TC-PKG-T2-21 (F4): Extras definitions contain no recursive self-referential cycles."""
