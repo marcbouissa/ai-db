@@ -842,7 +842,7 @@ class ServiceDispatcher:
         min_conf = float(args.get("min_confidence", 0.0))
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
-        return db.route_skill(prompt, top=top_k, min_confidence=min_conf, project=project, allowed_projects=allow_projects)
+        return db.route_skills(prompt, top_k=top_k, min_confidence=min_conf, project=project, allowed_projects=allow_projects)
 
     def _handle_sync_skills(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
