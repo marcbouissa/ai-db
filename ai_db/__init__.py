@@ -85,7 +85,15 @@ class VectorDB:
     def _configure_retrieval(self) -> None:
         """Pick the single retriever for ``retrieval.mode`` (no runtime switching)."""
         from ai_db.embed.registry import build_embedder
+        from ai_db.rerank.registry import build_reranker
+        from ai_db.search.ranking import Ranker
         from ai_db.search.retriever import HybridRetriever, LexicalRetriever
+
+        self.reranker = build_reranker(self.config.rerank)
+        self.query_engine.ranker = Ranker(self.backend, self.reranker)
+        if "graph" in self.backend.capabilities():
+            self.indexer.post_sync_hooks.append(
+                lambda changed: self.backend.rebuild_symbol_centrality() if changed else None)
 
         self.embedder = build_embedder(self.config.embedding)
         if self.config.retrieval_mode == "hybrid":

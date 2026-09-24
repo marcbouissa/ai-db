@@ -41,8 +41,8 @@ EMBEDDING_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
 RERANK_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "none": (frozenset(), frozenset()),
     "sentence_transformers": (frozenset({"model", "device"}), frozenset({"_note"})),
-    "voyage": (frozenset({"model", "api_key_env"}), frozenset({"_note"})),
-    "cohere": (frozenset({"model", "api_key_env"}), frozenset({"_note"})),
+    "voyage": (frozenset({"model", "api_key_env"}), frozenset({"base_url", "_note"})),
+    "cohere": (frozenset({"model", "api_key_env"}), frozenset({"base_url", "_note"})),
 }
 
 TOP_LEVEL_KEYS = frozenset(

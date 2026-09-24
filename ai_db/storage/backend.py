@@ -101,6 +101,15 @@ class StorageBackend(ABC):
         """Chunks (with content) for ``ids``, in the given order; unknown ids are skipped."""
         raise NotImplementedError(f"{type(self).__name__} must implement get_chunks_by_ids")
 
+    def rebuild_symbol_centrality(self) -> None:
+        """('graph' capability) Recompute per-symbol normalized call in-degree."""
+        raise NotImplementedError(f"{type(self).__name__} must implement rebuild_symbol_centrality")
+
+    def get_symbol_centrality(self, names: List[str],
+                              allowed_projects: Optional[List[str]] = None) -> Dict[str, float]:
+        """('graph' capability) ``{bare_symbol_name: score in [0, 1]}``."""
+        raise NotImplementedError(f"{type(self).__name__} must implement get_symbol_centrality")
+
     def clear_file_metadata(self, filepath: str) -> None:
         """Delete symbols, refs, annotations, syntax errors and analysis refs of a file
         (but not its file row or chunks)."""

@@ -34,3 +34,20 @@ class FakeEmbeddingProvider(EmbeddingProvider):
 
     def embed_query(self, text):
         return self._vec(text)
+
+
+from ai_db.rerank.base import RerankProvider
+
+
+class FakeReranker(RerankProvider):
+    """Scores by the number of query words present in the text."""
+
+    model_id = "fake:overlap"
+
+    def __init__(self, options=None):
+        self.calls = []
+
+    def score(self, query, texts):
+        self.calls.append(len(texts))
+        words = set(re.findall(r"[a-z]+", query.lower()))
+        return [float(sum(w in t.lower() for w in words)) for t in texts]

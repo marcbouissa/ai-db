@@ -1,6 +1,7 @@
 import os
 from typing import List, Dict, Any, Optional
 from ai_db.constants import CANDIDATE_POOL
+from ai_db.search.ranking import Ranker
 from ai_db.search.retriever import LexicalRetriever, Retriever
 from ai_db.utils import get_allowed_projects
 
@@ -11,6 +12,7 @@ class QueryEngine:
         self.cross_project: Dict[str, List[str]] = {}
         # Replaced once by VectorDB according to retrieval.mode.
         self.retriever: Retriever = LexicalRetriever(self.db)
+        self.ranker = Ranker(self.db)
 
     def query(
         self, search_text: str, top_k: int = 5, relative_to: Optional[str] = None,
@@ -55,7 +57,8 @@ class QueryEngine:
     def search(self, text: str, filters: Dict[str, Any], top_k: int) -> List[Any]:
         """Ranked SearchResults for ``text`` (retriever candidates, then final ranking)."""
         pool = max(top_k, CANDIDATE_POOL)
-        return self.retriever.candidates(text, filters, pool)[:top_k]
+        candidates = self.retriever.candidates(text, filters, pool)
+        return self.ranker.rank(text, candidates, filters.get("allowed_projects"))[:top_k]
 
     def query_symbol(
         self, name: str, relative_to: Optional[str] = None,

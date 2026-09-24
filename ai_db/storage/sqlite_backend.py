@@ -374,11 +374,21 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     def _drop_extra_index_tables(self, cur: sqlite3.Cursor) -> None:
         cur.execute("DROP TABLE IF EXISTS chunk_vectors")
+        cur.execute("DROP TABLE IF EXISTS symbol_centrality")
         cur.execute("DELETE FROM session_state WHERE key = 'embed_meta'")
 
     def _create_extra_tables(self, cur: sqlite3.Cursor) -> None:
         # Exact filtered KNN: vectors live in a plain table (FK-cascaded with chunks) and are
         # scored with sqlite-vec's vec_distance_cosine under the same filters as FTS.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS symbol_centrality (
+                project TEXT NOT NULL,
+                name TEXT NOT NULL,
+                in_degree INTEGER NOT NULL,
+                score REAL NOT NULL,
+                PRIMARY KEY (project, name)
+            )
+        """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS chunk_vectors (
                 chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
@@ -917,6 +927,49 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             qualified_name=r["qualified_name"], language=r["language"],
             token_count=r["token_count"], content_hash=r["content_hash"], parent_id=r["parent_id"],
         )
+
+    # =========================================================================
+    # Graph signals
+    # =========================================================================
+
+    def rebuild_symbol_centrality(self) -> None:
+        """Recompute normalized call/inherit in-degree per (project, symbol name)."""
+        self._check_closed()
+        cur = self.conn.cursor()
+        import math
+
+        cur.execute("DELETE FROM symbol_centrality")
+        cur.execute("""
+            SELECT project, callee_name, COUNT(*) AS n FROM symbol_refs
+            WHERE ref_type IN ('call', 'inherit')
+            GROUP BY project, callee_name
+        """)
+        rows = cur.fetchall()
+        max_by_project: Dict[str, int] = {}
+        for r in rows:
+            max_by_project[r["project"]] = max(max_by_project.get(r["project"], 0), r["n"])
+        cur.executemany(
+            "INSERT INTO symbol_centrality (project, name, in_degree, score) VALUES (?, ?, ?, ?)",
+            [(r["project"], r["callee_name"], r["n"],
+              math.log1p(r["n"]) / math.log1p(max_by_project[r["project"]])) for r in rows],
+        )
+        self._auto_commit()
+
+    def get_symbol_centrality(self, names: List[str],
+                              allowed_projects: Optional[List[str]] = None) -> Dict[str, float]:
+        """Max normalized in-degree score per bare symbol name (0..1)."""
+        self._check_closed()
+        names = sorted(set(names))
+        if not names or (allowed_projects is not None and not allowed_projects):
+            return {}
+        params: List[Any] = list(names)
+        where = f"name IN ({','.join('?' * len(names))})"
+        if allowed_projects is not None:
+            where += f" AND project IN ({','.join('?' * len(allowed_projects))})"
+            params.extend(allowed_projects)
+        cur = self.conn.execute(
+            f"SELECT name, MAX(score) AS s FROM symbol_centrality WHERE {where} GROUP BY name", params)
+        return {r["name"]: float(r["s"]) for r in cur.fetchall()}
 
     # =========================================================================
     # Symbols & Cross-References

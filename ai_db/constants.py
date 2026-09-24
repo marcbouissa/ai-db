@@ -74,3 +74,10 @@ CODE_STOPWORDS = frozenset({
 # Retrieval
 CANDIDATE_POOL = 50  # candidates per retriever list before fusion/rerank
 RRF_K = 60
+
+# Final ranking (tune only with `ai-db eval`)
+RERANK_TOP = 30
+RANK_W_RERANK, RANK_W_FUSED, RANK_W_GRAPH, RANK_W_EXACT = 0.70, 0.15, 0.10, 0.05
+NORERANK_W_FUSED, NORERANK_W_GRAPH, NORERANK_W_EXACT = 0.70, 0.25, 0.05  # eval-tuned
+DIVERSITY_WINDOW = 10
+DIVERSITY_MAX_PER_FILE = 3
