@@ -19,7 +19,7 @@ import json
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, cast
 
 from ai_db.constants import DEFAULT_DB_FILE
 
@@ -64,14 +64,10 @@ class _AiDbHandler(BaseHTTPRequestHandler):
         if dispatcher is not None:
             return dispatcher
 
-        db_path = getattr(self.server, "db_path", DEFAULT_DB_FILE)
-        try:
-            from ai_db.dispatcher import ServiceDispatcher
-            dispatcher = ServiceDispatcher(db_path=db_path)
-            self.server.dispatcher = dispatcher
-            return dispatcher
-        except Exception:
-            return None
+        from ai_db.dispatcher import ServiceDispatcher
+        server = cast(ThreadedAiDbServer, self.server)
+        server.dispatcher = ServiceDispatcher(db_path=server.db_path)
+        return server.dispatcher
 
     def do_OPTIONS(self):
         """CORS pre-flight negotiation."""
@@ -89,70 +85,15 @@ class _AiDbHandler(BaseHTTPRequestHandler):
         if clean_path == "/health":
             self._send_json(200, {"ok": True, "version": "0.1.0", "status": "healthy"})
 
-        elif clean_path == "/status":
+        elif clean_path in ("/status", "/tools", "/telemetry"):
             dispatcher = self._get_dispatcher()
-            if dispatcher:
-                try:
-                    res = dispatcher.execute("status", {})
-                    self._send_json(200, res)
-                    return
-                except Exception as e:
-                    self._send_json(500, {"error": str(e)})
-                    return
-            # Fallback direct query
-            from ai_db import VectorDB
-            db = VectorDB(getattr(self.server, "db_path", DEFAULT_DB_FILE))
             try:
-                self._send_json(200, db.status())
-            finally:
-                db.close()
-
-        elif clean_path == "/tools":
-            dispatcher = self._get_dispatcher()
-            if dispatcher and hasattr(dispatcher, "list_tools"):
-                tools = dispatcher.list_tools()
-            else:
-                tools = []
-            self._send_json(200, {"tools": tools})
-
-        elif clean_path == "/telemetry":
-            dispatcher = self._get_dispatcher()
-            if dispatcher and "telemetry" in [t.get("name") for t in dispatcher.list_tools()]:
-                try:
-                    data = dispatcher.execute("telemetry", {})
-                    self._send_json(200, data)
-                    return
-                except Exception:
-                    pass
-            # Fallback telemetry dictionary satisfying tests
-            self._send_json(200, {
-                "token_savings": {
-                    "cumulative_raw_tokens": 0,
-                    "emitted_tokens": 0,
-                    "net_tokens_saved": 0,
-                    "reduction_pct": 0.0,
-                    "estimated_cost_saved_usd": 0.0,
-                },
-                "latency": {
-                    "backend": "sqlite",
-                    "total_queries": 0,
-                    "avg_latency_ms": 0.0,
-                    "p50_ms": 0.0,
-                    "p95_ms": 0.0,
-                    "p99_ms": 0.0,
-                },
-                "cache": {
-                    "lookups": 0,
-                    "hits": 0,
-                    "misses": 0,
-                    "hit_rate_pct": 0.0,
-                },
-                "weak_points": {
-                    "syntax_errors": 0,
-                    "complexity_hotspots": [],
-                    "unindexed_files": 0,
-                },
-            })
+                if clean_path == "/tools":
+                    self._send_json(200, {"tools": dispatcher.list_tools()})
+                else:
+                    self._send_json(200, dispatcher.execute(clean_path[1:], {}))
+            except Exception as e:  # noqa: BLE001 - transport boundary: report to client
+                self._send_json(500, {"error": str(e)})
 
         else:
             self._send_json(404, {
@@ -209,7 +150,7 @@ class _AiDbHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": f"Tool '{tool_name}' not found", "details": str(e)})
         except ValueError as e:
             self._send_json(400, {"error": f"Invalid arguments for tool '{tool_name}'", "details": str(e)})
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - transport boundary: report to client
             self._send_json(500, {"error": f"Error executing tool '{tool_name}'", "details": str(e)})
 
 

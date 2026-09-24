@@ -97,8 +97,10 @@ class ReferenceStore:
                     )
                     if result.returncode == 0:
                         old_text = result.stdout
-            except Exception as e:
-                _logger.debug(f"_diff_spans git fallback: {e}")
+            except (OSError, _sp.TimeoutExpired) as e:
+                # git missing/slow: `since` cannot be resolved from git; the stored
+                # chunks below are the documented source for this case
+                _logger.debug(f"_diff_spans git unavailable: {e}")
 
         # 2. Fallback: reconstruct from stored DB chunks using get_chunks_for_file
         if old_text is None:

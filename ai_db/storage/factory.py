@@ -30,7 +30,7 @@ def load_provider(name: str) -> Callable[[dict[str, Any]], StorageBackend]:
         raise AiDbConfigError(
             f"unknown storage provider '{name}'; installed providers: {sorted(providers)}"
         )
-    factory = providers[name].load()
+    factory: Callable[[dict[str, Any]], StorageBackend] = providers[name].load()
     if not callable(factory):
         raise AiDbConfigError(f"storage entry point '{name}' does not load a callable")
     return factory

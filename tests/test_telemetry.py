@@ -333,13 +333,14 @@ class TestTelemetryTier2BoundaryAndCorner:
     def test_telemetry_in_memory_db_disk_size(self):
         """In-memory SQLite database (:memory:) does not crash file size queries."""
         _require_telemetry()
-        import sqlite3
-        conn = sqlite3.connect(":memory:")
-        tracker = TelemetryTracker(conn, db_path=":memory:")
+        from ai_db.storage.sqlite_backend import SQLiteBackend
+        backend = SQLiteBackend(":memory:")
+        backend.initialize()
+        tracker = TelemetryTracker(backend.conn, db_path=":memory:")
         summary = tracker.get_summary()
         storage = summary.get("storage", {})
         assert storage.get("db_size_kb", 0) == 0.0
-        conn.close()
+        backend.close()
 
 
 # ==============================================================================

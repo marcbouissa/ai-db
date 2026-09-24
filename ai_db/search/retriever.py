@@ -44,7 +44,9 @@ class LexicalRetriever(Retriever):
         terms = expand_terms(text)
         if not terms:
             return []
-        return self.db.search_chunks(terms, top_k=pool, core_terms=base_terms(text), **filters)
+        hits: list[SearchResult] = self.db.search_chunks(
+            terms, top_k=pool, core_terms=base_terms(text), **filters)
+        return hits
 
     def candidates(self, text: str, filters: dict[str, Any], pool: int) -> list[SearchResult]:
         t0 = time.perf_counter()

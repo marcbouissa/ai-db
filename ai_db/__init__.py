@@ -28,7 +28,7 @@ from ai_db.parser.syntax import validate_python_syntax
 from ai_db.search.indexer import Indexer
 from ai_db.search.query import QueryEngine
 from ai_db.search.skills import SkillRouter
-from ai_db.storage.backend import StorageBackend
+from ai_db.storage.backend import StorageBackend, VectorCapable
 from ai_db.storage.database import Database
 from ai_db.storage.factory import StorageBackendFactory
 from ai_db.storage.state import get_session_state, set_session_state
@@ -50,7 +50,7 @@ class VectorDB:
     db: StorageBackend
     conn: Any
     db_path: str
-    telemetry_tracker: Any | None
+    telemetry_tracker: Any
 
     def __init__(self, db_path: str | StorageBackend | None = None,
                  config: AppConfig | None = None):
@@ -76,11 +76,8 @@ class VectorDB:
         # Last hook: any change to the index (chunks, vectors, graph) invalidates cached results.
         self.indexer.post_sync_hooks.append(
             lambda changed: self.backend.bump_index_generation() if changed else None)
-        try:
-            from ai_db.telemetry.tracker import TelemetryTracker
-            self.telemetry_tracker = TelemetryTracker(conn=self.conn, db_path=self.db_path)
-        except Exception:
-            self.telemetry_tracker = None
+        from ai_db.telemetry.tracker import TelemetryTracker
+        self.telemetry_tracker = TelemetryTracker(conn=self.conn, db_path=self.db_path)
 
     last_cache_hit: bool = False
 
@@ -105,6 +102,9 @@ class VectorDB:
                 raise AiDbConfigError(
                     f"retrieval.mode 'hybrid' needs a backend with the 'vector' capability; "
                     f"{self.backend.backend_name} has {sorted(self.backend.capabilities())}")
+            if not isinstance(self.backend, VectorCapable):
+                raise AiDbConfigError(
+                    f"{self.backend.backend_name} declares 'vector' but does not implement VectorCapable")
             self.backend.ensure_vector_index(self.embedder.dim, self.embedder.model_id)
             self.query_engine.retriever = HybridRetriever(self.backend, self.embedder)
             self.indexer.post_sync_hooks.append(lambda _changed: self.embed_missing())
@@ -220,11 +220,11 @@ class VectorDB:
             search_text, top_k=k, relative_to=relative_to, project=project,
             allowed_projects=allowed_projects, languages=params["languages"],
             chunk_types=params["chunk_types"], modified_since=params["modified_since"]))
-        if getattr(self, "telemetry_tracker", None) is not None:
-            latency_ms = (time.perf_counter() - t0) * 1000.0
-            backend_name = "sqlite_wal" if "sqlite" in getattr(self.backend, "__class__", type(self.backend)).__name__.lower() else "generic"
-            self.telemetry_tracker.record_query(backend=backend_name, latency_ms=latency_ms, results_count=len(results))
-        return results
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        backend_name = "sqlite_wal" if self.backend.backend_name == "sqlite" else self.backend.backend_name
+        self.telemetry_tracker.record_query(backend=backend_name, latency_ms=latency_ms, results_count=len(results))
+        hits: list[dict[str, Any]] = results
+        return hits
 
     def query_symbol(self, name: str, relative_to: str | None = None,
                      project: str | None = None, allowed_projects: list[str] | None = None) -> list[dict[str, Any]]:
@@ -296,13 +296,12 @@ class VectorDB:
         result = self.analyzer_engine.analyze_file(filepath, depth=depth, span=span, focus=focus, q=q,
                                                    since=since, ctx_lines=ctx_lines,
                                                    bypass_cache=bypass_cache, no_cache=no_cache)
-        if getattr(self, "telemetry_tracker", None) is not None:
-            meta = result.get("meta", {})
-            is_hit = bool(meta.get("cached", False))
-            tokens_in = meta.get("tokens_in", 0)
-            tokens_out = meta.get("tokens_out", 0)
-            tokens_saved = max(0, tokens_in - tokens_out) if is_hit else 0
-            self.telemetry_tracker.record_cache_access(hit=is_hit, tokens_saved=tokens_saved)
+        meta = result.get("meta", {})
+        is_hit = bool(meta.get("cached", False))
+        tokens_in = meta.get("tokens_in", 0)
+        tokens_out = meta.get("tokens_out", 0)
+        tokens_saved = max(0, tokens_in - tokens_out) if is_hit else 0
+        self.telemetry_tracker.record_cache_access(hit=is_hit, tokens_saved=tokens_saved)
         return result
 
     def analyze_batch(self, targets: list[str], depth: str = "structure",
@@ -323,8 +322,9 @@ class VectorDB:
                     **kwargs: Any) -> dict[str, Any]:
         from ai_db.analysis.investigate import Investigator
         params = {"budget_tokens": budget_tokens, "mode": mode, **kwargs}
-        return self._cached("investigate", query, params, lambda: Investigator(self).investigate(
+        pack: dict[str, Any] = self._cached("investigate", query, params, lambda: Investigator(self).investigate(
             query, budget_tokens=budget_tokens, mode=mode, **kwargs).to_dict())
+        return pack
 
     # F2: Cross-reference / callers
     def query_callers(self, symbol_name: str, relative_to: str | None = None,

@@ -11,5 +11,5 @@ def validate_python_syntax(content: str, filepath: str) -> tuple[int, int, str] 
         col = e.offset or 1
         msg = e.msg or "Syntax error"
         return (line, col, msg)
-    except Exception as e:
+    except ValueError as e:  # e.g. source contains null bytes
         return (1, 1, str(e))

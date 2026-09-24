@@ -47,6 +47,13 @@ def _decompress(blob: bytes, what: str) -> str:
         raise AiDbStorageError(f"corrupt compressed payload for {what}: {exc}") from exc
 
 
+def _loads(raw: str, what: str) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise AiDbStorageError(f"corrupt JSON in {what}: {exc}") from exc
+
+
 class SQLiteBackend(StorageBackend, VectorCapable):
     """SQLite implementation of the StorageBackend interface."""
 
@@ -127,10 +134,10 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         return frozenset({"fts", "vector", "graph"})
 
     @property
-    def conn(self) -> sqlite3.Connection | None:
+    def conn(self) -> sqlite3.Connection:
         """The calling thread's connection (created on first use)."""
         if self._closed:
-            return None
+            raise RuntimeError("Storage backend is closed")
         if self._shared is not None:
             return self._shared
         existing = getattr(self._local, "conn", None)
@@ -156,7 +163,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             raise RuntimeError("Storage backend is closed")
 
     def _auto_commit(self) -> None:
-        if self._tx_depth == 0 and self.conn is not None:
+        if self._tx_depth == 0:
             self.conn.commit()
 
     # =========================================================================
@@ -481,11 +488,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         cur = self.conn.cursor()
         counts = {}
         for tbl in ["files", "chunks", "symbols", "syntax_errors", "skills", "contexts"]:
-            try:
-                cur.execute(f"SELECT COUNT(*) as c FROM {tbl}")
-                counts[tbl] = cur.fetchone()["c"]
-            except Exception:
-                counts[tbl] = 0
+            cur.execute(f"SELECT COUNT(*) as c FROM {tbl}")
+            counts[tbl] = cur.fetchone()["c"]
 
         size_bytes = os.path.getsize(self.db_path) if self.db_path != ":memory:" and os.path.exists(self.db_path) else 0
 
@@ -1465,9 +1469,9 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 """,
                 params
             )
-            return [(r["name"], round(abs(float(r["rank"])), 3)) for r in cur.fetchall()]
-        except Exception:
-            return []
+        except sqlite3.OperationalError as exc:
+            raise AiDbQueryError(fts_query, exc) from exc
+        return [(r["name"], round(abs(float(r["rank"])), 3)) for r in cur.fetchall()]
 
     # =========================================================================
     # Contexts (Session Memory)
@@ -1533,20 +1537,9 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         row = cur.fetchone()
         if not row:
             return None
-        try:
-            full_notes = zlib.decompress(row["zcontent"]).decode("utf-8", errors="replace")
-        except Exception:
-            full_notes = ""
-
-        try:
-            active_files = json.loads(row["active_files"]) if row["active_files"] else []
-        except Exception:
-            active_files = []
-
-        try:
-            open_tasks = json.loads(row["open_tasks"]) if row["open_tasks"] else []
-        except Exception:
-            open_tasks = []
+        full_notes = _decompress(row["zcontent"], f"context {row['session_id']}")
+        active_files = _loads(row["active_files"], "context.active_files") if row["active_files"] else []
+        open_tasks = _loads(row["open_tasks"], "context.open_tasks") if row["open_tasks"] else []
 
         return ContextRecord(
             session_id=row["session_id"],
@@ -1579,14 +1572,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         )
         results = []
         for r in cur.fetchall():
-            try:
-                af = json.loads(r["active_files"]) if r["active_files"] else []
-            except Exception:
-                af = []
-            try:
-                ot = json.loads(r["open_tasks"]) if r["open_tasks"] else []
-            except Exception:
-                ot = []
+            af = _loads(r["active_files"], "context.active_files") if r["active_files"] else []
+            ot = _loads(r["open_tasks"], "context.open_tasks") if r["open_tasks"] else []
             results.append({
                 "session_id": r["session_id"],
                 "project": r["project"],
@@ -1637,19 +1624,19 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 """,
                 params
             )
-            return [
-                {
-                    "session_id": r["session_id"],
-                    "project": r["project"],
-                    "title": r["title"],
-                    "summary": r["summary"],
-                    "score": round(abs(float(r["rank"])), 3),
-                    "timestamp": r["timestamp"]
-                }
-                for r in cur.fetchall()
-            ]
-        except Exception:
-            return []
+        except sqlite3.OperationalError as exc:
+            raise AiDbQueryError(fts_query, exc) from exc
+        return [
+            {
+                "session_id": r["session_id"],
+                "project": r["project"],
+                "title": r["title"],
+                "summary": r["summary"],
+                "score": round(abs(float(r["rank"])), 3),
+                "timestamp": r["timestamp"]
+            }
+            for r in cur.fetchall()
+        ]
 
     # =========================================================================
     # Analysis References
@@ -1678,10 +1665,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         row = cur.fetchone()
         if not row:
             return None
-        try:
-            body = zlib.decompress(row["zbody"]).decode("utf-8", errors="replace")
-        except Exception:
-            body = ""
+        body = _decompress(row["zbody"], f"analysis ref {row['ref_id']}")
         return AnalysisRefRecord(
             ref_id=row["ref_id"],
             filepath=row["filepath"],
@@ -1715,10 +1699,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         )
         row = cur.fetchone()
         if row:
-            try:
-                return json.loads(row["result_json"])
-            except Exception:
-                return None
+            cached: dict[str, Any] = _loads(row["result_json"], "semantic_cache.result_json")
+            return cached
         return None
 
     def set_semantic_cache(self, cache_key: str, file_hash: str, result: dict[str, Any]) -> None:
@@ -1745,10 +1727,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         cur.execute("SELECT value_json FROM session_state WHERE key = ?", (key,))
         row = cur.fetchone()
         if row:
-            try:
-                return json.loads(row["value_json"])
-            except Exception:
-                return None
+            return _loads(row["value_json"], "session_state.value_json")
         return None
 
     def set_state(self, key: str, value: Any) -> None:
@@ -1768,11 +1747,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         cur = self.conn.cursor()
         counts: dict[str, int] = {}
         for tbl in ["files", "chunks", "symbols", "skills", "syntax_errors", "contexts"]:
-            try:
-                cur.execute(f"SELECT COUNT(*) as c FROM {tbl}")
-                counts[tbl] = int(cur.fetchone()["c"])
-            except Exception:
-                counts[tbl] = 0
+            cur.execute(f"SELECT COUNT(*) as c FROM {tbl}")
+            counts[tbl] = int(cur.fetchone()["c"])
         return counts
 
     def get_weak_points(self) -> dict[str, Any]:
@@ -1783,44 +1759,41 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             "complexity_hotspots": [],
             "unindexed_or_stale_files": [],
         }
-        try:
-            cur.execute("SELECT COUNT(*) as c FROM files")
-            row = cur.fetchone()
-            total_files = int(row["c"]) if row else 0
+        cur.execute("SELECT COUNT(*) as c FROM files")
+        row = cur.fetchone()
+        total_files = int(row["c"]) if row else 0
 
-            cur.execute("SELECT COUNT(DISTINCT filepath) as c FROM syntax_errors")
-            row_err = cur.fetchone()
-            files_with_errors = int(row_err["c"]) if row_err else 0
+        cur.execute("SELECT COUNT(DISTINCT filepath) as c FROM syntax_errors")
+        row_err = cur.fetchone()
+        files_with_errors = int(row_err["c"]) if row_err else 0
 
-            if total_files > 0:
-                result["syntax_error_density_pct"] = round((files_with_errors / total_files) * 100.0, 2)
+        if total_files > 0:
+            result["syntax_error_density_pct"] = round((files_with_errors / total_files) * 100.0, 2)
 
-            cur.execute(
-                """
-                SELECT f.filepath, COUNT(s.id) as sym_count
-                FROM files f
-                JOIN symbols s ON f.filepath = s.filepath
-                GROUP BY f.filepath
-                ORDER BY sym_count DESC
-                LIMIT 10
-                """
-            )
-            hotspots = []
-            for r in cur.fetchall():
-                hotspots.append({
-                    "filepath": r["filepath"],
-                    "symbols_count": int(r["sym_count"]),
-                })
-            result["complexity_hotspots"] = hotspots
+        cur.execute(
+            """
+            SELECT f.filepath, COUNT(s.id) as sym_count
+            FROM files f
+            JOIN symbols s ON f.filepath = s.filepath
+            GROUP BY f.filepath
+            ORDER BY sym_count DESC
+            LIMIT 10
+            """
+        )
+        hotspots = []
+        for r in cur.fetchall():
+            hotspots.append({
+                "filepath": r["filepath"],
+                "symbols_count": int(r["sym_count"]),
+            })
+        result["complexity_hotspots"] = hotspots
 
-            cur.execute(
-                """
-                SELECT filepath FROM files
-                WHERE mtime IS NULL OR mtime = 0
-                LIMIT 10
-                """
-            )
-            result["unindexed_or_stale_files"] = [r["filepath"] for r in cur.fetchall()]
-        except Exception:
-            pass
+        cur.execute(
+            """
+            SELECT filepath FROM files
+            WHERE last_modified IS NULL OR last_modified = 0
+            LIMIT 10
+            """
+        )
+        result["unindexed_or_stale_files"] = [r["filepath"] for r in cur.fetchall()]
         return result

@@ -67,8 +67,8 @@ def extract_symbols(filepath: str, content: str) -> list[dict[str, Any]]:
 
             SymbolVisitor().visit(tree)
             return symbols
-        except Exception:
-            pass
+        except (SyntaxError, ValueError):
+            pass  # unparseable Python is handled by the regex extractor below
 
     # Generic regex-based symbol extractor for other languages or unparseable Python
     symbol_pattern = re.compile(
@@ -138,8 +138,8 @@ def extract_file_outline(filepath: str, content: str) -> list[tuple[int, str]]:
                             outline.append((node.lineno, f"{target.id} ({val_type})"))
             outline.sort(key=lambda x: x[0])
             return outline
-        except Exception:
-            pass
+        except (SyntaxError, ValueError):
+            pass  # unparseable Python is handled by the regex outline below
 
     # Generic outline fallback using regex
     for i, line in enumerate(lines, 1):

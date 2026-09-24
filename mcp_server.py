@@ -104,7 +104,7 @@ class StdioMCPServer:
                         "isError": True
                     }
                 }
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001 - JSON-RPC boundary: report to client
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
@@ -145,7 +145,10 @@ def run_stdio(db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | No
             continue
         try:
             req = json.loads(line)
-        except Exception:
+        except json.JSONDecodeError as exc:
+            sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": None,
+                                         "error": {"code": -32700, "message": f"Parse error: {exc}"}}) + "\n")
+            sys.stdout.flush()
             continue
 
         resp = server.handle_request(req)

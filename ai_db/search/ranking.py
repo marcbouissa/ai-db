@@ -118,4 +118,5 @@ class Ranker:
     def _centrality(self, names: list[str], allowed_projects: list[str] | None) -> dict[str, float]:
         if "graph" not in self.db.capabilities():
             return {}
-        return self.db.get_symbol_centrality(names, allowed_projects)
+        scores: dict[str, float] = self.db.get_symbol_centrality(names, allowed_projects)
+        return scores

@@ -99,4 +99,5 @@ class ContextMemory:
             return []
 
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
-        return self.db.search_contexts(tokens, allowed_projects=allowed, top_k=top_k)
+        hits: list[dict[str, Any]] = self.db.search_contexts(tokens, allowed_projects=allowed, top_k=top_k)
+        return hits

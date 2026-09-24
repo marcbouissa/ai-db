@@ -199,7 +199,7 @@ class TelemetryTracker:
                 summary["latency"]["p99_ms"] = 0.0
 
         summary["storage"] = self._compute_storage_metrics()
-        return summary
+        return dict(summary)
 
     def _compute_storage_metrics(self) -> dict[str, Any]:
         storage: dict[str, Any] = {

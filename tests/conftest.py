@@ -220,7 +220,7 @@ def cli_runner(isolated_env: Path):
                         main()
                 except SystemExit as e:
                     retcode = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - emulate process exit on any crash
                     retcode = 1
                     sys.stderr.write(str(exc))
                 finally:

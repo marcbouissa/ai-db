@@ -7,6 +7,15 @@ from ai_db.search.retriever import LexicalRetriever, Retriever
 from ai_db.utils import get_allowed_projects
 
 
+def _display_path(path: str, relative_to: str) -> str:
+    """Path relative to ``relative_to``; on Windows, paths on another drive have no
+    relative form and are shown absolute."""
+    try:
+        return os.path.relpath(path, relative_to)
+    except ValueError:
+        return path
+
+
 class QueryEngine:
     def __init__(self, db: Any = None, conn: Any = None):
         self.db = db if db is not None else conn
@@ -30,10 +39,7 @@ class QueryEngine:
         for r in search_results:
             path_display = r.filepath
             if relative_to:
-                try:
-                    path_display = os.path.relpath(path_display, relative_to)
-                except Exception:
-                    pass
+                path_display = _display_path(path_display, relative_to)
 
             snippet = getattr(r, "snippet", "") or ""
             score = round(float(getattr(r, "score", 1.0)), 8)
@@ -72,10 +78,7 @@ class QueryEngine:
         for s in symbols:
             path_display = s.filepath
             if relative_to:
-                try:
-                    path_display = os.path.relpath(path_display, relative_to)
-                except Exception:
-                    pass
+                path_display = _display_path(path_display, relative_to)
             results.append({
                 "name": s.name,
                 "symbol_type": s.symbol_type,
@@ -98,10 +101,7 @@ class QueryEngine:
         for err in errors:
             path_display = err.filepath
             if relative_to:
-                try:
-                    path_display = os.path.relpath(path_display, relative_to)
-                except Exception:
-                    pass
+                path_display = _display_path(path_display, relative_to)
             results.append({
                 "file": path_display,
                 "abs_path": err.filepath,

@@ -8,7 +8,6 @@ import time
 from typing import Any
 
 from ai_db.analyzer.references import ReferenceStore
-from ai_db.logger import _logger
 from ai_db.utils import compute_sha256, tokenize
 
 
@@ -21,10 +20,7 @@ class AnalyzerEngine:
 
     def _evict_stale_refs(self):
         """Evicts analysis refs older than 7 days to prevent unbounded table growth."""
-        try:
-            self.backend.evict_stale_analysis_refs(older_than_seconds=86400 * 7)
-        except Exception as e:
-            _logger.debug(f"_evict_stale_refs: {e}")
+        self.backend.evict_stale_analysis_refs(older_than_seconds=86400 * 7)
 
     def _store_analysis_ref(self, filepath: str, name: str, start_line: int, end_line: int, kind: str, body_text: str) -> str:
         return self.ref_store._store_analysis_ref(filepath, name, start_line, end_line, kind, body_text)
@@ -71,7 +67,7 @@ class AnalyzerEngine:
         try:
             with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read()
-        except Exception as e:
+        except OSError as e:  # reported to the caller as a per-file error
             return {
                 "file": filepath,
                 "error": str(e),
@@ -96,7 +92,7 @@ class AnalyzerEngine:
             if cached_res is not None:
                 if isinstance(cached_res, dict) and "meta" in cached_res:
                     cached_res["meta"]["cached"] = True
-                return cached_res
+                return dict(cached_res)
 
         # F8 Diff Mode check
         diff_info = self._diff_spans(abs_path, content, since) if since else None
@@ -128,7 +124,7 @@ class AnalyzerEngine:
             return res
 
         # Extract symbols using AST or regex
-        symbols_found = []
+        symbols_found: list[dict[str, Any]] = []
         notes = []
         q_tokens = set(tokenize(q or "")) if q else set()
 
@@ -155,7 +151,7 @@ class AnalyzerEngine:
                         sig_line = all_lines[node.lineno - 1].strip() if 0 <= node.lineno - 1 < total_lines else f"class {node.name}"
                         body_block = "\n".join(all_lines[node.lineno - 1 : end_ln])
                         ref_id = self._store_analysis_ref(abs_path, node.name, node.lineno, end_ln, "class", body_block)
-                        class_entry = {
+                        class_entry: dict[str, Any] = {
                             "name": node.name,
                             "kind": "class",
                             "sig": sig_line.rstrip(":"),
@@ -180,8 +176,9 @@ class AnalyzerEngine:
                                     "body": sub_body
                                 })
                         symbols_found.append(class_entry)
-            except Exception as e:
-                notes.append(f"AST fallback: {e}")
+            except (SyntaxError, ValueError) as e:
+                # unparseable Python: the regex outline below describes the file instead
+                notes.append(f"AST unavailable: {e}")
 
         # Fallback to regex symbol extraction if AST returned nothing
         if not symbols_found:
@@ -217,7 +214,7 @@ class AnalyzerEngine:
             if focus and focus.lower() not in sym["name"].lower():
                 is_match = False
 
-            item = {
+            item: dict[str, Any] = {
                 "name": sym["name"],
                 "kind": sym["kind"],
                 "sig": sym.get("sig", sym["name"]),
@@ -232,28 +229,28 @@ class AnalyzerEngine:
                 # Structure: signature + submethods if any
                 if "methods" in sym:
                     item["methods"] = [{
-                        "name": m["name"],
-                        "kind": m["kind"],
-                        "sig": m["sig"],
-                        "span": m["span"],
-                        "ref": m["ref"]
-                    } for m in sym["methods"]]
+                        "name": mt["name"],
+                        "kind": mt["kind"],
+                        "sig": mt["sig"],
+                        "span": mt["span"],
+                        "ref": mt["ref"]
+                    } for mt in sym["methods"]]
             elif depth == "targeted":
                 # Bodies included only if matched filter/question
                 if is_match:
                     item["body"] = sym.get("body", "")
                 if "methods" in sym:
                     item["methods"] = []
-                    for m in sym["methods"]:
-                        m_item = {
-                            "name": m["name"],
-                            "kind": m["kind"],
-                            "sig": m["sig"],
-                            "span": m["span"],
-                            "ref": m["ref"]
+                    for mt in sym["methods"]:
+                        m_item: dict[str, Any] = {
+                            "name": mt["name"],
+                            "kind": mt["kind"],
+                            "sig": mt["sig"],
+                            "span": mt["span"],
+                            "ref": mt["ref"]
                         }
-                        if q_tokens and any(tok in f"{m['name']} {m['sig']} {m['body']}".lower() for tok in q_tokens if len(tok) > 2):
-                            m_item["body"] = m["body"]
+                        if q_tokens and any(tok in f"{mt['name']} {mt['sig']} {mt['body']}".lower() for tok in q_tokens if len(tok) > 2):
+                            m_item["body"] = mt["body"]
                         item["methods"].append(m_item)
             elif depth == "full":
                 item["body"] = sym.get("body", "")
@@ -292,10 +289,7 @@ class AnalyzerEngine:
 
     def _save_to_semantic_cache(self, cache_key: str, file_hash: str, result: dict[str, Any]):
         """Saves result to semantic cache table."""
-        try:
-            self.backend.set_semantic_cache(cache_key, file_hash, result)
-        except Exception:
-            pass
+        self.backend.set_semantic_cache(cache_key, file_hash, result)
 
     def analyze_batch(self, targets: list[str], depth: str = "structure",
                       q: str | None = None, focus: str | None = None,
@@ -324,7 +318,7 @@ class AnalyzerEngine:
             "since": since
         })
 
-        results = {}
+        results: dict[str, Any] = {}
         total_tokens_out = 0
         total_tokens_in = 0
         is_truncated = False

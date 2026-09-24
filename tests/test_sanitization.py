@@ -69,8 +69,8 @@ class TestSanitizationTier1:
                     for line_num, line in enumerate(content.splitlines(), 1):
                         if user_path_pattern.search(line):
                             violations.append(f"{rel_path}:{line_num}: {line}")
-                except Exception:
-                    pass
+                except OSError:
+                    continue  # unreadable (e.g. broken symlink): nothing to scan
         assert len(violations) == 0, "Detected personal username occurrences:\n" + "\n".join(violations)
 
     def test_no_tracked_sqlite_database_files(self):
@@ -135,8 +135,8 @@ class TestSanitizationTier1:
                         for pat in patterns:
                             if pat.search(line):
                                 violations.append(f"{rel_path}:{line_num}: {line}")
-                except Exception:
-                    pass
+                except OSError:
+                    continue  # unreadable (e.g. broken symlink): nothing to scan
         assert len(violations) == 0, "Detected credentials in tracked files:\n" + "\n".join(violations)
 
     def test_no_private_key_blocks(self):
@@ -152,8 +152,8 @@ class TestSanitizationTier1:
                     content = full_path.read_text(encoding="utf-8", errors="ignore")
                     if key_pattern.search(content):
                         violations.append(rel_path)
-                except Exception:
-                    pass
+                except OSError:
+                    continue  # unreadable (e.g. broken symlink): nothing to scan
         assert len(violations) == 0, f"Private cryptographic keys found in: {violations}"
 
     def test_no_personal_email_addresses(self):
@@ -171,8 +171,8 @@ class TestSanitizationTier1:
                         match = email_pattern.search(line)
                         if match and "marc" in match.group(0).lower():
                             violations.append(f"{rel_path}:{line_num}: {match.group(0)}")
-                except Exception:
-                    pass
+                except OSError:
+                    continue  # unreadable (e.g. broken symlink): nothing to scan
         assert len(violations) == 0, "Personal email addresses detected:\n" + "\n".join(violations)
 
 
@@ -197,8 +197,8 @@ class TestSanitizationTier2:
                     content = full_path.read_text(encoding="utf-8", errors="ignore")
                     if pattern.search(content):
                         violations.append(rel_path)
-                except Exception:
-                    pass
+                except OSError:
+                    continue  # unreadable (e.g. broken symlink): nothing to scan
         assert len(violations) == 0, f"Case-insensitive personal paths found in: {violations}"
 
     def test_url_encoded_path_sanitization(self):
@@ -214,8 +214,8 @@ class TestSanitizationTier2:
                     content = full_path.read_text(encoding="utf-8", errors="ignore")
                     if pattern.search(content):
                         violations.append(rel_path)
-                except Exception:
-                    pass
+                except OSError:
+                    continue  # unreadable (e.g. broken symlink): nothing to scan
         assert len(violations) == 0, f"URL-encoded personal paths found in: {violations}"
 
     def test_gitignore_prevents_accidental_db_commit(self):

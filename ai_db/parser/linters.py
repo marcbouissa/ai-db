@@ -78,8 +78,8 @@ class ExternalLinter:
             ) as tmp:
                 tmp.write(content)
                 tmp_path = tmp.name
-        except Exception:
-            return None
+        except OSError as exc:
+            raise OSError(f"cannot write temp file for linting {filepath}: {exc}") from exc
 
         try:
             cmd = [c.replace("{file}", tmp_path) for c in cmd_template]
@@ -97,14 +97,9 @@ class ExternalLinter:
                 msg = msg[:200]
                 return (line, col, msg)
         except subprocess.TimeoutExpired:
-            return None
-        except Exception:
-            return None
+            return None  # linter too slow: file is reported as clean, not as an error
         finally:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
+            os.unlink(tmp_path)
 
         return None
 

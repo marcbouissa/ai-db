@@ -22,8 +22,8 @@ def extract_cross_refs(filepath: str, content: str) -> list[dict[str, Any]]:
 
     try:
         tree = ast.parse(content, filename=filepath)
-    except Exception:
-        return refs
+    except (SyntaxError, ValueError):
+        return refs  # unparseable file: syntax error is recorded separately
 
     current_scope = ["module"]
 
@@ -32,12 +32,16 @@ def extract_cross_refs(filepath: str, content: str) -> list[dict[str, Any]]:
         def _scope(self) -> str:
             return ".".join(current_scope)
 
-        def visit_FunctionDef(self, node: ast.FunctionDef):
+        def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
             current_scope.append(node.name)
             self.generic_visit(node)
             current_scope.pop()
 
-        visit_AsyncFunctionDef = visit_FunctionDef
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self._visit_function(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self._visit_function(node)
 
         def visit_ClassDef(self, node: ast.ClassDef):
             # Collect inheritance references

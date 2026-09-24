@@ -43,17 +43,17 @@ def extract_annotations(filepath: str, content: str) -> list[dict[str, Any]]:
 
     try:
         tree = ast.parse(content, filename=filepath)
-    except Exception:
-        return results
+    except (SyntaxError, ValueError):
+        return results  # unparseable file: syntax error is recorded separately
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
             doc = ast.get_docstring(node, clean=True)
             if doc and doc.strip():
                 symbol = getattr(node, "name", None)
-                line = getattr(node, "lineno", 1)
+                doc_line = node.lineno if not isinstance(node, ast.Module) else 1
                 results.append({
-                    "line": line,
+                    "line": doc_line,
                     "kind": "docstring",
                     "symbol": symbol,
                     "content": doc.strip()[:800],

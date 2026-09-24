@@ -132,10 +132,7 @@ class ServiceDispatcher:
             return self.db
         target_path = (args.get("db") if args else None) or self.db_path
         if target_path and self._lazy_db is not None and getattr(self._lazy_db, "db_path", None) != target_path:
-            try:
-                self._lazy_db.close()
-            except Exception:
-                pass
+            self._lazy_db.close()
             from ai_db import VectorDB
             self._lazy_db = VectorDB(target_path, config=self.config)
             return self._lazy_db
@@ -147,10 +144,7 @@ class ServiceDispatcher:
     def close(self) -> None:
         """Closes lazily initialized database connection if open."""
         if self._lazy_db is not None:
-            try:
-                self._lazy_db.close()
-            except Exception:
-                pass
+            self._lazy_db.close()
             self._lazy_db = None
 
     # =========================================================================
@@ -755,12 +749,9 @@ class ServiceDispatcher:
         reset = bool(args.get("reset", False))
         tracker = getattr(db, "telemetry_tracker", None)
         if tracker is None and hasattr(db, "conn") and db.conn:
-            try:
-                from ai_db.telemetry.tracker import TelemetryTracker
-                tracker = TelemetryTracker(db.conn, db_path=getattr(db, "db_path", None))
-                db.telemetry_tracker = tracker
-            except Exception:
-                tracker = None
+            from ai_db.telemetry.tracker import TelemetryTracker
+            tracker = TelemetryTracker(db.conn, db_path=getattr(db, "db_path", None))
+            db.telemetry_tracker = tracker
 
         if tracker is not None:
             if reset:

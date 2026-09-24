@@ -89,19 +89,23 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
 
 def _cmd_reindex(args: argparse.Namespace, cfg: AppConfig) -> int:
+    from ai_db.storage.backend import VectorCapable
     from ai_db.storage.factory import StorageBackendFactory
 
     if cfg.retrieval_mode != "hybrid":
         raise AiDbConfigError("reindex --embeddings needs retrieval.mode 'hybrid'")
     backend = StorageBackendFactory.from_config(cfg, db_path=args.db)
     backend.initialize()
+    if not isinstance(backend, VectorCapable):
+        raise AiDbConfigError(f"storage '{cfg.storage.provider}' does not support vectors")
     backend.drop_vector_index()  # must happen before VectorDB checks the model guard
     db = VectorDB(backend, config=cfg)
     try:
         count = db.embed_missing()
     finally:
         db.close()
-    print(f"[ai-db reindex] embedded {count} chunks with {db.embedder.model_id}")
+    model_id = db.embedder.model_id if db.embedder is not None else "?"
+    print(f"[ai-db reindex] embedded {count} chunks with {model_id}")
     return 0
 
 
@@ -495,7 +499,7 @@ def _main(argv: list[str] | None = None) -> int:
     elif args.command in ("check", "lint"):
         if getattr(args, "watch", False):
             print(f"[ai-db check --watch] Monitoring '{args.path or '.'}' every {args.interval}s. Ctrl-C to stop.")
-            prev_error_keys = set()
+            prev_error_keys: set[str] = set()
             while True:
                 try:
                     errors = dispatcher.execute("check", {
@@ -785,7 +789,7 @@ def _main(argv: list[str] | None = None) -> int:
                 "depth": args.depth,
                 "span": parsed_span
             })
-        except Exception as e:
+        except (KeyError, ValueError) as e:
             print(f"Error: Ref '{args.ref}' not found or expired: {e}", file=sys.stderr)
             dispatcher.close()
             sys.exit(1)

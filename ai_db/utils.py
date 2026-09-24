@@ -52,7 +52,7 @@ def tokenize(text: str) -> list[str]:
 
 def strip_code_bloat(text: str) -> str:
     lines = [line.rstrip() for line in text.splitlines()]
-    compact = []
+    compact: list[str] = []
     prev_blank = False
     for line in lines:
         if not line:

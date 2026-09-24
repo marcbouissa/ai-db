@@ -3,6 +3,7 @@ import re
 from typing import Any
 
 from ai_db.constants import DEFAULT_SKILL_DIRS
+from ai_db.logger import _logger
 from ai_db.storage.models import SkillRecord
 from ai_db.utils import compute_sha256, get_allowed_projects, tokenize
 
@@ -26,10 +27,10 @@ class SkillRouter:
             exp_dir = os.path.abspath(os.path.expanduser(sdir))
             if not os.path.exists(exp_dir):
                 continue
-            for root, dirs, files in os.walk(exp_dir):
-                for f in files:
-                    if f == "SKILL.md":
-                        found_files.append(os.path.join(root, f))
+            for root, _dirs, files in os.walk(exp_dir):
+                for fname in files:
+                    if fname == "SKILL.md":
+                        found_files.append(os.path.join(root, fname))
 
         found_set = set(found_files)
         pruned = 0
@@ -49,7 +50,8 @@ class SkillRouter:
                 mtime = os.path.getmtime(sfile)
                 with open(sfile, "r", encoding="utf-8", errors="replace") as f:
                     raw_content = f.read()
-            except Exception:
+            except OSError as exc:
+                _logger.debug(f"skipping unreadable skill file {sfile}: {exc}")
                 continue
 
             stored_entry = stored.get(sfile)
@@ -189,15 +191,12 @@ class SkillRouter:
         # 3. FTS BM25 Ranking across skills in allowed projects
         filtered_tokens = [t for t in tokens if t not in STOP_WORDS and len(t) > 2]
         if filtered_tokens:
-            try:
-                ranked_skills = self.db.search_skills(filtered_tokens, allowed_projects=allowed, limit=20)
-                for name, bm25_score in ranked_skills:
-                    if name in scores:
-                        scores[name] += bm25_score * 1.5
-                        if bm25_score > 2.0 and not any("Semantic" in r for r in reasons[name]):
-                            reasons[name].append("High semantic relevance")
-            except Exception:
-                pass
+            ranked_skills = self.db.search_skills(filtered_tokens, allowed_projects=allowed, limit=20)
+            for name, bm25_score in ranked_skills:
+                if name in scores:
+                    scores[name] += bm25_score * 1.5
+                    if bm25_score > 2.0 and not any("Semantic" in r for r in reasons[name]):
+                        reasons[name].append("High semantic relevance")
 
         # 4. Domain / Intent specific heuristic boosts
         intent_rules = [

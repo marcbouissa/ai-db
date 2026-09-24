@@ -1,41 +1,31 @@
+"""Raw-connection helpers for session state and telemetry (expects an initialized schema)."""
+
 import json
 import sqlite3
 import time
 from typing import Any
 
+from ai_db.errors import AiDbStorageError
+
 
 def get_session_state(conn: sqlite3.Connection, key: str) -> Any | None:
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT value_json FROM session_state WHERE key = ?", (key,))
-        row = cur.fetchone()
-        if row:
-            try:
-                return json.loads(row["value_json"])
-            except Exception:
-                return None
-    except Exception:
+    cur = conn.cursor()
+    cur.execute("SELECT value_json FROM session_state WHERE key = ?", (key,))
+    row = cur.fetchone()
+    if not row:
         return None
-    return None
-
-def set_session_state(conn: sqlite3.Connection, key: str, value: Any):
     try:
-        cur = conn.cursor()
-        cur.execute(
-            """CREATE TABLE IF NOT EXISTS session_state (
-                key TEXT PRIMARY KEY,
-                value_json TEXT NOT NULL,
-                updated REAL NOT NULL
-            )"""
-        )
-        cur.execute(
-            """INSERT OR REPLACE INTO session_state (key, value_json, updated)
-               VALUES (?, ?, ?)""",
-            (key, json.dumps(value), time.time())
-        )
-        conn.commit()
-    except Exception:
-        pass
+        return json.loads(row[0])
+    except json.JSONDecodeError as exc:
+        raise AiDbStorageError(f"corrupt JSON in session_state[{key!r}]: {exc}") from exc
+
+
+def set_session_state(conn: sqlite3.Connection, key: str, value: Any) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO session_state (key, value_json, updated) VALUES (?, ?, ?)",
+        (key, json.dumps(value), time.time()),
+    )
+    conn.commit()
 
 
 def get_telemetry_state(conn: sqlite3.Connection, key: str) -> Any | None:
@@ -47,70 +37,32 @@ def set_telemetry_state(conn: sqlite3.Connection, key: str, value: Any) -> None:
 
 
 def get_telemetry_table_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    cur = conn.cursor()
     counts: dict[str, int] = {}
-    if not conn:
-        return counts
-    try:
-        cur = conn.cursor()
-        for tbl in ["files", "chunks", "symbols", "skills", "syntax_errors", "contexts"]:
-            try:
-                cur.execute(f"SELECT COUNT(*) FROM {tbl}")
-                row = cur.fetchone()
-                counts[tbl] = int(row[0]) if row else 0
-            except Exception:
-                counts[tbl] = 0
-    except Exception:
-        pass
+    for tbl in ["files", "chunks", "symbols", "skills", "syntax_errors", "contexts"]:
+        cur.execute(f"SELECT COUNT(*) FROM {tbl}")
+        counts[tbl] = int(cur.fetchone()[0])
     return counts
 
 
 def get_telemetry_weak_points(conn: sqlite3.Connection) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "syntax_error_density_pct": 0.0,
-        "complexity_hotspots": [],
-        "unindexed_or_stale_files": [],
+    cur = conn.cursor()
+    total_files = int(cur.execute("SELECT COUNT(*) FROM files").fetchone()[0])
+    files_with_errors = int(cur.execute("SELECT COUNT(DISTINCT filepath) FROM syntax_errors").fetchone()[0])
+    density = round(files_with_errors / total_files * 100.0, 2) if total_files else 0.0
+    hotspots = [
+        {"filepath": r[0], "symbols_count": int(r[1])}
+        for r in cur.execute(
+            """SELECT f.filepath, COUNT(s.id) FROM files f
+               JOIN symbols s ON f.filepath = s.filepath
+               GROUP BY f.filepath ORDER BY COUNT(s.id) DESC LIMIT 10"""
+        ).fetchall()
+    ]
+    stale = [r[0] for r in cur.execute(
+        "SELECT filepath FROM files WHERE last_modified IS NULL OR last_modified = 0 LIMIT 10"
+    ).fetchall()]
+    return {
+        "syntax_error_density_pct": density,
+        "complexity_hotspots": hotspots,
+        "unindexed_or_stale_files": stale,
     }
-    if not conn:
-        return result
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM files")
-        row = cur.fetchone()
-        total_files = int(row[0]) if row and row[0] else 0
-
-        cur.execute("SELECT COUNT(DISTINCT filepath) FROM syntax_errors")
-        row_err = cur.fetchone()
-        files_with_errors = int(row_err[0]) if row_err and row_err[0] else 0
-
-        if total_files > 0:
-            result["syntax_error_density_pct"] = round((files_with_errors / total_files) * 100.0, 2)
-
-        cur.execute(
-            """
-            SELECT f.filepath, COUNT(s.id) as sym_count
-            FROM files f
-            JOIN symbols s ON f.filepath = s.filepath
-            GROUP BY f.filepath
-            ORDER BY sym_count DESC
-            LIMIT 10
-            """
-        )
-        hotspots = []
-        for r in cur.fetchall():
-            hotspots.append({
-                "filepath": r[0],
-                "symbols_count": int(r[1]),
-            })
-        result["complexity_hotspots"] = hotspots
-
-        cur.execute(
-            """
-            SELECT filepath FROM files
-            WHERE mtime IS NULL OR mtime = 0
-            LIMIT 10
-            """
-        )
-        result["unindexed_or_stale_files"] = [r[0] for r in cur.fetchall()]
-    except Exception:
-        pass
-    return result

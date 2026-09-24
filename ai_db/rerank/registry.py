@@ -25,9 +25,14 @@ def _load(name: str) -> Callable[[dict[str, Any]], RerankProvider]:
     }[name]
 
 
+def _lazy(name: str) -> Callable[[dict[str, Any]], RerankProvider]:
+    def build(options: dict[str, Any]) -> RerankProvider:
+        return _load(name)(options)
+    return build
+
+
 BUILTIN: dict[str, Callable[[dict[str, Any]], RerankProvider]] = {
-    name: (lambda opts, _n=name: _load(_n)(opts))
-    for name in ("sentence_transformers", "voyage", "cohere")
+    name: _lazy(name) for name in ("sentence_transformers", "voyage", "cohere")
 }
 
 

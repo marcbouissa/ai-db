@@ -405,7 +405,7 @@ def _descendants(node: Any) -> Any:
 def _end_line(node: Any) -> int:
     row, col = node.end_point
     # a node ending at column 0 ends on the previous line
-    return row if col == 0 and row > node.start_point[0] else row + 1
+    return int(row if col == 0 and row > node.start_point[0] else row + 1)
 
 
 def _child_starts(node: Any) -> list[int]:

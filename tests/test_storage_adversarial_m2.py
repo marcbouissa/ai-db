@@ -122,7 +122,7 @@ class TestWALModeConcurrency:
                     "dirty_read": dirty_file is not None,
                     "elapsed": read_elapsed,
                 })
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - collect any thread failure for the assert
                 reader_errors.append((reader_id, str(e)))
 
         threads = [threading.Thread(target=reader_task, args=(i,)) for i in range(4)]
@@ -229,7 +229,7 @@ except Exception as exc:
                         ])
                     count += 1
                     time.sleep(0.01)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - collect any thread failure for the assert
                 writer_errors.append(str(e))
             finally:
                 w_backend.close()
@@ -243,7 +243,7 @@ except Exception as exc:
                     assert len(hits) > 0
                     read_counts[idx] += 1
                     time.sleep(0.005)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - collect any thread failure for the assert
                 reader_errors.append(f"Reader {idx}: {e}")
             finally:
                 r_backend.close()
@@ -287,7 +287,7 @@ except Exception as exc:
                     b2.upsert_file(FileRecord("src/w2.py", "h2", 1000.0, 1))
                 b2.close()
                 writer2_done.set()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - collect any thread failure for the assert
                 writer2_errors.append(str(e))
 
         t2 = threading.Thread(target=second_writer)

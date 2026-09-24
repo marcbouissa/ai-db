@@ -53,6 +53,13 @@ _BUILTINS = frozenset(dir(builtins)) | frozenset({
 })
 
 
+def _cid(chunk: ChunkRecord) -> int:
+    """Id of a stored chunk (every chunk read from the backend has one)."""
+    if chunk.id is None:
+        raise ValueError(f"chunk {chunk.qualified_name} has no id")
+    return chunk.id
+
+
 def is_test_path(path: str) -> bool:
     parts = path.replace("\\", "/").split("/")
     base = parts[-1]
@@ -170,13 +177,13 @@ class Investigator:
 
     def _add(self, items: dict[int, _Item], chunk: ChunkRecord, role: str, score: float,
              why: str) -> None:
-        existing = items.get(chunk.id)
+        existing = items.get(_cid(chunk))
         if existing is not None:
             if why not in existing.why:
                 existing.why.append(why)
             existing.score = max(existing.score, score)
             return
-        items[chunk.id] = _Item(chunk, role, score, [why], len(items) + 1)
+        items[_cid(chunk)] = _Item(chunk, role, score, [why], len(items) + 1)
 
     def _add_parents(self, seeds: list[_Item], items: dict[int, _Item]) -> None:
         parent_ids = [s.chunk.parent_id for s in seeds if s.chunk.parent_id is not None]
@@ -217,12 +224,12 @@ class Investigator:
             same = [c for c in cands if c.filepath == near.filepath]
             linked = [c for c in cands if self._linked(near.filepath, c)]
             if same or linked:
-                out[name] = sorted(same or linked, key=lambda c: c.id)[:1]
+                out[name] = sorted(same or linked, key=_cid)[:1]
             elif len(cands) == 1:
                 out[name] = cands
             elif cands and len(split_identifier(name)) >= 2:
                 # compound name, several definitions (interface + implementation): keep both
-                out[name] = sorted(cands, key=lambda c: c.id)[:COMPOUND_MAX_DEFINITIONS]
+                out[name] = sorted(cands, key=_cid)[:COMPOUND_MAX_DEFINITIONS]
         return out
 
     def _caller_links_to(self, ref: Any, target: ChunkRecord) -> bool:
