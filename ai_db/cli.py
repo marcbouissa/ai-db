@@ -19,6 +19,32 @@ from ai_db import (
 from ai_db.dispatcher import ServiceDispatcher
 
 
+def _run_eval(args: argparse.Namespace) -> int:
+    import tempfile
+    from ai_db.eval.harness import run, compare_to_baseline
+
+    with tempfile.TemporaryDirectory(prefix="ai_db_eval_") as tmp:
+        db = VectorDB(os.path.join(tmp, "eval.db"))
+        try:
+            result = run(args.golden, args.root, db, k=args.k)
+        finally:
+            db.close()
+    summary = {k: v for k, v in result.items() if k != "per_query"}
+    print(json.dumps(summary, indent=2))
+    if args.save:
+        with open(args.save, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2)
+            f.write("\n")
+    if args.baseline:
+        with open(args.baseline, "r", encoding="utf-8") as f:
+            baseline = json.load(f)
+        err = compare_to_baseline(result, baseline)
+        if err:
+            print(f"[ai-db eval] FAIL: {err}", file=sys.stderr)
+            return 1
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ai-db",
@@ -213,11 +239,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     telemetry_p.add_argument("--format", "--fmt", dest="format", choices=["dense", "json"], default="dense", help="Output format")
     telemetry_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
+    # eval (retrieval quality harness)
+    eval_p = subparsers.add_parser("eval", help="Evaluate retrieval quality against a golden query set")
+    eval_p.add_argument("--golden", required=True, help="Path to golden JSONL file")
+    eval_p.add_argument("--root", default=".", help="Repository root the golden paths are relative to")
+    eval_p.add_argument("-k", type=int, default=10, help="Cutoff for recall/nDCG (default: 10)")
+    eval_p.add_argument("--baseline", default=None, help="Baseline JSON; fail if recall@k drops > 0.02")
+    eval_p.add_argument("--save", default=None, help="Write the result JSON to this path")
+
     args = parser.parse_args(argv)
 
     if not args.command:
         parser.print_help()
         return 0
+
+    if args.command == "eval":
+        return _run_eval(args)
 
     # Transport and long-running server/daemon commands
     if args.command == "mcp":

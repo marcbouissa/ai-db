@@ -1,0 +1,251 @@
+{
+  "k": 10,
+  "queries": 40,
+  "recall@10": 0.175,
+  "mrr": 0.1271,
+  "ndcg@10": 0.139,
+  "latency_ms_p50": 1.48,
+  "latency_ms_p95": 2.5,
+  "per_query": [
+    {
+      "query": "where is bm25 ranking of chunks done",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "insert chunks compress content into fts index",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "delete file cascade remove symbols annotations",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "nested transaction savepoint rollback",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "create tables schema initialize wal pragmas",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "vacuum optimize fts and prune missing files",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "semantic cache lookup by file hash",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "find callers of a symbol cross references",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "query symbol exact resolution",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "chunk markdown by headers",
+      "recall": 1.0,
+      "mrr": 0.3333333333333333,
+      "ndcg": 0.5
+    },
+    {
+      "query": "split python file into classes and functions chunks",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "extract symbols from python ast",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "file outline skeleton",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "extract call import inheritance references",
+      "recall": 1.0,
+      "mrr": 0.25,
+      "ndcg": 0.43067655807339306
+    },
+    {
+      "query": "todo fixme hack annotations extraction",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "validate python syntax errors",
+      "recall": 1.0,
+      "mrr": 1.0,
+      "ndcg": 1.0
+    },
+    {
+      "query": "external linter validation for javascript shell yaml",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "sync directory skip unchanged files by sha256 hash",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "scan directory walk ignore rules",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "aidbignore pattern matching",
+      "recall": 1.0,
+      "mrr": 1.0,
+      "ndcg": 1.0
+    },
+    {
+      "query": "detect project name from git marker",
+      "recall": 1.0,
+      "mrr": 1.0,
+      "ndcg": 1.0
+    },
+    {
+      "query": "cross project access allowed projects config",
+      "recall": 1.0,
+      "mrr": 1.0,
+      "ndcg": 1.0
+    },
+    {
+      "query": "camelcase tokenizer for queries",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "which files should be indexed node_modules venv rules",
+      "recall": 1.0,
+      "mrr": 0.5,
+      "ndcg": 0.6309297535714575
+    },
+    {
+      "query": "route prompt to best matching skill confidence",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "index SKILL.md files",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "save session context memory",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "search stored contexts",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "progressive disclosure analyze file depth structure targeted",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "analyze many files with token budget and cursor",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "locate targets for a question",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "expand opaque ref handle",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "diff spans since git ref",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "format output as s-expression",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "stub formatter output",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "record query latency percentiles telemetry",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "token savings compression telemetry",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "tool registry dispatch execute validate required parameters",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "stdio json-rpc mcp server request handling",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    },
+    {
+      "query": "http server post endpoint json",
+      "recall": 0.0,
+      "mrr": 0.0,
+      "ndcg": 0.0
+    }
+  ]
+}
