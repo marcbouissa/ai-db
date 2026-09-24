@@ -4,10 +4,10 @@ Unified ServiceDispatcher and Tool Registry for ai-db.
 Provides centralized execution dispatching for CLI, stdio MCP, and HTTP REST transports.
 """
 
-from dataclasses import dataclass
-from typing import Dict, Any, Callable, List, Optional, Union
 import os
-import sys
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -15,11 +15,11 @@ class ToolDefinition:
     """Represents a registered tool definition with schema and execution handler."""
     name: str
     description: str
-    parameters_schema: Dict[str, Any]
-    handler: Callable[[Dict[str, Any]], Any]
+    parameters_schema: dict[str, Any]
+    handler: Callable[[dict[str, Any]], Any]
     category: str = "general"
 
-    def to_mcp_dict(self) -> Dict[str, Any]:
+    def to_mcp_dict(self) -> dict[str, Any]:
         """Returns MCP-compliant tool representation with inputSchema and parameters_schema."""
         return {
             "name": self.name,
@@ -36,23 +36,23 @@ class ServiceDispatcher:
     across CLI, MCP, and HTTP transports.
     """
 
-    def __init__(self, db: Optional[Any] = None, db_path: Optional[str] = None,
-                 config: Optional[Any] = None):
+    def __init__(self, db: Any | None = None, db_path: str | None = None,
+                 config: Any | None = None):
         self.db = db
         self.config = config
         self.db_path = db_path or getattr(db, "db_path", None)
-        self._lazy_db: Optional[Any] = None
-        self._tools: Dict[str, ToolDefinition] = {}
+        self._lazy_db: Any | None = None
+        self._tools: dict[str, ToolDefinition] = {}
         self._register_default_tools()
 
     def register_tool(
         self,
-        name: Union[str, ToolDefinition],
+        name: str | ToolDefinition,
         description: str = "",
-        parameters_schema: Optional[Dict[str, Any]] = None,
-        handler: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        parameters_schema: dict[str, Any] | None = None,
+        handler: Callable[[dict[str, Any]], Any] | None = None,
         *,
-        input_schema: Optional[Dict[str, Any]] = None,
+        input_schema: dict[str, Any] | None = None,
         category: str = "general",
     ) -> None:
         """
@@ -76,15 +76,15 @@ class ServiceDispatcher:
         )
         self._tools[name] = tool
 
-    def get_tool(self, name: str) -> Optional[ToolDefinition]:
+    def get_tool(self, name: str) -> ToolDefinition | None:
         """Retrieves a registered tool definition by name."""
         return self._tools.get(name)
 
-    def list_tools(self) -> List[Dict[str, Any]]:
+    def list_tools(self) -> list[dict[str, Any]]:
         """Returns list of all registered tools with schemas."""
         return [tool.to_mcp_dict() for tool in self._tools.values()]
 
-    def execute(self, tool_name: str, arguments: Optional[Dict[str, Any]] = None) -> Any:
+    def execute(self, tool_name: str, arguments: dict[str, Any] | None = None) -> Any:
         """
         Validates arguments against schema and executes the tool handler.
         Raises KeyError if tool is unregistered.
@@ -129,7 +129,7 @@ class ServiceDispatcher:
 
         return tool.handler(args)
 
-    def _get_db(self, args: Optional[Dict[str, Any]] = None) -> Any:
+    def _get_db(self, args: dict[str, Any] | None = None) -> Any:
         """Resolves active VectorDB instance."""
         if self.db is not None:
             return self.db
@@ -512,7 +512,7 @@ class ServiceDispatcher:
     # Handlers Implementation
     # =========================================================================
 
-    def _handle_locate(self, args: Dict[str, Any]) -> Any:
+    def _handle_locate(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         query = args.get("query", "")
         scope = args.get("scope", ".")
@@ -540,7 +540,7 @@ class ServiceDispatcher:
             return f"(:locate :query {sexp_esc(query)} :hits ({' '.join(hit_sexps)}))"
         return hits
 
-    def _handle_outline(self, args: Dict[str, Any]) -> Any:
+    def _handle_outline(self, args: dict[str, Any]) -> Any:
         raw_path = args.get("path", "")
         target_path = os.path.abspath(os.path.expanduser(raw_path))
         if not os.path.exists(target_path):
@@ -556,14 +556,14 @@ class ServiceDispatcher:
             "outline": [{"line": lineno, "label": label} for lineno, label in outline]
         }
 
-    def _handle_symbol(self, args: Dict[str, Any]) -> Any:
+    def _handle_symbol(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         name = args.get("name", "")
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
         return db.query_symbol(name, relative_to=os.getcwd(), project=project, allowed_projects=allow_projects)
 
-    def _handle_analyze(self, args: Dict[str, Any]) -> Any:
+    def _handle_analyze(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         raw_targets = args.get("targets")
         if not raw_targets:
@@ -630,7 +630,7 @@ class ServiceDispatcher:
             return VectorDB.format_as_sexp(out_data)
         return out_data
 
-    def _handle_expand(self, args: Dict[str, Any]) -> Any:
+    def _handle_expand(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         ref = args.get("ref", "")
         depth = args.get("depth", "full")
@@ -648,7 +648,7 @@ class ServiceDispatcher:
             raise ValueError(f"Ref handle '{ref}' not found or expired.")
         return exp
 
-    def _handle_sync(self, args: Dict[str, Any]) -> Any:
+    def _handle_sync(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         target_path = os.path.abspath(os.path.expanduser(args.get("path", ".")))
         from ai_db.utils import detect_project_name
@@ -668,7 +668,7 @@ class ServiceDispatcher:
         else:
             return db.sync(target_path, project=proj_name, verbose=verbose)
 
-    def _handle_check(self, args: Dict[str, Any]) -> Any:
+    def _handle_check(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         path = args.get("path")
         project = args.get("project")
@@ -686,24 +686,24 @@ class ServiceDispatcher:
                         db.conn.commit()
         return db.check_syntax(path, relative_to=os.getcwd(), project=project, allowed_projects=allow_projects)
 
-    def _handle_status(self, args: Dict[str, Any]) -> Any:
+    def _handle_status(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         return db.status()
 
-    def _handle_diff(self, args: Dict[str, Any]) -> Any:
+    def _handle_diff(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         raw_path = args.get("path") or args.get("filepath", "")
         since = args.get("since", "last")
         return db.diff_file(raw_path, since=since)
 
-    def _handle_callers(self, args: Dict[str, Any]) -> Any:
+    def _handle_callers(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         name = args.get("name", "")
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
         return db.query_callers(name, relative_to=os.getcwd(), project=project, allowed_projects=allow_projects)
 
-    def _handle_todos(self, args: Dict[str, Any]) -> Any:
+    def _handle_todos(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         kind = args.get("kind")
         filepath = args.get("filepath") or args.get("file")
@@ -713,7 +713,7 @@ class ServiceDispatcher:
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
         return db.query_annotations(kind=kind, filepath=filepath, project=project, allowed_projects=allow_projects)
 
-    def _handle_context_save(self, args: Dict[str, Any]) -> Any:
+    def _handle_context_save(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         session_id = args.get("session_id", "main")
         summary = args.get("summary", "")
@@ -732,7 +732,7 @@ class ServiceDispatcher:
             full_notes=notes,
         )
 
-    def _handle_context_recall(self, args: Dict[str, Any]) -> Any:
+    def _handle_context_recall(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         session_id = args.get("session_id")
         query = args.get("query")
@@ -745,7 +745,7 @@ class ServiceDispatcher:
         ctx = db.get_context(session_id=session_id, project=project, allowed_projects=allow_projects)
         return ctx or {}
 
-    def _handle_optimize(self, args: Dict[str, Any]) -> Any:
+    def _handle_optimize(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         prune_missing = args.get("prune_missing", True)
         if "no_prune" in args:
@@ -753,7 +753,7 @@ class ServiceDispatcher:
         default_format = args.get("default_format")
         return db.optimize(prune_missing=prune_missing, default_format=default_format)
 
-    def _handle_telemetry(self, args: Dict[str, Any]) -> Any:
+    def _handle_telemetry(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         reset = bool(args.get("reset", False))
         tracker = getattr(db, "telemetry_tracker", None)
@@ -806,7 +806,7 @@ class ServiceDispatcher:
             },
         }
 
-    def _handle_query(self, args: Dict[str, Any]) -> Any:
+    def _handle_query(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         search_str = args.get("query") or args.get("search", "")
         top_k = int(args.get("top", 5))
@@ -816,7 +816,7 @@ class ServiceDispatcher:
                         languages=args.get("languages"), chunk_types=args.get("chunk_types"),
                         modified_since=args.get("modified_since"))
 
-    def _handle_investigate(self, args: Dict[str, Any]) -> Any:
+    def _handle_investigate(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         return db.investigate(
             args["query"], budget_tokens=int(args.get("budget_tokens", 8000)),
@@ -826,7 +826,7 @@ class ServiceDispatcher:
             modified_since=args.get("modified_since"),
         )
 
-    def _handle_prune(self, args: Dict[str, Any]) -> Any:
+    def _handle_prune(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         backend = getattr(db, "backend", getattr(db, "db", db))
         if hasattr(backend, "get_all_filepaths"):
@@ -847,7 +847,7 @@ class ServiceDispatcher:
                 pruned_count += 1
         return {"pruned": pruned_count}
 
-    def _handle_route_skill(self, args: Dict[str, Any]) -> Any:
+    def _handle_route_skill(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         prompt = args.get("prompt", "")
         top_k = int(args.get("top", 3))
@@ -856,7 +856,7 @@ class ServiceDispatcher:
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
         return db.route_skill(prompt, top=top_k, min_confidence=min_conf, project=project, allowed_projects=allow_projects)
 
-    def _handle_sync_skills(self, args: Dict[str, Any]) -> Any:
+    def _handle_sync_skills(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         skill_dirs = args.get("skill_dirs") or args.get("dir")
         project = args.get("project")

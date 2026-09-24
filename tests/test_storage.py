@@ -6,15 +6,11 @@ pluggable entry-point backends, and decoupled SQL callers.
 """
 
 import ast
-import os
-import sys
-import zlib
 import sqlite3
-import tempfile
 import threading
+import zlib
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,9 +19,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Progressive check for storage implementation availability (M2)
 try:
     from ai_db.storage.models import (
-        FileRecord, ChunkRecord, SymbolRecord, SymbolRefRecord,
-        AnnotationRecord, SyntaxErrorRecord, SkillRecord,
-        ContextRecord, AnalysisRefRecord, SearchResult
+        AnalysisRefRecord,
+        AnnotationRecord,
+        ChunkRecord,
+        ContextRecord,
+        FileRecord,
+        SearchResult,
+        SkillRecord,
+        SymbolRecord,
+        SymbolRefRecord,
+        SyntaxErrorRecord,
     )
     HAS_STORAGE_MODELS = True
 except ImportError:
@@ -473,10 +476,9 @@ class TestStorageTier2:
         """TC-T2-F6-05: Unhandled exception inside transaction context manager is reraised."""
         backend = SQLiteBackend(temp_db_path)
         backend.initialize()
-        with pytest.raises(ZeroDivisionError):
-            with backend.transaction():
-                backend.set_state("txn_key", {"attempt": 1})
-                _ = 1 / 0
+        with pytest.raises(ZeroDivisionError), backend.transaction():
+            backend.set_state("txn_key", {"attempt": 1})
+            _ = 1 / 0
         assert backend.get_state("txn_key") is None
         backend.close()
 
@@ -521,10 +523,9 @@ class TestStorageTier2:
         backend = SQLiteBackend(temp_db_path)
         backend.initialize()
 
-        with pytest.raises(RuntimeError):
-            with backend.transaction():
-                backend.upsert_file(FileRecord("src/rollback.py", "rbhash", 1000.0, 1))
-                raise RuntimeError("Simulated crash during batch")
+        with pytest.raises(RuntimeError), backend.transaction():
+            backend.upsert_file(FileRecord("src/rollback.py", "rbhash", 1000.0, 1))
+            raise RuntimeError("Simulated crash during batch")
 
         assert backend.get_file("src/rollback.py") is None
         backend.close()
@@ -832,8 +833,8 @@ class TestStorageTier4:
             with backend.transaction():
                 backend.upsert_file(FileRecord("src/new_1.py", "nh1", 1000.0, 1))
                 backend.upsert_file(FileRecord("src/new_2.py", "nh2", 1000.0, 1))
-                raise IOError("Simulated disk error mid-batch")
-        except IOError:
+                raise OSError("Simulated disk error mid-batch")
+        except OSError:
             pass
 
         # Verify only baseline exists; new files rolled back

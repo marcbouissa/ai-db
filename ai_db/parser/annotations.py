@@ -5,7 +5,7 @@ Extracts TODO/FIXME/HACK/NOTE/XXX comment tags and Python docstrings from source
 import ast
 import os
 import re
-from typing import List, Dict, Any
+from typing import Any
 
 # Pattern matches: # TODO: message  or  // FIXME message  or  /* HACK: ... */
 _TAG_PATTERN = re.compile(
@@ -14,12 +14,12 @@ _TAG_PATTERN = re.compile(
 )
 
 
-def extract_annotations(filepath: str, content: str) -> List[Dict[str, Any]]:
+def extract_annotations(filepath: str, content: str) -> list[dict[str, Any]]:
     """
     Returns a list of annotation dicts:
     {line, kind, symbol (or None), content}
     """
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     lines = content.splitlines()
 
     # 1. Scan all lines for tag comments (works for all languages)

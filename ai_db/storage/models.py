@@ -6,7 +6,6 @@ slots-based dataclasses.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
 
 
 @dataclass(slots=True)
@@ -33,14 +32,14 @@ class ChunkRecord:
     end_line: int
     content: str
     project: str = "global"
-    id: Optional[int] = None
+    id: int | None = None
     qualified_name: str = ""
     language: str = ""
     token_count: int = 0
     content_hash: str = ""
-    parent_id: Optional[int] = None
+    parent_id: int | None = None
     # Index of the parent within the list passed to insert/replace (transient).
-    parent_index: Optional[int] = None
+    parent_index: int | None = None
 
     def __post_init__(self) -> None:
         if not self.content_hash:
@@ -57,9 +56,9 @@ class SymbolRecord:
     symbol_type: str
     filepath: str
     line: int
-    signature: Optional[str] = None
+    signature: str | None = None
     project: str = "global"
-    id: Optional[int] = None
+    id: int | None = None
 
 
 @dataclass(slots=True)
@@ -71,7 +70,7 @@ class SymbolRefRecord:
     callee_name: str
     ref_type: str  # 'call', 'import', 'inherit'
     project: str = "global"
-    id: Optional[int] = None
+    id: int | None = None
 
 
 @dataclass(slots=True)
@@ -81,9 +80,9 @@ class AnnotationRecord:
     line: int
     kind: str  # 'todo', 'fixme', 'hack', 'note', 'xxx', 'docstring'
     content: str
-    symbol: Optional[str] = None
+    symbol: str | None = None
     project: str = "global"
-    id: Optional[int] = None
+    id: int | None = None
 
 
 @dataclass(slots=True)
@@ -115,13 +114,13 @@ class ContextRecord:
     """Record representing a preserved conversation session context snapshot."""
     session_id: str
     project: str = "global"
-    title: Optional[str] = None
+    title: str | None = None
     summary: str = ""
-    active_files: List[str] = field(default_factory=list)
-    open_tasks: List[str] = field(default_factory=list)
+    active_files: list[str] = field(default_factory=list)
+    open_tasks: list[str] = field(default_factory=list)
     timestamp: float = 0.0
     full_notes: str = ""
-    id: Optional[int] = None
+    id: int | None = None
 
 
 @dataclass(slots=True)
@@ -151,9 +150,9 @@ class SearchResult:
     snippet: str
     qualified_name: str = ""
     language: str = ""
-    parent_id: Optional[int] = None
+    parent_id: int | None = None
     # Per-stage ranking signals, e.g. {"bm25_rank": 1, "vec_rank": 3, "rrf": 0.03}
-    signals: Dict[str, float] = field(default_factory=dict)
+    signals: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -164,8 +163,8 @@ class ParsedFile:
     sha256: str
     last_modified: float
     project: str
-    chunks: List[ChunkRecord] = field(default_factory=list)
-    symbols: List[SymbolRecord] = field(default_factory=list)
-    refs: List[SymbolRefRecord] = field(default_factory=list)
-    annotations: List[AnnotationRecord] = field(default_factory=list)
-    syntax_error: Optional[SyntaxErrorRecord] = None
+    chunks: list[ChunkRecord] = field(default_factory=list)
+    symbols: list[SymbolRecord] = field(default_factory=list)
+    refs: list[SymbolRefRecord] = field(default_factory=list)
+    annotations: list[AnnotationRecord] = field(default_factory=list)
+    syntax_error: SyntaxErrorRecord | None = None

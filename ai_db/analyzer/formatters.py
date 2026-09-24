@@ -1,14 +1,15 @@
-from typing import Dict, Any
+from typing import Any
+
 
 class Formatters:
     @staticmethod
-    def format_as_stub(data: Dict[str, Any]) -> str:
+    def format_as_stub(data: dict[str, Any]) -> str:
         """Formats analysis output into native code skeletons (.pyi/stub style).
         Best for LLM code analysis, reasoning, and type inspection.
         """
         lines = []
 
-        def render_file_stub(fpath: str, fres: Dict[str, Any]):
+        def render_file_stub(fpath: str, fres: dict[str, Any]):
             meta = fres.get("meta", {})
             conf_str = f" conf:{meta.get('conf', 1.0)}" if "conf" in meta else ""
             cached_str = " (cached)" if meta.get("cached") else ""
@@ -79,7 +80,7 @@ class Formatters:
         return "\n".join(lines).strip()
 
     @staticmethod
-    def format_as_sexp(data: Dict[str, Any]) -> str:
+    def format_as_sexp(data: dict[str, Any]) -> str:
         """Formats analysis output into compact S-Expressions (Lisp/EDN).
         Best for absolute minimum token consumption in tree navigation.
         """
@@ -89,7 +90,7 @@ class Formatters:
             s = str(val).replace('"', '\\"').replace("\n", " ")
             return f'"{s}"'
 
-        def render_file_sexp(fpath: str, fres: Dict[str, Any]) -> str:
+        def render_file_sexp(fpath: str, fres: dict[str, Any]) -> str:
             sym_parts = []
             for s in fres.get("symbols", []):
                 name = s.get("name", "")

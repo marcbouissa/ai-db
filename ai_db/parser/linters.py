@@ -9,11 +9,9 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Optional, Tuple, Dict, List
-
 
 # Built-in validator registry: ext -> command template (use {file} for the temp filepath)
-BUILTIN_VALIDATORS: Dict[str, List[str]] = {
+BUILTIN_VALIDATORS: dict[str, list[str]] = {
     ".js":   ["node", "--check", "{file}"],
     ".ts":   ["npx", "--yes", "tsc", "--noEmit", "--allowJs", "--checkJs",
                "--target", "ESNext", "--moduleResolution", "node", "{file}"],
@@ -31,7 +29,7 @@ def _tool_available(cmd: str) -> bool:
     return shutil.which(cmd) is not None
 
 
-def _parse_error_location(output: str) -> Tuple[int, int]:
+def _parse_error_location(output: str) -> tuple[int, int]:
     """Extracts (line, col) from common linter error output formats."""
     # Matches: :12:5:  or  line 12, col 5  or  (12,5)
     patterns = [
@@ -53,12 +51,12 @@ def _parse_error_location(output: str) -> Tuple[int, int]:
 class ExternalLinter:
     """Validates non-Python source files using external CLI tools."""
 
-    def __init__(self, config_validators: Optional[Dict[str, List[str]]] = None):
-        self.validators: Dict[str, List[str]] = dict(BUILTIN_VALIDATORS)
+    def __init__(self, config_validators: dict[str, list[str]] | None = None):
+        self.validators: dict[str, list[str]] = dict(BUILTIN_VALIDATORS)
         if config_validators:
             self.validators.update(config_validators)
 
-    def validate(self, filepath: str, content: str) -> Optional[Tuple[int, int, str]]:
+    def validate(self, filepath: str, content: str) -> tuple[int, int, str] | None:
         """
         Returns (line, col, message) on error, None if file is clean or no validator is available.
         Always a no-op for Python files (handled by validate_python_syntax separately).
@@ -112,10 +110,10 @@ class ExternalLinter:
 
 
 # Module-level singleton — avoids re-reading config on every file
-_linter: Optional[ExternalLinter] = None
+_linter: ExternalLinter | None = None
 
 
-def get_linter(config_validators: Optional[Dict[str, List[str]]] = None) -> ExternalLinter:
+def get_linter(config_validators: dict[str, list[str]] | None = None) -> ExternalLinter:
     global _linter
     if _linter is None:
         _linter = ExternalLinter(config_validators)

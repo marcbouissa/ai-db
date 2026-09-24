@@ -1,19 +1,20 @@
 import time
-from typing import List, Dict, Any, Optional
-from ai_db.utils import get_allowed_projects, tokenize
+from typing import Any
+
 from ai_db.storage.models import ContextRecord
+from ai_db.utils import get_allowed_projects, tokenize
 
 
 class ContextMemory:
     def __init__(self, db: Any = None, conn: Any = None):
         self.db = db if db is not None else conn
-        self.cross_project: Dict[str, List[str]] = {}
+        self.cross_project: dict[str, list[str]] = {}
 
     def save_context(
-        self, session_id: str, summary: str, project: Optional[str] = None,
-        title: Optional[str] = None, active_files: Optional[List[str]] = None,
-        open_tasks: Optional[List[str]] = None, full_notes: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, session_id: str, summary: str, project: str | None = None,
+        title: str | None = None, active_files: list[str] | None = None,
+        open_tasks: list[str] | None = None, full_notes: str | None = None
+    ) -> dict[str, Any]:
         """Saves or updates a chat session context snapshot for a project."""
         if not project:
             project = "global"
@@ -45,9 +46,9 @@ class ContextMemory:
         }
 
     def get_context(
-        self, session_id: Optional[str] = None, project: Optional[str] = None,
-        allowed_projects: Optional[List[str]] = None
-    ) -> Optional[Dict[str, Any]]:
+        self, session_id: str | None = None, project: str | None = None,
+        allowed_projects: list[str] | None = None
+    ) -> dict[str, Any] | None:
         """Retrieves the latest or specified session context for the allowed project scope."""
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
         record = self.db.get_context(session_id=session_id, allowed_projects=allowed)
@@ -66,8 +67,8 @@ class ContextMemory:
         }
 
     def list_contexts(
-        self, project: Optional[str] = None, allowed_projects: Optional[List[str]] = None
-    ) -> List[Dict[str, Any]]:
+        self, project: str | None = None, allowed_projects: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         """Lists saved contexts for the project scope."""
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
         raw_list = self.db.list_contexts(allowed_projects=allowed)
@@ -89,9 +90,9 @@ class ContextMemory:
         return results
 
     def query_contexts(
-        self, query_text: str, project: Optional[str] = None,
-        allowed_projects: Optional[List[str]] = None, top_k: int = 3
-    ) -> List[Dict[str, Any]]:
+        self, query_text: str, project: str | None = None,
+        allowed_projects: list[str] | None = None, top_k: int = 3
+    ) -> list[dict[str, Any]]:
         """Searches across saved session contexts using BM25."""
         tokens = tokenize(query_text)
         if not tokens:

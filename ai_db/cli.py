@@ -1,28 +1,24 @@
+import argparse
+import json
 import os
 import sys
-import json
 import time
-import argparse
-import subprocess
-from typing import List, Dict, Any, Optional
 
 from ai_db import (
-    DEFAULT_DB_FILE,
-    DEFAULT_CONFIG_FILE,
-    DEFAULT_SKILL_DIRS,
     VectorDB,
+    __version__,
     detect_project_name,
     run_watch,
-    __version__,
 )
+from ai_db.config import AppConfig, config_path, load_config, masked_dict
 from ai_db.dispatcher import ServiceDispatcher
-from ai_db.config import AppConfig, load_config, config_path, masked_dict, CONFIG_VERSION
 from ai_db.errors import AiDbConfigError
 
 
 def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
     import tempfile
-    from ai_db.eval.harness import run, run_pack, compare_to_baseline, materialize_tracked
+
+    from ai_db.eval.harness import compare_to_baseline, materialize_tracked, run, run_pack
 
     with tempfile.TemporaryDirectory(prefix="ai_db_eval_") as tmp:
         root = os.path.abspath(args.root)
@@ -54,7 +50,7 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     try:
         return _main(argv)
     except AiDbConfigError as exc:
@@ -122,7 +118,7 @@ def _cmd_config(args: argparse.Namespace, cfg: AppConfig) -> int:
     raise AiDbConfigError("usage: ai-db config {show,check}")
 
 
-def _main(argv: Optional[List[str]] = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ai-db",
         description="ai-db: Token-Optimized Vector DB & Code Index"
@@ -851,7 +847,7 @@ def _main(argv: Optional[List[str]] = None) -> int:
         prune_flag = not getattr(args, "no_prune", False)
         def_fmt = getattr(args, "default_format", None)
         res = dispatcher.execute("optimize", {"prune_missing": prune_flag, "default_format": def_fmt})
-        print(f"[ai-db optimize] Merged FTS indexes, updated planner stats & vacuumed.")
+        print("[ai-db optimize] Merged FTS indexes, updated planner stats & vacuumed.")
         print(f"Size: {res['initial_kb']}KB -> {res['final_kb']}KB (reclaimed: {res['reclaimed_kb']}KB, pruned_files: {res['pruned_files']})")
         print(f"Active default output format: '{res['default_format']}'")
 

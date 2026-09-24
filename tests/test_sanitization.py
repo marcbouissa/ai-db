@@ -6,17 +6,15 @@ credentials, private keys, tracked database binaries, and compiled bytecode.
 
 import os
 import re
-import sys
 import subprocess
 from pathlib import Path
-from typing import List, Set
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def get_tracked_files() -> List[str]:
+def get_tracked_files() -> list[str]:
     """Retrieve list of all files currently tracked by git index."""
     proc = subprocess.run(
         ["git", "ls-files"],
@@ -56,7 +54,7 @@ class TestSanitizationTier1:
             line for line in proc.stdout.splitlines()
             if not line.startswith("tests/") and not line.startswith(".agents/")
         ]
-        assert len(violations) == 0, f"Detected /home/marc in tracked files:\n" + "\n".join(violations)
+        assert len(violations) == 0, "Detected /home/marc in tracked files:\n" + "\n".join(violations)
 
     def test_zero_occurrences_username_marc(self):
         """TC-SAN-T1-02: Zero occurrences of developer personal username in paths/configs."""
@@ -75,7 +73,7 @@ class TestSanitizationTier1:
                             violations.append(f"{rel_path}:{line_num}: {line}")
                 except Exception:
                     pass
-        assert len(violations) == 0, f"Detected personal username occurrences:\n" + "\n".join(violations)
+        assert len(violations) == 0, "Detected personal username occurrences:\n" + "\n".join(violations)
 
     def test_no_tracked_sqlite_database_files(self):
         """TC-SAN-T1-03: Zero SQLite database binary files are tracked in git index."""
@@ -141,7 +139,7 @@ class TestSanitizationTier1:
                                 violations.append(f"{rel_path}:{line_num}: {line}")
                 except Exception:
                     pass
-        assert len(violations) == 0, f"Detected credentials in tracked files:\n" + "\n".join(violations)
+        assert len(violations) == 0, "Detected credentials in tracked files:\n" + "\n".join(violations)
 
     def test_no_private_key_blocks(self):
         """TC-SAN-T1-09: Zero private cryptographic keys in tracked files."""
@@ -177,7 +175,7 @@ class TestSanitizationTier1:
                             violations.append(f"{rel_path}:{line_num}: {match.group(0)}")
                 except Exception:
                     pass
-        assert len(violations) == 0, f"Personal email addresses detected:\n" + "\n".join(violations)
+        assert len(violations) == 0, "Personal email addresses detected:\n" + "\n".join(violations)
 
 
 # ==============================================================================
@@ -274,7 +272,7 @@ class TestSanitizationTier2:
                 size = full_path.stat().st_size
                 if size > max_bytes:
                     oversized.append(f"{rel_path} ({size / 1024 / 1024:.2f} MB)")
-        assert len(oversized) == 0, f"Oversized files tracked in git:\n" + "\n".join(oversized)
+        assert len(oversized) == 0, "Oversized files tracked in git:\n" + "\n".join(oversized)
 
     def test_cli_sample_configs_sanitized(self):
         """TC-SAN-T2-08: ai_db/cli.py sample configs and help texts use generic paths."""

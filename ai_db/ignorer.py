@@ -5,7 +5,6 @@ A project can place a .aidbignore file at its root to exclude files from indexin
 """
 import os
 import re
-from typing import List
 
 
 class AidbIgnore:
@@ -13,7 +12,7 @@ class AidbIgnore:
 
     def __init__(self, root_dir: str):
         self.root = os.path.abspath(root_dir)
-        self.patterns: List[re.Pattern] = []
+        self.patterns: list[re.Pattern] = []
         self._load(os.path.join(self.root, ".aidbignore"))
 
     def _load(self, path: str):

@@ -2,14 +2,11 @@
 
 import io
 import os
-import sys
-import shutil
-import sqlite3
-import tempfile
 import subprocess
+import sys
+import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator, Any, Dict, List, Optional
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -69,8 +66,9 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         monkeypatch.setattr(vdb_cls.__init__, "__defaults__", (db_file, None), raising=False)
 
     # Every test runs against the config `ai-db init` writes (sqlite + lexical).
-    from ai_db.config_template import build_template
     import json as _json
+
+    from ai_db.config_template import build_template
     with open(config_file, "w", encoding="utf-8") as _f:
         _json.dump(build_template(), _f)
 
@@ -176,7 +174,7 @@ def cli_runner(isolated_env: Path):
             self,
             *args: str,
             use_subprocess: bool = False,
-            env_overrides: Optional[Dict[str, str]] = None
+            env_overrides: dict[str, str] | None = None
         ) -> tuple[int, str, str]:
             effective_args = list(args)
             db_target = os.environ.get("AI_DB_PATH")
@@ -268,9 +266,16 @@ def sample_records():
     """Factory returning standardized domain DTO objects or compatible fallbacks."""
     try:
         from ai_db.storage.models import (
-            FileRecord, ChunkRecord, SymbolRecord, SymbolRefRecord,
-            AnnotationRecord, SyntaxErrorRecord, SkillRecord,
-            ContextRecord, AnalysisRefRecord, SearchResult
+            AnalysisRefRecord,
+            AnnotationRecord,
+            ChunkRecord,
+            ContextRecord,
+            FileRecord,
+            SearchResult,
+            SkillRecord,
+            SymbolRecord,
+            SymbolRefRecord,
+            SyntaxErrorRecord,
         )
         return {
             "file": FileRecord(filepath="src/service.py", sha256="abc123hash", last_modified=1000.0, chunk_count=2),

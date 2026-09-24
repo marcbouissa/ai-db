@@ -1,8 +1,9 @@
+import hashlib
 import os
 import re
-import hashlib
-from typing import List, Dict, Any, Optional
+
 from ai_db.constants import HARD_IGNORE_DIRS, INDEXABLE_EXTENSIONS, VENDOR_NOISE_EXTENSIONS
+
 
 def detect_project_name(path: str) -> str:
     curr = os.path.abspath(os.path.expanduser(path))
@@ -19,8 +20,8 @@ def detect_project_name(path: str) -> str:
         check_dir = parent
     return os.path.basename(curr) if curr != "/" else "global"
 
-def get_allowed_projects(current_project: str, explicit_allowed: Optional[List[str]] = None,
-                         cross_project: Optional[Dict[str, List[str]]] = None) -> List[str]:
+def get_allowed_projects(current_project: str, explicit_allowed: list[str] | None = None,
+                         cross_project: dict[str, list[str]] | None = None) -> list[str]:
     """Projects readable from ``current_project``: itself, 'global', explicit ones and
     those granted in ``access.cross_project`` of the config."""
     allowed = {"global"}
@@ -44,7 +45,7 @@ def compute_sha256(filepath: str) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-def tokenize(text: str) -> List[str]:
+def tokenize(text: str) -> list[str]:
     s1 = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
     tokens = re.findall(r"\w{2,}", s1.lower())
     return tokens

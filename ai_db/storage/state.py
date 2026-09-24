@@ -1,9 +1,10 @@
 import json
-import time
 import sqlite3
-from typing import Any, Optional, Dict, List
+import time
+from typing import Any
 
-def get_session_state(conn: sqlite3.Connection, key: str) -> Optional[Any]:
+
+def get_session_state(conn: sqlite3.Connection, key: str) -> Any | None:
     try:
         cur = conn.cursor()
         cur.execute("SELECT value_json FROM session_state WHERE key = ?", (key,))
@@ -37,7 +38,7 @@ def set_session_state(conn: sqlite3.Connection, key: str, value: Any):
         pass
 
 
-def get_telemetry_state(conn: sqlite3.Connection, key: str) -> Optional[Any]:
+def get_telemetry_state(conn: sqlite3.Connection, key: str) -> Any | None:
     return get_session_state(conn, key)
 
 
@@ -45,8 +46,8 @@ def set_telemetry_state(conn: sqlite3.Connection, key: str, value: Any) -> None:
     set_session_state(conn, key, value)
 
 
-def get_telemetry_table_counts(conn: sqlite3.Connection) -> Dict[str, int]:
-    counts: Dict[str, int] = {}
+def get_telemetry_table_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    counts: dict[str, int] = {}
     if not conn:
         return counts
     try:
@@ -63,8 +64,8 @@ def get_telemetry_table_counts(conn: sqlite3.Connection) -> Dict[str, int]:
     return counts
 
 
-def get_telemetry_weak_points(conn: sqlite3.Connection) -> Dict[str, Any]:
-    result: Dict[str, Any] = {
+def get_telemetry_weak_points(conn: sqlite3.Connection) -> dict[str, Any]:
+    result: dict[str, Any] = {
         "syntax_error_density_pct": 0.0,
         "complexity_hotspots": [],
         "unindexed_or_stale_files": [],

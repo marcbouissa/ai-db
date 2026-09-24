@@ -1,7 +1,7 @@
 import ast
-from typing import Optional, Tuple
 
-def validate_python_syntax(content: str, filepath: str) -> Optional[Tuple[int, int, str]]:
+
+def validate_python_syntax(content: str, filepath: str) -> tuple[int, int, str] | None:
     """Validates Python syntax using ast.parse. Returns (line, col, msg) if error, else None."""
     try:
         ast.parse(content, filename=filepath)

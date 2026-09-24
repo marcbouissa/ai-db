@@ -5,26 +5,32 @@ BM25 scoring, transparent zlib (level 6) compression, savepoint-based nested
 transactions, and one connection per thread (WAL allows concurrent readers).
 """
 
-import os
-import re
 import json
-import time
-import zlib
+import os
 import sqlite3
 import threading
+import time
+import zlib
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Optional, List, Dict, Any, Tuple, Generator
+from typing import Any
 
 from ai_db.constants import DEFAULT_DB_FILE
 from ai_db.errors import AiDbConfigError, AiDbQueryError, AiDbStorageError
 from ai_db.search.query_builder import build_fts, identifier_words, split_identifier
 from ai_db.storage.backend import StorageBackend, VectorCapable
 from ai_db.storage.models import (
-    FileRecord, ChunkRecord, SymbolRecord, SymbolRefRecord,
-    AnnotationRecord, SyntaxErrorRecord, SkillRecord,
-    ContextRecord, AnalysisRefRecord, SearchResult
+    AnalysisRefRecord,
+    AnnotationRecord,
+    ChunkRecord,
+    ContextRecord,
+    FileRecord,
+    SearchResult,
+    SkillRecord,
+    SymbolRecord,
+    SymbolRefRecord,
+    SyntaxErrorRecord,
 )
-
 
 ZLIB_LEVEL = 6
 SCHEMA_VERSION = "8"
@@ -47,7 +53,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     OPTION_KEYS = frozenset({"path"})
 
     @classmethod
-    def from_options(cls, options: Dict[str, Any]) -> "SQLiteBackend":
+    def from_options(cls, options: dict[str, Any]) -> "SQLiteBackend":
         """Entry-point constructor: ``options = {"path": str | None}``."""
         unknown = set(options) - cls.OPTION_KEYS
         if unknown:
@@ -57,7 +63,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             raise AiDbConfigError("storage.options.path must be a string or null")
         return cls(path)  # None -> $AI_DB_PATH or the XDG default location
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         if sqlite3.sqlite_version_info < MIN_SQLITE_VERSION:
             raise AiDbConfigError(
                 f"SQLite >= {'.'.join(map(str, MIN_SQLITE_VERSION))} required, "
@@ -76,7 +82,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
         self._closed = False
         self._local = threading.local()
-        self._conns: List[sqlite3.Connection] = []
+        self._conns: list[sqlite3.Connection] = []
         self._conns_lock = threading.Lock()
 
         if isinstance(db_path, str) and db_path.lower() in (":memory:", "/:memory:"):
@@ -88,7 +94,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 os.makedirs(parent, exist_ok=True)
 
         # An in-memory database exists only inside one connection, so it is shared.
-        self._shared: Optional[sqlite3.Connection] = (
+        self._shared: sqlite3.Connection | None = (
             self._open_connection() if self.db_path == ":memory:" else None
         )
         if self._shared is None:
@@ -121,7 +127,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         return frozenset({"fts", "vector", "graph"})
 
     @property
-    def conn(self) -> Optional[sqlite3.Connection]:
+    def conn(self) -> sqlite3.Connection | None:
         """The calling thread's connection (created on first use)."""
         if self._closed:
             return None
@@ -425,7 +431,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             )
         """)
 
-    def _before_delete_chunk_ids(self, cur: sqlite3.Cursor, ids: List[int]) -> None:
+    def _before_delete_chunk_ids(self, cur: sqlite3.Cursor, ids: list[int]) -> None:
         """Hook: remove rows keyed by chunk id before chunks are deleted."""
 
     def _before_delete_file_chunks(self, cur: sqlite3.Cursor, filepath: str) -> None:
@@ -470,7 +476,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     # Status & Optimization
     # =========================================================================
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         self._check_closed()
         cur = self.conn.cursor()
         counts = {}
@@ -496,7 +502,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             "format": "zlib-compressed binary blob (token-dense)"
         }
 
-    def optimize(self, prune_missing: bool = True, default_format: Optional[str] = None) -> Dict[str, Any]:
+    def optimize(self, prune_missing: bool = True, default_format: str | None = None) -> dict[str, Any]:
         self._check_closed()
         initial_size = os.path.getsize(self.db_path) if self.db_path != ":memory:" and os.path.exists(self.db_path) else 0
         pruned_files = 0
@@ -540,7 +546,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     # Files
     # =========================================================================
 
-    def get_file(self, filepath: str) -> Optional[FileRecord]:
+    def get_file(self, filepath: str) -> FileRecord | None:
         self._check_closed()
         cur = self.conn.cursor()
         cur.execute(
@@ -558,7 +564,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             project=row["project"]
         )
 
-    def get_files_by_prefix(self, prefix: str) -> Dict[str, str]:
+    def get_files_by_prefix(self, prefix: str) -> dict[str, str]:
         self._check_closed()
         prefix = prefix.replace("\x00", "") if prefix else ""
         cur = self.conn.cursor()
@@ -568,7 +574,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         )
         return {r["filepath"]: r["sha256"] for r in cur.fetchall()}
 
-    def get_all_filepaths(self) -> List[str]:
+    def get_all_filepaths(self) -> list[str]:
         self._check_closed()
         cur = self.conn.cursor()
         cur.execute("SELECT filepath FROM files")
@@ -614,7 +620,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                    "qualified_name, language, token_count, content_hash, symbol_name")
     SYMBOL_CHUNK_TYPES = ("code", "class_header")
 
-    def _insert_chunk_rows(self, chunks: List[ChunkRecord]) -> None:
+    def _insert_chunk_rows(self, chunks: list[ChunkRecord]) -> None:
         """Insert chunks + FTS rows and assign ``c.id``. Does not resolve parents."""
         if not chunks:
             return
@@ -628,7 +634,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         ]
         width = len(rows[0])
         batch = 32000 // width  # SQLite host-parameter limit is 32766
-        ids: List[int] = []
+        ids: list[int] = []
         for i in range(0, len(rows), batch):
             part = rows[i:i + batch]
             placeholders = ",".join(["(" + ",".join("?" * width) + ")"] * len(part))
@@ -644,7 +650,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             c.id = chunk_id
         self._index_chunks_fts(cur, chunks)
 
-    def _index_chunks_fts(self, cur: sqlite3.Cursor, chunks: List[ChunkRecord]) -> None:
+    def _index_chunks_fts(self, cur: sqlite3.Cursor, chunks: list[ChunkRecord]) -> None:
         cur.executemany(
             "INSERT INTO fts_index (rowid, name, qualified_name, filepath, content, idents) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -653,7 +659,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
               identifier_words(c.name + " " + c.content)) for c in chunks],
         )
 
-    def _resolve_parents(self, chunks: List[ChunkRecord]) -> None:
+    def _resolve_parents(self, chunks: list[ChunkRecord]) -> None:
         updates = []
         for c in chunks:
             if c.parent_index is not None:
@@ -663,7 +669,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             updates.append((c.parent_id, c.id))
         self.conn.executemany("UPDATE chunks SET parent_id = ? WHERE id = ?", updates)
 
-    def _delete_chunk_ids(self, ids: List[int]) -> None:
+    def _delete_chunk_ids(self, ids: list[int]) -> None:
         if not ids:
             return
         cur = self.conn.cursor()
@@ -671,13 +677,13 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self._before_delete_chunk_ids(cur, ids)
         cur.executemany("DELETE FROM chunks WHERE id = ?", [(i,) for i in ids])
 
-    def insert_chunks(self, chunks: List[ChunkRecord]) -> None:
+    def insert_chunks(self, chunks: list[ChunkRecord]) -> None:
         self._check_closed()
         self._insert_chunk_rows(chunks)
         self._resolve_parents(chunks)
         self._auto_commit()
 
-    def replace_file_chunks(self, filepath: str, chunks: List[ChunkRecord]) -> Dict[str, int]:
+    def replace_file_chunks(self, filepath: str, chunks: list[ChunkRecord]) -> dict[str, int]:
         """Diff ``chunks`` against the stored chunks of ``filepath`` by (content_hash, name).
 
         Unchanged chunks keep their id (and therefore their embedding); their line span
@@ -686,11 +692,11 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self._check_closed()
         cur = self.conn.cursor()
         cur.execute("SELECT id, content_hash, name FROM chunks WHERE filepath = ? ORDER BY id", (filepath,))
-        pool: Dict[Tuple[str, str], List[int]] = {}
+        pool: dict[tuple[str, str], list[int]] = {}
         for r in cur.fetchall():
             pool.setdefault((r["content_hash"], r["name"]), []).append(r["id"])
-        kept: List[ChunkRecord] = []
-        new: List[ChunkRecord] = []
+        kept: list[ChunkRecord] = []
+        new: list[ChunkRecord] = []
         for c in chunks:
             ids = pool.get((c.content_hash, c.name))
             if ids:
@@ -722,7 +728,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         cur.execute("DELETE FROM analysis_refs WHERE filepath = ?", (filepath,))
         self._auto_commit()
 
-    def get_chunks_for_file(self, filepath: str) -> List[ChunkRecord]:
+    def get_chunks_for_file(self, filepath: str) -> list[ChunkRecord]:
         self._check_closed()
         cur = self.conn.cursor()
         cur.execute(
@@ -758,15 +764,15 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     def search_chunks(
         self,
-        query_tokens: List[str],
-        allowed_projects: Optional[List[str]] = None,
+        query_tokens: list[str],
+        allowed_projects: list[str] | None = None,
         top_k: int = 5,
-        path_prefix: Optional[str] = None,
-        core_terms: Optional[List[str]] = None,
-        languages: Optional[List[str]] = None,
-        chunk_types: Optional[List[str]] = None,
-        modified_since: Optional[float] = None,
-    ) -> List[SearchResult]:
+        path_prefix: str | None = None,
+        core_terms: list[str] | None = None,
+        languages: list[str] | None = None,
+        chunk_types: list[str] | None = None,
+        modified_since: float | None = None,
+    ) -> list[SearchResult]:
         """BM25 search. ``query_tokens`` are all (expanded) terms; ``core_terms`` the
         user's base words used for the AND/NEAR groups (defaults to all terms)."""
         self._check_closed()
@@ -779,7 +785,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         fts_query = build_fts(clean_tokens, core_terms)
 
         where_clauses = ["fts_index MATCH ?"]
-        params: List[Any] = [fts_query]
+        params: list[Any] = [fts_query]
         self._append_filters(where_clauses, params, allowed_projects, path_prefix,
                              languages, chunk_types, modified_since)
         params.append(top_k)
@@ -823,10 +829,10 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         return results
 
     @staticmethod
-    def _append_filters(where: List[str], params: List[Any],
-                        allowed_projects: Optional[List[str]], path_prefix: Optional[str],
-                        languages: Optional[List[str]], chunk_types: Optional[List[str]],
-                        modified_since: Optional[float]) -> None:
+    def _append_filters(where: list[str], params: list[Any],
+                        allowed_projects: list[str] | None, path_prefix: str | None,
+                        languages: list[str] | None, chunk_types: list[str] | None,
+                        modified_since: float | None) -> None:
         """Shared chunk filters (expects ``chunks`` and ``files`` in the FROM clause)."""
         if allowed_projects is not None:
             where.append(f"chunks.project IN ({','.join('?' * len(allowed_projects))})")
@@ -848,7 +854,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     # Vectors (VectorCapable)
     # =========================================================================
 
-    def get_embed_meta(self) -> Optional[Dict[str, Any]]:
+    def get_embed_meta(self) -> dict[str, Any] | None:
         self._check_closed()
         return self.get_state("embed_meta")
 
@@ -864,7 +870,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 "run: ai-db reindex --embeddings"
             )
 
-    def upsert_embeddings(self, items: List[Tuple[int, List[float]]]) -> None:
+    def upsert_embeddings(self, items: list[tuple[int, list[float]]]) -> None:
         self._check_closed()
         import sqlite_vec
 
@@ -880,8 +886,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         )
         self._auto_commit()
 
-    def search_vectors(self, vector: List[float], k: int,
-                       filters: Optional[Dict[str, Any]] = None) -> List[Tuple[int, float]]:
+    def search_vectors(self, vector: list[float], k: int,
+                       filters: dict[str, Any] | None = None) -> list[tuple[int, float]]:
         self._check_closed()
         import sqlite_vec
 
@@ -889,8 +895,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         allowed = f.pop("allowed_projects", None)
         if allowed is not None and len(allowed) == 0:
             return []
-        where: List[str] = []
-        params: List[Any] = [sqlite_vec.serialize_float32(vector)]
+        where: list[str] = []
+        params: list[Any] = [sqlite_vec.serialize_float32(vector)]
         self._append_filters(where, params, allowed, f.pop("path_prefix", None),
                              f.pop("languages", None), f.pop("chunk_types", None),
                              f.pop("modified_since", None))
@@ -912,7 +918,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         )
         return [(r["chunk_id"], float(r["distance"])) for r in cur.fetchall()]
 
-    def chunks_missing_embeddings(self, limit: int) -> List[ChunkRecord]:
+    def chunks_missing_embeddings(self, limit: int) -> list[ChunkRecord]:
         self._check_closed()
         cur = self.conn.execute(
             """
@@ -931,12 +937,12 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self.conn.execute("DELETE FROM session_state WHERE key = 'embed_meta'")
         self._auto_commit()
 
-    def get_chunks_by_ids(self, ids: List[int]) -> List[ChunkRecord]:
+    def get_chunks_by_ids(self, ids: list[int]) -> list[ChunkRecord]:
         """Chunks for ``ids`` in the same order (missing ids are skipped)."""
         self._check_closed()
         if not ids:
             return []
-        rows: Dict[int, Any] = {}
+        rows: dict[int, Any] = {}
         for i in range(0, len(ids), 900):
             part = ids[i:i + 900]
             cur = self.conn.execute(
@@ -976,7 +982,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             GROUP BY project, callee_name
         """)
         rows = cur.fetchall()
-        max_by_project: Dict[str, int] = {}
+        max_by_project: dict[str, int] = {}
         for r in rows:
             max_by_project[r["project"]] = max(max_by_project.get(r["project"], 0), r["n"])
         cur.executemany(
@@ -986,14 +992,14 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         )
         self._auto_commit()
 
-    def get_symbol_centrality(self, names: List[str],
-                              allowed_projects: Optional[List[str]] = None) -> Dict[str, float]:
+    def get_symbol_centrality(self, names: list[str],
+                              allowed_projects: list[str] | None = None) -> dict[str, float]:
         """Max normalized in-degree score per bare symbol name (0..1)."""
         self._check_closed()
         names = sorted(set(names))
         if not names or (allowed_projects is not None and not allowed_projects):
             return {}
-        params: List[Any] = list(names)
+        params: list[Any] = list(names)
         where = f"name IN ({','.join('?' * len(names))})"
         if allowed_projects is not None:
             where += f" AND project IN ({','.join('?' * len(allowed_projects))})"
@@ -1002,8 +1008,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             f"SELECT name, MAX(score) AS s FROM symbol_centrality WHERE {where} GROUP BY name", params)
         return {r["name"]: float(r["s"]) for r in cur.fetchall()}
 
-    def get_refs_from(self, filepath: str, caller_scope: Optional[str],
-                      ref_types: Tuple[str, ...] = ("call",)) -> List[SymbolRefRecord]:
+    def get_refs_from(self, filepath: str, caller_scope: str | None,
+                      ref_types: tuple[str, ...] = ("call",)) -> list[SymbolRefRecord]:
         """References made inside ``caller_scope`` (e.g. ``module.Class.method``) of a file;
         ``caller_scope=None`` returns references from every scope of the file."""
         self._check_closed()
@@ -1021,21 +1027,21 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                                 callee_name=r["callee_name"], ref_type=r["ref_type"],
                                 project=r["project"]) for r in cur.fetchall()]
 
-    def find_chunks_by_symbol(self, names: List[str], allowed_projects: Optional[List[str]] = None,
-                              limit_per_name: int = 8) -> Dict[str, List[ChunkRecord]]:
+    def find_chunks_by_symbol(self, names: list[str], allowed_projects: list[str] | None = None,
+                              limit_per_name: int = 8) -> dict[str, list[ChunkRecord]]:
         """Definition chunks whose last qualified-name component is in ``names``."""
         self._check_closed()
         names = sorted(set(names))
         if not names or (allowed_projects is not None and not allowed_projects):
             return {}
-        params: List[Any] = list(names)
+        params: list[Any] = list(names)
         where = f"symbol_name IN ({','.join('?' * len(names))})"
         if allowed_projects is not None:
             where += f" AND project IN ({','.join('?' * len(allowed_projects))})"
             params.extend(allowed_projects)
         cur = self.conn.execute(
             f"SELECT id, symbol_name FROM chunks WHERE {where} ORDER BY symbol_name, id", params)
-        ids_by_name: Dict[str, List[int]] = {}
+        ids_by_name: dict[str, list[int]] = {}
         for r in cur.fetchall():
             bucket = ids_by_name.setdefault(r["symbol_name"], [])
             if len(bucket) < limit_per_name:
@@ -1044,7 +1050,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         by_id = {c.id: c for c in self.get_chunks_by_ids(all_ids)}
         return {n: [by_id[i] for i in ids if i in by_id] for n, ids in ids_by_name.items()}
 
-    def get_chunk_by_qualified_name(self, filepath: str, qualified_name: str) -> Optional[ChunkRecord]:
+    def get_chunk_by_qualified_name(self, filepath: str, qualified_name: str) -> ChunkRecord | None:
         """First chunk (lowest start line) of ``qualified_name`` in ``filepath``."""
         self._check_closed()
         cur = self.conn.execute(
@@ -1072,7 +1078,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self._auto_commit()
         return gen
 
-    def get_query_cache(self, cache_key: str, index_gen: int) -> Optional[Any]:
+    def get_query_cache(self, cache_key: str, index_gen: int) -> Any | None:
         self._check_closed()
         row = self.conn.execute(
             "SELECT result_json FROM query_cache WHERE cache_key = ? AND index_gen = ?",
@@ -1093,7 +1099,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     QUERY_LOG_KEEP = 10000
 
-    def log_query(self, entry: Dict[str, Any]) -> None:
+    def log_query(self, entry: dict[str, Any]) -> None:
         """Append one query-log row; keeps the newest QUERY_LOG_KEEP rows."""
         self._check_closed()
         cur = self.conn.execute(
@@ -1107,7 +1113,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                           ((cur.lastrowid or 0) - self.QUERY_LOG_KEEP,))
         self._auto_commit()
 
-    def get_query_log(self, min_total_ms: float = 0.0, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_query_log(self, min_total_ms: float = 0.0, limit: int = 50) -> list[dict[str, Any]]:
         self._check_closed()
         cur = self.conn.execute(
             "SELECT * FROM query_log WHERE total_ms >= ? ORDER BY id DESC LIMIT ?",
@@ -1123,7 +1129,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     # Symbols & Cross-References
     # =========================================================================
 
-    def insert_symbols(self, symbols: List[SymbolRecord]) -> None:
+    def insert_symbols(self, symbols: list[SymbolRecord]) -> None:
         self._check_closed()
         cur = self.conn.cursor()
         cur.executemany(
@@ -1138,15 +1144,15 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     def query_symbols(
         self,
         name: str,
-        allowed_projects: Optional[List[str]] = None,
+        allowed_projects: list[str] | None = None,
         limit: int = 50,
-    ) -> List[SymbolRecord]:
+    ) -> list[SymbolRecord]:
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
         cur = self.conn.cursor()
         clauses = ["(name = ? OR name LIKE ?)"]
-        params: List[Any] = [name, f"{name}%"]
+        params: list[Any] = [name, f"{name}%"]
 
         if allowed_projects is not None:
             placeholders = ",".join("?" for _ in allowed_projects)
@@ -1179,7 +1185,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             for r in cur.fetchall()
         ]
 
-    def insert_symbol_refs(self, refs: List[SymbolRefRecord]) -> None:
+    def insert_symbol_refs(self, refs: list[SymbolRefRecord]) -> None:
         self._check_closed()
         cur = self.conn.cursor()
         cur.executemany(
@@ -1194,15 +1200,15 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     def query_symbol_callers(
         self,
         callee_name: str,
-        allowed_projects: Optional[List[str]] = None,
+        allowed_projects: list[str] | None = None,
         limit: int = 100,
-    ) -> List[SymbolRefRecord]:
+    ) -> list[SymbolRefRecord]:
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
         cur = self.conn.cursor()
         clauses = ["callee_name = ?"]
-        params: List[Any] = [callee_name]
+        params: list[Any] = [callee_name]
 
         if allowed_projects is not None:
             placeholders = ",".join("?" for _ in allowed_projects)
@@ -1259,15 +1265,15 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     def get_syntax_errors(
         self,
-        target_path: Optional[str] = None,
-        allowed_projects: Optional[List[str]] = None,
-    ) -> List[SyntaxErrorRecord]:
+        target_path: str | None = None,
+        allowed_projects: list[str] | None = None,
+    ) -> list[SyntaxErrorRecord]:
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
         cur = self.conn.cursor()
         clauses = []
-        params: List[Any] = []
+        params: list[Any] = []
 
         if target_path:
             clauses.append("filepath = ?")
@@ -1295,7 +1301,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             for r in cur.fetchall()
         ]
 
-    def insert_annotations(self, annotations: List[AnnotationRecord]) -> None:
+    def insert_annotations(self, annotations: list[AnnotationRecord]) -> None:
         self._check_closed()
         cur = self.conn.cursor()
         cur.executemany(
@@ -1309,17 +1315,17 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     def query_annotations(
         self,
-        kind: Optional[str] = None,
-        filepath: Optional[str] = None,
-        allowed_projects: Optional[List[str]] = None,
+        kind: str | None = None,
+        filepath: str | None = None,
+        allowed_projects: list[str] | None = None,
         limit: int = 200,
-    ) -> List[AnnotationRecord]:
+    ) -> list[AnnotationRecord]:
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
         cur = self.conn.cursor()
         clauses = []
-        params: List[Any] = []
+        params: list[Any] = []
 
         if allowed_projects is not None:
             placeholders = ",".join("?" for _ in allowed_projects)
@@ -1357,7 +1363,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     # Skills
     # =========================================================================
 
-    def get_skills(self, allowed_projects: Optional[List[str]] = None) -> List[SkillRecord]:
+    def get_skills(self, allowed_projects: list[str] | None = None) -> list[SkillRecord]:
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
@@ -1383,7 +1389,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             for r in cur.fetchall()
         ]
 
-    def get_skills_by_project(self, project: str) -> Dict[str, Tuple[str, str]]:
+    def get_skills_by_project(self, project: str) -> dict[str, tuple[str, str]]:
         self._check_closed()
         cur = self.conn.cursor()
         cur.execute("SELECT filepath, name, sha256 FROM skills WHERE project = ?", (project,))
@@ -1412,7 +1418,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         )
         self._auto_commit()
 
-    def delete_skill(self, filepath: str, project: str, name: Optional[str] = None) -> None:
+    def delete_skill(self, filepath: str, project: str, name: str | None = None) -> None:
         self._check_closed()
         cur = self.conn.cursor()
         if name:
@@ -1424,10 +1430,10 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     def search_skills(
         self,
-        query_tokens: List[str],
-        allowed_projects: Optional[List[str]] = None,
+        query_tokens: list[str],
+        allowed_projects: list[str] | None = None,
         limit: int = 20,
-    ) -> List[Tuple[str, float]]:
+    ) -> list[tuple[str, float]]:
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
@@ -1438,7 +1444,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         fts_query = " OR ".join(f'"{t.replace(chr(34), chr(34)+chr(34))}"' for t in clean)
 
         clauses = ["fts_skills MATCH ?"]
-        params: List[Any] = [fts_query]
+        params: list[Any] = [fts_query]
 
         if allowed_projects is not None:
             placeholders = ",".join("?" for _ in allowed_projects)
@@ -1498,15 +1504,15 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     def get_context(
         self,
-        session_id: Optional[str] = None,
-        allowed_projects: Optional[List[str]] = None,
-    ) -> Optional[ContextRecord]:
+        session_id: str | None = None,
+        allowed_projects: list[str] | None = None,
+    ) -> ContextRecord | None:
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return None
         cur = self.conn.cursor()
         clauses = []
-        params: List[Any] = []
+        params: list[Any] = []
 
         if session_id:
             clauses.append("session_id = ?")
@@ -1553,13 +1559,13 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             full_notes=full_notes
         )
 
-    def list_contexts(self, allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def list_contexts(self, allowed_projects: list[str] | None = None) -> list[dict[str, Any]]:
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
         cur = self.conn.cursor()
         clauses = []
-        params: List[Any] = []
+        params: list[Any] = []
 
         if allowed_projects is not None:
             placeholders = ",".join("?" for _ in allowed_projects)
@@ -1594,10 +1600,10 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     def search_contexts(
         self,
-        query_tokens: List[str],
-        allowed_projects: Optional[List[str]] = None,
+        query_tokens: list[str],
+        allowed_projects: list[str] | None = None,
         top_k: int = 3,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
@@ -1608,7 +1614,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         fts_query = " OR ".join(f'"{t.replace(chr(34), chr(34)+chr(34))}"' for t in clean)
 
         clauses = ["fts_contexts MATCH ?"]
-        params: List[Any] = [fts_query]
+        params: list[Any] = [fts_query]
 
         if allowed_projects is not None:
             placeholders = ",".join("?" for _ in allowed_projects)
@@ -1662,7 +1668,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         )
         self._auto_commit()
 
-    def get_analysis_ref(self, ref_id: str) -> Optional[AnalysisRefRecord]:
+    def get_analysis_ref(self, ref_id: str) -> AnalysisRefRecord | None:
         self._check_closed()
         cur = self.conn.cursor()
         cur.execute(
@@ -1700,7 +1706,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     # Semantic Cache & State
     # =========================================================================
 
-    def get_semantic_cache(self, cache_key: str, file_hash: str) -> Optional[Dict[str, Any]]:
+    def get_semantic_cache(self, cache_key: str, file_hash: str) -> dict[str, Any] | None:
         self._check_closed()
         cur = self.conn.cursor()
         cur.execute(
@@ -1715,7 +1721,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 return None
         return None
 
-    def set_semantic_cache(self, cache_key: str, file_hash: str, result: Dict[str, Any]) -> None:
+    def set_semantic_cache(self, cache_key: str, file_hash: str, result: dict[str, Any]) -> None:
         self._check_closed()
         cur = self.conn.cursor()
         cur.execute(
@@ -1733,7 +1739,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         cur.execute("DELETE FROM semantic_cache")
         self._auto_commit()
 
-    def get_state(self, key: str) -> Optional[Any]:
+    def get_state(self, key: str) -> Any | None:
         self._check_closed()
         cur = self.conn.cursor()
         cur.execute("SELECT value_json FROM session_state WHERE key = ?", (key,))
@@ -1757,10 +1763,10 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         )
         self._auto_commit()
 
-    def get_table_counts(self) -> Dict[str, int]:
+    def get_table_counts(self) -> dict[str, int]:
         self._check_closed()
         cur = self.conn.cursor()
-        counts: Dict[str, int] = {}
+        counts: dict[str, int] = {}
         for tbl in ["files", "chunks", "symbols", "skills", "syntax_errors", "contexts"]:
             try:
                 cur.execute(f"SELECT COUNT(*) as c FROM {tbl}")
@@ -1769,10 +1775,10 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 counts[tbl] = 0
         return counts
 
-    def get_weak_points(self) -> Dict[str, Any]:
+    def get_weak_points(self) -> dict[str, Any]:
         self._check_closed()
         cur = self.conn.cursor()
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "syntax_error_density_pct": 0.0,
             "complexity_hotspots": [],
             "unindexed_or_stale_files": [],

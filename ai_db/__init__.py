@@ -5,46 +5,44 @@ Modular architecture with zero external dependencies (Python standard library on
 
 import os
 import time
-from typing import List, Dict, Any, Tuple, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 __version__ = "0.1.0"
 
+from ai_db.analyzer.engine import AnalyzerEngine
+from ai_db.analyzer.formatters import Formatters, format_as_sexp, format_as_stub
+from ai_db.analyzer.references import ReferenceStore
+from ai_db.config import AppConfig, config_path, load_config
 from ai_db.constants import (
-    DEFAULT_DB_FILE,
     DEFAULT_CONFIG_FILE,
+    DEFAULT_DB_FILE,
     DEFAULT_SKILL_DIRS,
-    INDEXABLE_EXTENSIONS,
     HARD_IGNORE_DIRS,
-    VENDOR_NOISE_EXTENSIONS
+    INDEXABLE_EXTENSIONS,
+    VENDOR_NOISE_EXTENSIONS,
 )
-
-from ai_db.errors import AiDbError, AiDbConfigError, AiDbQueryError
-from ai_db.config import AppConfig, load_config, config_path
-from ai_db.utils import (
-    detect_project_name,
-    get_allowed_projects,
-    compute_sha256,
-    tokenize,
-    strip_code_bloat,
-    should_index_path
-)
-
-from ai_db.parser.syntax import validate_python_syntax
-from ai_db.parser.ast_visitor import extract_symbols, extract_file_outline
-from ai_db.parser.chunker import chunk_file
-
-from ai_db.storage.backend import StorageBackend
-from ai_db.storage.factory import StorageBackendFactory
-from ai_db.storage.database import Database
-from ai_db.storage.state import get_session_state, set_session_state
+from ai_db.errors import AiDbConfigError, AiDbError, AiDbQueryError
 from ai_db.memory.context import ContextMemory
+from ai_db.parser.ast_visitor import extract_file_outline, extract_symbols
+from ai_db.parser.chunker import chunk_file
+from ai_db.parser.syntax import validate_python_syntax
 from ai_db.search.indexer import Indexer
 from ai_db.search.query import QueryEngine
 from ai_db.search.skills import SkillRouter
-from ai_db.analyzer.formatters import format_as_stub, format_as_sexp, Formatters
-from ai_db.analyzer.references import ReferenceStore
-from ai_db.analyzer.engine import AnalyzerEngine
+from ai_db.storage.backend import StorageBackend
+from ai_db.storage.database import Database
+from ai_db.storage.factory import StorageBackendFactory
+from ai_db.storage.state import get_session_state, set_session_state
+from ai_db.utils import (
+    compute_sha256,
+    detect_project_name,
+    get_allowed_projects,
+    should_index_path,
+    strip_code_bloat,
+    tokenize,
+)
 from ai_db.watcher import run_watch as _run_watch
+
 
 class VectorDB:
     """Unified Facade for ai-db, maintaining 100% backward compatibility."""
@@ -53,10 +51,10 @@ class VectorDB:
     db: StorageBackend
     conn: Any
     db_path: str
-    telemetry_tracker: Optional[Any]
+    telemetry_tracker: Any | None
 
-    def __init__(self, db_path: Optional[Union[str, StorageBackend]] = None,
-                 config: Optional[AppConfig] = None):
+    def __init__(self, db_path: str | StorageBackend | None = None,
+                 config: AppConfig | None = None):
         self.config = config if config is not None else load_config()
         if isinstance(db_path, StorageBackend):
             self.backend = db_path
@@ -114,14 +112,14 @@ class VectorDB:
         else:
             self.query_engine.retriever = LexicalRetriever(self.backend)
 
-    def retrieval_signature(self) -> Dict[str, Any]:
+    def retrieval_signature(self) -> dict[str, Any]:
         return {
             "mode": self.config.retrieval_mode,
             "embedding_model": self.embedder.model_id if self.embedder else None,
             "rerank_model": self.reranker.model_id if self.reranker else None,
         }
 
-    def _cached(self, tool: str, query: str, params: Dict[str, Any], compute: Any) -> Any:
+    def _cached(self, tool: str, query: str, params: dict[str, Any], compute: Any) -> Any:
         """Return the cached result for this exact request at the current index generation,
         computing and storing it on a miss."""
         from ai_db.search.cache import cache_key
@@ -131,7 +129,7 @@ class VectorDB:
         gen = self.backend.get_index_generation()
         hit = self.backend.get_query_cache(key, gen)
         self.last_cache_hit = hit is not None
-        stages: Dict[str, float] = {}
+        stages: dict[str, float] = {}
         if hit is not None:
             result = hit
         else:
@@ -145,8 +143,8 @@ class VectorDB:
                         hit is not None, stages, result)
         return result
 
-    def _log_query(self, tool: str, query: str, mode: Optional[str], total_ms: float,
-                   cache_hit: bool, stages: Dict[str, float], result: Any) -> None:
+    def _log_query(self, tool: str, query: str, mode: str | None, total_ms: float,
+                   cache_hit: bool, stages: dict[str, float], result: Any) -> None:
         if tool == "investigate":
             top = [[e["qualified_name"], e["score"]] for e in result["evidence"][:10]]
         else:
@@ -171,13 +169,13 @@ class VectorDB:
         return embed_missing(self.backend, self.embedder, batch_size=batch)
 
     # Storage & DB management
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         return self.db.status()
 
-    def optimize(self, prune_missing: bool = True, default_format: Optional[str] = None) -> Dict[str, Any]:
+    def optimize(self, prune_missing: bool = True, default_format: str | None = None) -> dict[str, Any]:
         return self.db.optimize(prune_missing=prune_missing, default_format=default_format)
 
-    def get_session_state(self, key: str) -> Optional[Any]:
+    def get_session_state(self, key: str) -> Any | None:
         if hasattr(self.backend, "get_state"):
             return self.backend.get_state(key)
         return get_session_state(self.conn, key)
@@ -191,10 +189,10 @@ class VectorDB:
         self.db.close()
 
     # Indexing
-    def scan_directory(self, root_dir: str) -> List[str]:
+    def scan_directory(self, root_dir: str) -> list[str]:
         return self.indexer.scan_directory(root_dir)
 
-    def sync(self, root_dir: str, project: Optional[str] = None, verbose: bool = True) -> Dict[str, int]:
+    def sync(self, root_dir: str, project: str | None = None, verbose: bool = True) -> dict[str, int]:
         return self.indexer.sync(root_dir, project=project, verbose=verbose)
 
     def _index_file(self, filepath: str, file_hash: str, project: str = "global"):
@@ -205,14 +203,14 @@ class VectorDB:
         self.backend.bump_index_generation()
         return result
 
-    def sync_paths(self, root_dir: str, paths: List[str], project: Optional[str] = None) -> Dict[str, int]:
+    def sync_paths(self, root_dir: str, paths: list[str], project: str | None = None) -> dict[str, int]:
         """Incrementally sync only ``paths`` (from a file watcher) under ``root_dir``."""
         return self.indexer.sync_paths(root_dir, paths, project=project)
 
     # Search & Code Query
-    def query(self, search_text: str, top_k: int = 5, relative_to: Optional[str] = None,
-              project: Optional[str] = None, allowed_projects: Optional[List[str]] = None,
-              **kwargs: Any) -> List[Dict[str, Any]]:
+    def query(self, search_text: str, top_k: int = 5, relative_to: str | None = None,
+              project: str | None = None, allowed_projects: list[str] | None = None,
+              **kwargs: Any) -> list[dict[str, Any]]:
         k = kwargs.get("top", top_k)
         t0 = time.perf_counter()
         params = {"top_k": k, "relative_to": relative_to, "project": project,
@@ -229,73 +227,73 @@ class VectorDB:
             self.telemetry_tracker.record_query(backend=backend_name, latency_ms=latency_ms, results_count=len(results))
         return results
 
-    def query_symbol(self, name: str, relative_to: Optional[str] = None,
-                     project: Optional[str] = None, allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def query_symbol(self, name: str, relative_to: str | None = None,
+                     project: str | None = None, allowed_projects: list[str] | None = None) -> list[dict[str, Any]]:
         return self.query_engine.query_symbol(name, relative_to=relative_to,
                                               project=project, allowed_projects=allowed_projects)
 
-    def check_syntax(self, target_path: Optional[str] = None, relative_to: Optional[str] = None,
-                     project: Optional[str] = None, allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def check_syntax(self, target_path: str | None = None, relative_to: str | None = None,
+                     project: str | None = None, allowed_projects: list[str] | None = None) -> list[dict[str, Any]]:
         return self.query_engine.check_syntax(target_path, relative_to=relative_to,
                                               project=project, allowed_projects=allowed_projects)
 
     # Skill discovery & routing
-    def sync_skills(self, skill_dirs: Optional[List[str]] = None, project: str = "global", verbose: bool = True) -> Dict[str, int]:
+    def sync_skills(self, skill_dirs: list[str] | None = None, project: str = "global", verbose: bool = True) -> dict[str, int]:
         return self.skill_router.sync_skills(skill_dirs=skill_dirs, project=project, verbose=verbose)
 
     def route_skills(self, prompt: str, top_k: int = 3,
-                     project: Optional[str] = None, allowed_projects: Optional[List[str]] = None,
-                     min_confidence: Optional[float] = None) -> List[Dict[str, Any]]:
+                     project: str | None = None, allowed_projects: list[str] | None = None,
+                     min_confidence: float | None = None) -> list[dict[str, Any]]:
         return self.skill_router.route_skills(prompt, top_k=top_k, project=project,
                                               allowed_projects=allowed_projects,
                                               min_confidence=min_confidence)
 
     # Context Memory
-    def save_context(self, session_id: str, summary: str, project: Optional[str] = None,
-                     title: Optional[str] = None, active_files: Optional[List[str]] = None,
-                     open_tasks: Optional[List[str]] = None, full_notes: Optional[str] = None) -> Dict[str, Any]:
+    def save_context(self, session_id: str, summary: str, project: str | None = None,
+                     title: str | None = None, active_files: list[str] | None = None,
+                     open_tasks: list[str] | None = None, full_notes: str | None = None) -> dict[str, Any]:
         return self.context_memory.save_context(session_id, summary, project=project,
                                                 title=title, active_files=active_files,
                                                 open_tasks=open_tasks, full_notes=full_notes)
 
-    def get_context(self, session_id: Optional[str] = None, project: Optional[str] = None,
-                    allowed_projects: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+    def get_context(self, session_id: str | None = None, project: str | None = None,
+                    allowed_projects: list[str] | None = None) -> dict[str, Any] | None:
         return self.context_memory.get_context(session_id=session_id, project=project, allowed_projects=allowed_projects)
 
-    def list_contexts(self, project: Optional[str] = None, allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def list_contexts(self, project: str | None = None, allowed_projects: list[str] | None = None) -> list[dict[str, Any]]:
         return self.context_memory.list_contexts(project=project, allowed_projects=allowed_projects)
 
-    def query_contexts(self, query_text: str, project: Optional[str] = None,
-                       allowed_projects: Optional[List[str]] = None, top_k: int = 3) -> List[Dict[str, Any]]:
+    def query_contexts(self, query_text: str, project: str | None = None,
+                       allowed_projects: list[str] | None = None, top_k: int = 3) -> list[dict[str, Any]]:
         return self.context_memory.query_contexts(query_text, project=project, allowed_projects=allowed_projects, top_k=top_k)
 
     # Output Formatters
     @staticmethod
-    def format_as_stub(data: Dict[str, Any]) -> str:
+    def format_as_stub(data: dict[str, Any]) -> str:
         return format_as_stub(data)
 
     @staticmethod
-    def format_as_sexp(data: Dict[str, Any]) -> str:
+    def format_as_sexp(data: dict[str, Any]) -> str:
         return format_as_sexp(data)
 
     # Analyzer Engine (RFC: tokenopt-analyzer v2)
     def _store_analysis_ref(self, filepath: str, name: str, start_line: int, end_line: int, kind: str, body_text: str) -> str:
         return self.analyzer_engine._store_analysis_ref(filepath, name, start_line, end_line, kind, body_text)
 
-    def expand_ref(self, ref_id: str, depth: str = "full", span: Optional[Tuple[int, int]] = None) -> Optional[Dict[str, Any]]:
+    def expand_ref(self, ref_id: str, depth: str = "full", span: tuple[int, int] | None = None) -> dict[str, Any] | None:
         return self.analyzer_engine.expand_ref(ref_id, depth=depth, span=span)
 
-    def _diff_spans(self, filepath: str, current_content: str, since: Optional[str]) -> Dict[str, Any]:
+    def _diff_spans(self, filepath: str, current_content: str, since: str | None) -> dict[str, Any]:
         return self.analyzer_engine._diff_spans(filepath, current_content, since=since)
 
     def analyze_file(self, filepath: str, depth: str = "structure",
-                     span: Optional[Tuple[int, int]] = None,
-                     focus: Optional[str] = None,
-                     q: Optional[str] = None,
-                     since: Optional[str] = None,
+                     span: tuple[int, int] | None = None,
+                     focus: str | None = None,
+                     q: str | None = None,
+                     since: str | None = None,
                      ctx_lines: int = 10,
                      bypass_cache: bool = False,
-                     no_cache: bool = False) -> Dict[str, Any]:
+                     no_cache: bool = False) -> dict[str, Any]:
         result = self.analyzer_engine.analyze_file(filepath, depth=depth, span=span, focus=focus, q=q,
                                                    since=since, ctx_lines=ctx_lines,
                                                    bypass_cache=bypass_cache, no_cache=no_cache)
@@ -308,36 +306,36 @@ class VectorDB:
             self.telemetry_tracker.record_cache_access(hit=is_hit, tokens_saved=tokens_saved)
         return result
 
-    def analyze_batch(self, targets: List[str], depth: str = "structure",
-                      q: Optional[str] = None, focus: Optional[str] = None,
-                      span: Optional[Tuple[int, int]] = None,
-                      since: Optional[str] = None,
-                      max_out: Optional[int] = None,
-                      cursor: Optional[str] = None,
-                      ctx_lines: int = 10) -> Dict[str, Any]:
+    def analyze_batch(self, targets: list[str], depth: str = "structure",
+                      q: str | None = None, focus: str | None = None,
+                      span: tuple[int, int] | None = None,
+                      since: str | None = None,
+                      max_out: int | None = None,
+                      cursor: str | None = None,
+                      ctx_lines: int = 10) -> dict[str, Any]:
         return self.analyzer_engine.analyze_batch(targets, depth=depth, q=q, focus=focus, span=span,
                                                  since=since, max_out=max_out, cursor=cursor, ctx_lines=ctx_lines)
 
-    def locate_targets(self, q: str, scope: str = ".", k: int = 5) -> List[Dict[str, Any]]:
+    def locate_targets(self, q: str, scope: str = ".", k: int = 5) -> list[dict[str, Any]]:
         return self.analyzer_engine.locate_targets(q=q, scope=scope, k=k)
 
     # Investigation (replaces the agent's analysis loop)
     def investigate(self, query: str, budget_tokens: int = 8000, mode: str = "explain",
-                    **kwargs: Any) -> Dict[str, Any]:
+                    **kwargs: Any) -> dict[str, Any]:
         from ai_db.analysis.investigate import Investigator
         params = {"budget_tokens": budget_tokens, "mode": mode, **kwargs}
         return self._cached("investigate", query, params, lambda: Investigator(self).investigate(
             query, budget_tokens=budget_tokens, mode=mode, **kwargs).to_dict())
 
     # F2: Cross-reference / callers
-    def query_callers(self, symbol_name: str, relative_to: Optional[str] = None,
-                      project: Optional[str] = None,
-                      allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def query_callers(self, symbol_name: str, relative_to: str | None = None,
+                      project: str | None = None,
+                      allowed_projects: list[str] | None = None) -> list[dict[str, Any]]:
         return self.query_engine.query_callers(symbol_name, relative_to=relative_to,
                                                project=project, allowed_projects=allowed_projects)
 
     # F5: File diff against stored snapshot or git ref
-    def diff_file(self, filepath: str, since: Optional[str] = "last") -> Dict[str, Any]:
+    def diff_file(self, filepath: str, since: str | None = "last") -> dict[str, Any]:
         import os as _os
         abs_path = _os.path.abspath(_os.path.expanduser(filepath))
         with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
@@ -345,13 +343,13 @@ class VectorDB:
         return self.analyzer_engine.ref_store._diff_spans(abs_path, content, since=since)
 
     # F10: Annotations / TODOs
-    def query_annotations(self, kind: Optional[str] = None,
-                          filepath: Optional[str] = None,
-                          project: Optional[str] = None,
-                          allowed_projects: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def query_annotations(self, kind: str | None = None,
+                          filepath: str | None = None,
+                          project: str | None = None,
+                          allowed_projects: list[str] | None = None) -> list[dict[str, Any]]:
         return self.query_engine.query_annotations(kind=kind, filepath=filepath,
                                                    project=project, allowed_projects=allowed_projects)
 
 
-def run_watch(db_path: Optional[str], target_dir: str, debounce_ms: int = 300):
+def run_watch(db_path: str | None, target_dir: str, debounce_ms: int = 300):
     return _run_watch(VectorDB, db_path, target_dir, debounce_ms)

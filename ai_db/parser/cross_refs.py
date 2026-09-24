@@ -5,17 +5,17 @@ Phase 2: Python-only. JS/TS/Rust support planned for Phase 3.
 """
 import ast
 import os
-from typing import List, Dict, Any
+from typing import Any
 
 
-def extract_cross_refs(filepath: str, content: str) -> List[Dict[str, Any]]:
+def extract_cross_refs(filepath: str, content: str) -> list[dict[str, Any]]:
     """
     Extracts call sites, imports, and class inheritance from a source file.
     Returns a list of dicts: {caller_name, caller_line, callee_name, ref_type}
     ref_type in: 'call', 'import', 'inherit'
     """
     ext = os.path.splitext(filepath)[1].lower()
-    refs: List[Dict[str, Any]] = []
+    refs: list[dict[str, Any]] = []
 
     if ext not in (".py", ".pyi"):
         return refs  # Phase 2: Python only

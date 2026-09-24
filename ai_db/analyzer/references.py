@@ -1,8 +1,9 @@
-import os
-import time
 import difflib
 import hashlib
-from typing import Dict, Any, Tuple, Optional
+import os
+import time
+from typing import Any
+
 from ai_db.logger import _logger
 from ai_db.storage.models import AnalysisRefRecord
 
@@ -17,7 +18,7 @@ class ReferenceStore:
     ) -> str:
         """Stores a node body in analysis_refs and returns an opaque handle `ref:<sha1_hex>`."""
         hasher = hashlib.sha1()
-        hasher.update(f"{filepath}:{start_line}:{end_line}:{body_text}".encode("utf-8"))
+        hasher.update(f"{filepath}:{start_line}:{end_line}:{body_text}".encode())
         ref_id = f"ref:{hasher.hexdigest()[:8]}"
 
         record = AnalysisRefRecord(
@@ -34,8 +35,8 @@ class ReferenceStore:
         return ref_id
 
     def expand_ref(
-        self, ref_id: str, depth: str = "full", span: Optional[Tuple[int, int]] = None
-    ) -> Optional[Dict[str, Any]]:
+        self, ref_id: str, depth: str = "full", span: tuple[int, int] | None = None
+    ) -> dict[str, Any] | None:
         """F7 Progressive Disclosure: Expands an opaque ref handle pay-per-section."""
         record = self.db.get_analysis_ref(ref_id)
         if not record:
@@ -66,7 +67,7 @@ class ReferenceStore:
             "meta": {"tokens_out": tokens_est}
         }
 
-    def _diff_spans(self, filepath: str, current_content: str, since: Optional[str]) -> Dict[str, Any]:
+    def _diff_spans(self, filepath: str, current_content: str, since: str | None) -> dict[str, Any]:
         """F8 Diff Mode: Identifies changed, added, or removed line spans.
 
         Resolution order:
@@ -76,7 +77,7 @@ class ReferenceStore:
         """
         import subprocess as _sp
 
-        old_text: Optional[str] = None
+        old_text: str | None = None
 
         # 1. Try git-based diff when since looks like a git ref
         if since and since not in ("last", "db"):

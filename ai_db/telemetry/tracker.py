@@ -14,15 +14,13 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import time
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 from ai_db.storage.state import (
     get_telemetry_state,
-    set_telemetry_state,
     get_telemetry_table_counts,
     get_telemetry_weak_points,
+    set_telemetry_state,
 )
 
 
@@ -31,13 +29,13 @@ class TelemetryTracker:
 
     SESSION_STATE_KEY = "telemetry_metrics_v1"
 
-    def __init__(self, conn: Optional[sqlite3.Connection] = None, db_path: Optional[str] = None):
+    def __init__(self, conn: sqlite3.Connection | None = None, db_path: str | None = None):
         self.conn = conn
         self.db_path = db_path
-        self._metrics: Dict[str, Any] = self._initial_metrics()
+        self._metrics: dict[str, Any] = self._initial_metrics()
         self._load_state()
 
-    def _initial_metrics(self) -> Dict[str, Any]:
+    def _initial_metrics(self) -> dict[str, Any]:
         return {
             "latency": {},
             "tokens": {
@@ -144,14 +142,14 @@ class TelemetryTracker:
         self._metrics = self._initial_metrics()
         self._save_state()
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Returns consolidated metrics summary including storage trends."""
         summary = json.loads(json.dumps(self._metrics))
 
         # Compute percentiles for latency
         lat_dict = summary.get("latency", {})
         total_count = 0
-        all_samples: List[float] = []
+        all_samples: list[float] = []
 
         for backend, data in list(lat_dict.items()):
             samples = sorted(data.pop("samples", []))
@@ -203,8 +201,8 @@ class TelemetryTracker:
         summary["storage"] = self._compute_storage_metrics()
         return summary
 
-    def _compute_storage_metrics(self) -> Dict[str, Any]:
-        storage: Dict[str, Any] = {
+    def _compute_storage_metrics(self) -> dict[str, Any]:
+        storage: dict[str, Any] = {
             "db_size_kb": 0.0,
             "table_rows": {},
         }
@@ -219,7 +217,7 @@ class TelemetryTracker:
 
         return storage
 
-    def compute_weak_points(self) -> Dict[str, Any]:
+    def compute_weak_points(self) -> dict[str, Any]:
         """Calculates syntax error density, complexity hotspots, and unindexed/stale files."""
         if not self.conn:
             return {

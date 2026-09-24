@@ -6,19 +6,20 @@ zero-dependency core runtime, modular dependency extras, and .gitignore hygiene.
 
 import os
 import re
-import sys
-import tomllib
 import subprocess
+import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 
 import pytest
+import tomllib
+
 from ai_db.cli import main
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def load_pyproject() -> Dict[str, Any]:
+def load_pyproject() -> dict[str, Any]:
     """Helper to parse pyproject.toml from repository root."""
     pyproject_path = REPO_ROOT / "pyproject.toml"
     assert pyproject_path.is_file(), f"pyproject.toml not found at {pyproject_path}"

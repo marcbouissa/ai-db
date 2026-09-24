@@ -1,14 +1,15 @@
-import os
 import ast
-import re
 import glob
-import json
-import time
 import hashlib
-from typing import List, Dict, Any, Tuple, Optional
+import json
+import os
+import re
+import time
+from typing import Any
+
+from ai_db.analyzer.references import ReferenceStore
 from ai_db.logger import _logger
 from ai_db.utils import compute_sha256, tokenize
-from ai_db.analyzer.references import ReferenceStore
 
 
 class AnalyzerEngine:
@@ -28,13 +29,13 @@ class AnalyzerEngine:
     def _store_analysis_ref(self, filepath: str, name: str, start_line: int, end_line: int, kind: str, body_text: str) -> str:
         return self.ref_store._store_analysis_ref(filepath, name, start_line, end_line, kind, body_text)
 
-    def expand_ref(self, ref_id: str, depth: str = "full", span: Optional[Tuple[int, int]] = None) -> Optional[Dict[str, Any]]:
+    def expand_ref(self, ref_id: str, depth: str = "full", span: tuple[int, int] | None = None) -> dict[str, Any] | None:
         return self.ref_store.expand_ref(ref_id, depth, span)
 
-    def _diff_spans(self, filepath: str, current_content: str, since: Optional[str]) -> Dict[str, Any]:
+    def _diff_spans(self, filepath: str, current_content: str, since: str | None) -> dict[str, Any]:
         return self.ref_store._diff_spans(filepath, current_content, since)
 
-    def get_session_state(self, key: str) -> Optional[Any]:
+    def get_session_state(self, key: str) -> Any | None:
         if hasattr(self.backend, "get_state"):
             return self.backend.get_state(key)
         if hasattr(self.db, "get_session_state"):
@@ -48,13 +49,13 @@ class AnalyzerEngine:
             return self.db.set_session_state(key, value)
 
     def analyze_file(self, filepath: str, depth: str = "structure",
-                     span: Optional[Tuple[int, int]] = None,
-                     focus: Optional[str] = None,
-                     q: Optional[str] = None,
-                     since: Optional[str] = None,
+                     span: tuple[int, int] | None = None,
+                     focus: str | None = None,
+                     q: str | None = None,
+                     since: str | None = None,
                      ctx_lines: int = 10,
                      bypass_cache: bool = False,
-                     no_cache: bool = False) -> Dict[str, Any]:
+                     no_cache: bool = False) -> dict[str, Any]:
         """Analyzes a single file according to RFC tokenopt-analyzer v2."""
         bypass_cache = bypass_cache or no_cache
         abs_path = os.path.abspath(os.path.expanduser(filepath))
@@ -290,20 +291,20 @@ class AnalyzerEngine:
         self._save_to_semantic_cache(cache_key, file_hash, result)
         return result
 
-    def _save_to_semantic_cache(self, cache_key: str, file_hash: str, result: Dict[str, Any]):
+    def _save_to_semantic_cache(self, cache_key: str, file_hash: str, result: dict[str, Any]):
         """Saves result to semantic cache table."""
         try:
             self.backend.set_semantic_cache(cache_key, file_hash, result)
         except Exception:
             pass
 
-    def analyze_batch(self, targets: List[str], depth: str = "structure",
-                      q: Optional[str] = None, focus: Optional[str] = None,
-                      span: Optional[Tuple[int, int]] = None,
-                      since: Optional[str] = None,
-                      max_out: Optional[int] = None,
-                      cursor: Optional[str] = None,
-                      ctx_lines: int = 10) -> Dict[str, Any]:
+    def analyze_batch(self, targets: list[str], depth: str = "structure",
+                      q: str | None = None, focus: str | None = None,
+                      span: tuple[int, int] | None = None,
+                      since: str | None = None,
+                      max_out: int | None = None,
+                      cursor: str | None = None,
+                      ctx_lines: int = 10) -> dict[str, Any]:
         """F4 Batching + F5 Token Budgeting: Analyzes multiple targets up to n<=32 with cursor continuation."""
         expanded_targets = []
         for t in targets:
@@ -365,7 +366,7 @@ class AnalyzerEngine:
             }
         }
 
-    def locate_targets(self, q: str, scope: str = ".", k: int = 5) -> List[Dict[str, Any]]:
+    def locate_targets(self, q: str, scope: str = ".", k: int = 5) -> list[dict[str, Any]]:
         """F10 Relevance Rank: Finds top-k matching files/snippets without dumping entire directory scans."""
         tokens = tokenize(q)
         if not tokens:

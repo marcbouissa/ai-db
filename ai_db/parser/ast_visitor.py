@@ -1,9 +1,10 @@
+import ast
 import os
 import re
-import ast
-from typing import List, Dict, Any, Tuple
+from typing import Any
 
-def extract_symbols(filepath: str, content: str) -> List[Dict[str, Any]]:
+
+def extract_symbols(filepath: str, content: str) -> list[dict[str, Any]]:
     """Extracts code symbols (classes, functions, methods, types) from source code."""
     ext = os.path.splitext(filepath)[1].lower()
     symbols = []
@@ -97,7 +98,7 @@ def extract_symbols(filepath: str, content: str) -> List[Dict[str, Any]]:
     return symbols
 
 
-def extract_file_outline(filepath: str, content: str) -> List[Tuple[int, str]]:
+def extract_file_outline(filepath: str, content: str) -> list[tuple[int, str]]:
     """Extracts file outline lines (line number and label) for fast inspection."""
     ext = os.path.splitext(filepath)[1].lower()
     lines = content.splitlines()

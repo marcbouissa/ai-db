@@ -8,25 +8,26 @@ Focus areas:
 """
 
 import os
-import sys
-import time
 import sqlite3
-import threading
 import subprocess
-from pathlib import Path
-from typing import List, Dict, Any, Optional
-from unittest.mock import MagicMock
+import sys
+import threading
+import time
 
 import pytest
 
 from ai_db.storage.models import (
-    FileRecord, ChunkRecord, SymbolRecord, SymbolRefRecord,
-    AnnotationRecord, SyntaxErrorRecord, SkillRecord,
-    ContextRecord, AnalysisRefRecord, SearchResult
+    AnalysisRefRecord,
+    AnnotationRecord,
+    ChunkRecord,
+    ContextRecord,
+    FileRecord,
+    SkillRecord,
+    SymbolRecord,
+    SymbolRefRecord,
+    SyntaxErrorRecord,
 )
 from ai_db.storage.sqlite_backend import SQLiteBackend
-from ai_db.storage.factory import StorageBackendFactory
-
 
 # ==============================================================================
 # 1. WAL Mode Concurrency Stress Tests
@@ -149,7 +150,7 @@ class TestWALModeConcurrency:
             # Snapshot isolation: reader saw version 1, NOT version 2
             assert res["version"] == 1, f"Dirty read detected: reader saw version {res['version']} instead of 1"
             # Snapshot isolation: reader did NOT see uncommitted file
-            assert res["dirty_read"] is False, f"Dirty read detected: reader saw uncommitted file"
+            assert res["dirty_read"] is False, "Dirty read detected: reader saw uncommitted file"
             # Read should be fast (not blocked/waiting for 0.5s write transaction)
             assert res["elapsed"] < 0.4, f"Reader {res['reader_id']} was delayed ({res['elapsed']}s), possibly blocked"
 
@@ -672,10 +673,9 @@ class TestNestedTransactions:
         # Sequence of failing transactions
         for i in range(5):
             try:
-                with backend.transaction():
+                with backend.transaction(), backend.transaction():
                     with backend.transaction():
-                        with backend.transaction():
-                            raise ValueError(f"Crash {i}")
+                        raise ValueError(f"Crash {i}")
             except ValueError:
                 pass
             assert backend._tx_depth == 0, f"Depth leaked on iteration {i}: depth={backend._tx_depth}"

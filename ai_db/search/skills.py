@@ -1,18 +1,19 @@
 import os
 import re
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any
+
 from ai_db.constants import DEFAULT_SKILL_DIRS
-from ai_db.utils import get_allowed_projects, tokenize, compute_sha256
 from ai_db.storage.models import SkillRecord
+from ai_db.utils import compute_sha256, get_allowed_projects, tokenize
 
 
 class SkillRouter:
     def __init__(self, db: Any = None, conn: Any = None, db_path: str = ""):
         self.db = db if db is not None else conn
-        self.cross_project: Dict[str, List[str]] = {}
+        self.cross_project: dict[str, list[str]] = {}
         self.db_path = db_path or getattr(self.db, "db_path", "")
 
-    def sync_skills(self, skill_dirs: Optional[List[str]] = None, project: str = "global", verbose: bool = True) -> Dict[str, int]:
+    def sync_skills(self, skill_dirs: list[str] | None = None, project: str = "global", verbose: bool = True) -> dict[str, int]:
         """Indexes skills from skill directories into skills and fts_skills tables under the specified project scope."""
         if skill_dirs is None:
             skill_dirs = DEFAULT_SKILL_DIRS
@@ -66,10 +67,10 @@ class SkillRouter:
                 if len(parts) >= 3:
                     fm = parts[1]
                     body_content = parts[2]
-                    m_name = re.search(r"^name:\s*(.+)$", fm, re.M)
+                    m_name = re.search(r"^name:\s*(.+)$", fm, re.MULTILINE)
                     if m_name:
                         skill_name = m_name.group(1).strip().strip("\"'")
-                    m_desc = re.search(r"^description:\s*(?:>-\s*\n|\"|)(.+?)(?:\"|\n\w+:|$)", fm, re.S | re.M)
+                    m_desc = re.search(r"^description:\s*(?:>-\s*\n|\"|)(.+?)(?:\"|\n\w+:|$)", fm, re.DOTALL | re.MULTILINE)
                     if m_desc:
                         desc = m_desc.group(1).strip()
 
@@ -79,7 +80,7 @@ class SkillRouter:
                 triggers_found.append(trigger_match.strip())
 
             # Headers in markdown
-            headers = [h.strip("# \t\r\n") for h in re.findall(r"^#+\s+(.+)$", body_content, re.M)]
+            headers = [h.strip("# \t\r\n") for h in re.findall(r"^#+\s+(.+)$", body_content, re.MULTILINE)]
             triggers_found.extend(headers[:8])
             triggers_str = " | ".join(triggers_found)
 
@@ -108,8 +109,8 @@ class SkillRouter:
         return {"added": added, "updated": updated, "pruned": pruned, "skipped": skipped}
 
     def route_skills(self, prompt: str, top_k: int = 3,
-                     project: Optional[str] = None, allowed_projects: Optional[List[str]] = None,
-                     min_confidence: Optional[float] = None) -> List[Dict[str, Any]]:
+                     project: str | None = None, allowed_projects: list[str] | None = None,
+                     min_confidence: float | None = None) -> list[dict[str, Any]]:
         """Analyzes prompt intent and returns ranked matching skills within allowed project scopes."""
         _min_confidence = min_confidence if min_confidence is not None else 0.15
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
@@ -142,8 +143,8 @@ class SkillRouter:
         token_set = set(tokens)
         prompt_lower = prompt.lower()
 
-        scores: Dict[str, float] = {name: 0.0 for name in all_skills}
-        reasons: Dict[str, List[str]] = {name: [] for name in all_skills}
+        scores: dict[str, float] = {name: 0.0 for name in all_skills}
+        reasons: dict[str, list[str]] = {name: [] for name in all_skills}
 
         # Project-local priority boost: skills specific to the current project get boosted
         for name, sk in all_skills.items():

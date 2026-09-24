@@ -6,30 +6,29 @@ Exposes code intelligence and vector indexing capabilities to agents via Model C
 Dynamically reflects all registered tools from ServiceDispatcher and routes execution uniformly.
 """
 
-import sys
-import os
 import json
-import logging
-from typing import Dict, Any, List, Optional
+import os
+import sys
+from typing import Any
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-from ai_db.constants import DEFAULT_DB_FILE
 from ai_db import __version__
+from ai_db.constants import DEFAULT_DB_FILE
 from ai_db.dispatcher import ServiceDispatcher
 
 
 class StdioMCPServer:
     """Stdio JSON-RPC 2.0 server wrapping ServiceDispatcher."""
 
-    def __init__(self, db_path: str = DEFAULT_DB_FILE, dispatcher: Optional[ServiceDispatcher] = None):
+    def __init__(self, db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | None = None):
         self.db_path = db_path
         self.dispatcher = dispatcher if dispatcher is not None else ServiceDispatcher(db_path=db_path)
         self.db = getattr(self.dispatcher, "db", None)
 
-    def handle_request(self, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def handle_request(self, req: dict[str, Any]) -> dict[str, Any] | None:
         req_id = req.get("id")
         method = req.get("method")
         params = req.get("params", {})
@@ -113,7 +112,7 @@ class StdioMCPServer:
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"Error executing tool '{tool_name}': {str(err)}"
+                                "text": f"Error executing tool '{tool_name}': {err!s}"
                             }
                         ],
                         "isError": True
@@ -132,8 +131,8 @@ class StdioMCPServer:
         return None
 
 
-def run_stdio(db_path: str = DEFAULT_DB_FILE, dispatcher: Optional[ServiceDispatcher] = None,
-              config: Optional[Any] = None):
+def run_stdio(db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | None = None,
+              config: Any | None = None):
     if dispatcher is None:
         from ai_db.config import load_config
         cfg = config if config is not None else load_config()

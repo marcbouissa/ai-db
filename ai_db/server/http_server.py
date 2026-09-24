@@ -16,12 +16,10 @@ Endpoints:
     OPTIONS *               CORS pre-flight headers
 """
 import json
-import os
-import sys
 import time
 import urllib.parse
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from typing import Any, Dict, Optional
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 
 from ai_db.constants import DEFAULT_DB_FILE
 
@@ -34,8 +32,8 @@ class ThreadedAiDbServer(ThreadingHTTPServer):
         self,
         server_address,
         RequestHandlerClass,
-        db_path: Optional[str] = None,
-        dispatcher: Optional[Any] = None,
+        db_path: str | None = None,
+        dispatcher: Any | None = None,
     ):
         super().__init__(server_address, RequestHandlerClass)
         self.db_path = db_path or DEFAULT_DB_FILE
@@ -219,21 +217,21 @@ AiDbHandler = _AiDbHandler  # Public alias
 
 
 def create_http_server(
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
     host: str = "127.0.0.1",
     port: int = 0,
-    dispatcher: Optional[Any] = None,
+    dispatcher: Any | None = None,
 ) -> ThreadedAiDbServer:
     """Public factory creating a ThreadedAiDbServer instance bound to the given database."""
     return ThreadedAiDbServer((host, port), _AiDbHandler, db_path=db_path, dispatcher=dispatcher)
 
 
 def start_http_server(
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
     host: str = "127.0.0.1",
     port: int = 8765,
-    dispatcher: Optional[Any] = None,
-    config: Optional[Any] = None,
+    dispatcher: Any | None = None,
+    config: Any | None = None,
 ):
     """Starts the threaded HTTP server (blocking). Call from CLI."""
     if dispatcher is None:
