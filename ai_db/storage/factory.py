@@ -23,6 +23,15 @@ class StorageBackendFactory:
     """Factory resolving StorageBackend by connection string URI or filesystem path."""
 
     @classmethod
+    def from_config(cls, cfg, db_path: Optional[str] = None) -> StorageBackend:
+        """Build the backend named by ``cfg.storage.provider``."""
+        from ai_db.errors import AiDbConfigError
+        if cfg.storage.provider != "sqlite":
+            raise AiDbConfigError(f"unknown storage provider '{cfg.storage.provider}'")
+        path = db_path if db_path is not None else (cfg.storage.options.get("path") or DEFAULT_DB_FILE)
+        return cls.create(path)
+
+    @classmethod
     def create(cls, connection_string: Optional[str] = None) -> StorageBackend:
         """Instantiate and return a configured StorageBackend instance.
 

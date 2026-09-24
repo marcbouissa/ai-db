@@ -6,6 +6,7 @@ from ai_db.utils import get_allowed_projects, tokenize
 class QueryEngine:
     def __init__(self, db: Any = None, conn: Any = None):
         self.db = db if db is not None else conn
+        self.cross_project: Dict[str, List[str]] = {}
 
     def query(
         self, search_text: str, top_k: int = 5, relative_to: Optional[str] = None,
@@ -15,7 +16,7 @@ class QueryEngine:
         if not tokens:
             return []
 
-        allowed = get_allowed_projects(project or "global", allowed_projects)
+        allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
         search_results = self.db.search_chunks(tokens, allowed_projects=allowed, top_k=top_k)
 
         results = []
@@ -49,7 +50,7 @@ class QueryEngine:
         self, name: str, relative_to: Optional[str] = None,
         project: Optional[str] = None, allowed_projects: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        allowed = get_allowed_projects(project or "global", allowed_projects)
+        allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
         symbols = self.db.query_symbols(name=name, allowed_projects=allowed, limit=50)
 
         results = []
@@ -75,7 +76,7 @@ class QueryEngine:
         self, target_path: Optional[str] = None, relative_to: Optional[str] = None,
         project: Optional[str] = None, allowed_projects: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        allowed = get_allowed_projects(project or "global", allowed_projects)
+        allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
         errors = self.db.get_syntax_errors(target_path=target_path, allowed_projects=allowed)
 
         results = []
@@ -103,7 +104,7 @@ class QueryEngine:
         top_k: int = 100
     ) -> List[Dict[str, Any]]:
         """F2: Find all call sites, imports, and inheritance refs to a given symbol name."""
-        allowed = get_allowed_projects(project or "global", allowed_projects)
+        allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
         callers = self.db.query_symbol_callers(callee_name=symbol_name, allowed_projects=allowed, limit=top_k)
 
         results = []
@@ -126,7 +127,7 @@ class QueryEngine:
         top_k: int = 200
     ) -> List[Dict[str, Any]]:
         """F10: List TODO/FIXME/HACK tags and docstrings, optionally filtered by kind or file."""
-        allowed = get_allowed_projects(project or "global", allowed_projects)
+        allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
         annotations = self.db.query_annotations(kind=kind, filepath=filepath, allowed_projects=allowed, limit=top_k)
 
         return [

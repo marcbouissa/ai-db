@@ -7,6 +7,7 @@ from ai_db.storage.models import ContextRecord
 class ContextMemory:
     def __init__(self, db: Any = None, conn: Any = None):
         self.db = db if db is not None else conn
+        self.cross_project: Dict[str, List[str]] = {}
 
     def save_context(
         self, session_id: str, summary: str, project: Optional[str] = None,
@@ -48,7 +49,7 @@ class ContextMemory:
         allowed_projects: Optional[List[str]] = None
     ) -> Optional[Dict[str, Any]]:
         """Retrieves the latest or specified session context for the allowed project scope."""
-        allowed = get_allowed_projects(project or "global", allowed_projects)
+        allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
         record = self.db.get_context(session_id=session_id, allowed_projects=allowed)
         if not record:
             return None
@@ -68,7 +69,7 @@ class ContextMemory:
         self, project: Optional[str] = None, allowed_projects: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Lists saved contexts for the project scope."""
-        allowed = get_allowed_projects(project or "global", allowed_projects)
+        allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
         raw_list = self.db.list_contexts(allowed_projects=allowed)
         results = []
         for r in raw_list:
@@ -96,5 +97,5 @@ class ContextMemory:
         if not tokens:
             return []
 
-        allowed = get_allowed_projects(project or "global", allowed_projects)
+        allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
         return self.db.search_contexts(tokens, allowed_projects=allowed, top_k=top_k)

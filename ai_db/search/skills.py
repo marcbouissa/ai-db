@@ -9,6 +9,7 @@ from ai_db.storage.models import SkillRecord
 class SkillRouter:
     def __init__(self, db: Any = None, conn: Any = None, db_path: str = ""):
         self.db = db if db is not None else conn
+        self.cross_project: Dict[str, List[str]] = {}
         self.db_path = db_path or getattr(self.db, "db_path", "")
 
     def sync_skills(self, skill_dirs: Optional[List[str]] = None, project: str = "global", verbose: bool = True) -> Dict[str, int]:
@@ -111,7 +112,7 @@ class SkillRouter:
                      min_confidence: Optional[float] = None) -> List[Dict[str, Any]]:
         """Analyzes prompt intent and returns ranked matching skills within allowed project scopes."""
         _min_confidence = min_confidence if min_confidence is not None else 0.15
-        allowed = get_allowed_projects(project or "global", allowed_projects)
+        allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
 
         skills_list = self.db.get_skills(allowed_projects=allowed)
         if not skills_list:

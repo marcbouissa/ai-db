@@ -18,8 +18,9 @@ from ai_db.constants import (
     VENDOR_NOISE_EXTENSIONS
 )
 
+from ai_db.errors import AiDbError, AiDbConfigError, AiDbQueryError
+from ai_db.config import AppConfig, load_config, config_path
 from ai_db.utils import (
-    load_config,
     detect_project_name,
     get_allowed_projects,
     compute_sha256,
@@ -54,11 +55,14 @@ class VectorDB:
     db_path: str
     telemetry_tracker: Optional[Any]
 
-    def __init__(self, db_path: Optional[Union[str, StorageBackend]] = None):
+    def __init__(self, db_path: Optional[Union[str, StorageBackend]] = None,
+                 config: Optional[AppConfig] = None):
+        self.config = config if config is not None else load_config()
         if isinstance(db_path, StorageBackend):
             self.backend = db_path
         else:
-            path_or_uri = db_path if db_path is not None else DEFAULT_DB_FILE
+            cfg_path = self.config.storage.options.get("path")
+            path_or_uri = db_path if db_path is not None else (cfg_path or DEFAULT_DB_FILE)
             self.backend = StorageBackendFactory.create(path_or_uri)
             self.backend.initialize()
 
@@ -71,6 +75,8 @@ class VectorDB:
         self.skill_router = SkillRouter(db=self.backend, db_path=self.db_path)
         self.analyzer_engine = AnalyzerEngine(db=self.backend)
         self.formatters = Formatters
+        for component in (self.context_memory, self.query_engine, self.skill_router):
+            component.cross_project = self.config.cross_project
         try:
             from ai_db.telemetry.tracker import TelemetryTracker
             self.telemetry_tracker = TelemetryTracker(conn=self.conn, db_path=self.db_path)

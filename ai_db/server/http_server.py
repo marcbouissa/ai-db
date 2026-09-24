@@ -230,17 +230,18 @@ def start_http_server(
     host: str = "127.0.0.1",
     port: int = 8765,
     dispatcher: Optional[Any] = None,
+    config: Optional[Any] = None,
 ):
     """Starts the threaded HTTP server (blocking). Call from CLI."""
     if db_path is None:
         db_path = DEFAULT_DB_FILE
 
     if dispatcher is None:
-        try:
-            from ai_db.dispatcher import ServiceDispatcher
-            dispatcher = ServiceDispatcher(db_path=db_path)
-        except Exception:
-            dispatcher = None
+        from ai_db.config import load_config
+        from ai_db.dispatcher import ServiceDispatcher
+        cfg = config if config is not None else load_config()
+        dispatcher = ServiceDispatcher(db_path=db_path, config=cfg)
+        dispatcher._get_db()  # fail fast on invalid storage/provider config
 
     server = ThreadedAiDbServer((host, port), _AiDbHandler, db_path=db_path, dispatcher=dispatcher)
     print(f"[ai-db serve] Listening on http://{host}:{port} | DB: {db_path} (Threaded)")

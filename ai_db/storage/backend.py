@@ -34,6 +34,10 @@ class StorageBackend(ABC):
         """Return canonical identifier for this storage backend (e.g. 'sqlite', 'mysql')."""
         pass
 
+    def capabilities(self) -> frozenset:
+        """Feature set this backend supports: subset of {'fts', 'vector', 'graph'}."""
+        return frozenset({"fts", "graph"})
+
     @abstractmethod
     def initialize(self) -> None:
         """Create tables, indexes, virtual FTS tables, and configure engine settings."""

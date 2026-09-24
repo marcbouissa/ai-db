@@ -11,20 +11,21 @@ from ai_db import (
     DEFAULT_CONFIG_FILE,
     DEFAULT_SKILL_DIRS,
     VectorDB,
-    load_config,
     detect_project_name,
     run_watch,
     __version__,
 )
 from ai_db.dispatcher import ServiceDispatcher
+from ai_db.config import AppConfig, load_config, config_path, masked_dict, CONFIG_VERSION
+from ai_db.errors import AiDbConfigError
 
 
-def _run_eval(args: argparse.Namespace) -> int:
+def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
     import tempfile
     from ai_db.eval.harness import run, compare_to_baseline
 
     with tempfile.TemporaryDirectory(prefix="ai_db_eval_") as tmp:
-        db = VectorDB(os.path.join(tmp, "eval.db"))
+        db = VectorDB(os.path.join(tmp, "eval.db"), config=cfg)
         try:
             result = run(args.golden, args.root, db, k=args.k)
         finally:
@@ -46,12 +47,77 @@ def _run_eval(args: argparse.Namespace) -> int:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    try:
+        return _main(argv)
+    except AiDbConfigError as exc:
+        print(f"[ai-db] configuration error: {exc}", file=sys.stderr)
+        return 2
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    from ai_db.config_template import build_template, migrate_legacy
+
+    target = config_path(args.config)
+    if args.migrate:
+        if not os.path.isfile(target):
+            raise AiDbConfigError(f"--migrate: no config at {target}")
+        with open(target, "r", encoding="utf-8") as f:
+            old = json.load(f)
+        try:
+            data = migrate_legacy(old)
+        except ValueError as exc:
+            raise AiDbConfigError(f"--migrate: {exc}") from exc
+    else:
+        if os.path.exists(target) and not args.force:
+            raise AiDbConfigError(f"config already exists at {target}; use --force to overwrite")
+        try:
+            data = build_template(storage=args.storage, embedding=args.embedding,
+                                  rerank=args.rerank, mode=args.mode)
+        except ValueError as exc:
+            raise AiDbConfigError(str(exc)) from exc
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    print(f"[ai-db init] wrote {target}")
+    print("Next: ai-db config check")
+    return 0
+
+
+def _cmd_config(args: argparse.Namespace, cfg: AppConfig) -> int:
+    if args.config_action == "show":
+        print(json.dumps({"path": cfg.source_path, **masked_dict(cfg)}, indent=2))
+        return 0
+    if args.config_action == "check":
+        from ai_db.health import check_config
+        report = check_config(cfg)
+        for line in report.lines:
+            print(line)
+        return 0 if report.ok else 1
+    raise AiDbConfigError("usage: ai-db config {show,check}")
+
+
+def _main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ai-db",
         description="ai-db: Token-Optimized Vector DB & Code Index"
     )
     parser.add_argument("--version", action="version", version=f"ai-db {__version__}")
+    parser.add_argument("--config", default=None, help="Config file path (default: $AI_DB_CONFIG or ~/.config/ai-db/config.json)")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
+
+    # init
+    init_p = subparsers.add_parser("init", help="Write an explicit config file (required before other commands)")
+    init_p.add_argument("--storage", default="sqlite", help="Storage provider entry point (default: sqlite)")
+    init_p.add_argument("--embedding", choices=["none", "sentence_transformers", "openai_compatible", "voyage"], default="none")
+    init_p.add_argument("--rerank", choices=["none", "sentence_transformers", "voyage", "cohere"], default="none")
+    init_p.add_argument("--mode", choices=["lexical", "hybrid"], default=None, help="Retrieval mode (default: derived from --embedding)")
+    init_p.add_argument("--force", action="store_true", help="Overwrite an existing config")
+    init_p.add_argument("--migrate", action="store_true", help="Rewrite a legacy (unversioned) config into version 1")
+
+    # config
+    config_p = subparsers.add_parser("config", help="Inspect or verify the active config")
+    config_p.add_argument("config_action", choices=["show", "check"])
 
     # sync
     sync_p = subparsers.add_parser("sync", help="Sync files in a directory")
@@ -97,7 +163,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # sync-all
     syncall_p = subparsers.add_parser("sync-all", help="Sync all repositories registered in config.json")
-    syncall_p.add_argument("--config", default=DEFAULT_CONFIG_FILE, help="Path to config file")
     syncall_p.add_argument("--db", default=DEFAULT_DB_FILE)
 
     # route-skill
@@ -253,19 +318,29 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.print_help()
         return 0
 
+    if args.command == "init":
+        return _cmd_init(args)
+
+    cfg = load_config(args.config)
+    # Every downstream component resolves the same file.
+    os.environ["AI_DB_CONFIG"] = cfg.source_path or config_path(args.config)
+
+    if args.command == "config":
+        return _cmd_config(args, cfg)
+
     if args.command == "eval":
-        return _run_eval(args)
+        return _run_eval(args, cfg)
 
     # Transport and long-running server/daemon commands
     if args.command == "mcp":
         import mcp_server
-        mcp_server.run_stdio(DEFAULT_DB_FILE if args.db == DEFAULT_DB_FILE else args.db)
+        mcp_server.run_stdio(args.db, config=cfg)
         return 0
 
     if args.command == "serve":
         from ai_db.server.http_server import start_http_server
         print(f"[ai-db serve] Listening on http://{args.host}:{args.port} | DB: {args.db}")
-        start_http_server(args.db, args.host, args.port)
+        start_http_server(args.db, args.host, args.port, config=cfg)
         return 0
 
     if args.command == "watch":
@@ -288,14 +363,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     # Initialize unified ServiceDispatcher for all domain service commands
-    dispatcher = ServiceDispatcher(db_path=args.db)
+    dispatcher = ServiceDispatcher(db_path=args.db, config=cfg)
 
     # Handle sync-all
     if args.command == "sync-all":
-        cfg = load_config(args.config)
-        paths = cfg.get("auto_sync_paths", [])
+        paths = cfg.auto_sync_paths
         if not paths:
-            print(f"No paths configured in {args.config}. Example format:")
+            print(f"No auto_sync_paths configured in {cfg.source_path}. Example format:")
             print(json.dumps({"auto_sync_paths": ["~/projects/my-project"]}, indent=2))
             dispatcher.close()
             return 0

@@ -1,18 +1,8 @@
 import os
 import re
-import json
 import hashlib
 from typing import List, Dict, Any, Optional
-from ai_db.constants import DEFAULT_CONFIG_FILE, DEFAULT_DB_FILE, HARD_IGNORE_DIRS, INDEXABLE_EXTENSIONS, VENDOR_NOISE_EXTENSIONS
-
-def load_config(config_path: str = DEFAULT_CONFIG_FILE) -> Dict[str, Any]:
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+from ai_db.constants import HARD_IGNORE_DIRS, INDEXABLE_EXTENSIONS, VENDOR_NOISE_EXTENSIONS
 
 def detect_project_name(path: str) -> str:
     curr = os.path.abspath(os.path.expanduser(path))
@@ -29,7 +19,10 @@ def detect_project_name(path: str) -> str:
         check_dir = parent
     return os.path.basename(curr) if curr != "/" else "global"
 
-def get_allowed_projects(current_project: str, explicit_allowed: Optional[List[str]] = None, config_path: str = DEFAULT_CONFIG_FILE) -> List[str]:
+def get_allowed_projects(current_project: str, explicit_allowed: Optional[List[str]] = None,
+                         cross_project: Optional[Dict[str, List[str]]] = None) -> List[str]:
+    """Projects readable from ``current_project``: itself, 'global', explicit ones and
+    those granted in ``access.cross_project`` of the config."""
     allowed = {"global"}
     if current_project:
         allowed.add(current_project)
@@ -40,17 +33,9 @@ def get_allowed_projects(current_project: str, explicit_allowed: Optional[List[s
                     sub = sub.strip()
                     if sub:
                         allowed.add(sub)
-    cfg = load_config(config_path)
-    cross_perms = cfg.get("cross_project_access", {})
-    if isinstance(cross_perms, dict) and current_project in cross_perms:
-        proj_rules = cross_perms[current_project]
-        if isinstance(proj_rules, list):
-            for allowed_p in proj_rules:
-                if isinstance(allowed_p, str) and allowed_p.strip():
-                    allowed.add(allowed_p.strip())
-        elif isinstance(proj_rules, str) and proj_rules.strip():
-            allowed.add(proj_rules.strip())
-    return sorted(list(allowed))
+    if cross_project and current_project in cross_project:
+        allowed.update(cross_project[current_project])
+    return sorted(allowed)
 
 def compute_sha256(filepath: str) -> str:
     h = hashlib.sha256()

@@ -21,6 +21,12 @@ _SESSION_GUARD_DB = os.path.join(_SESSION_GUARD_DIR, "session_guard.db")
 os.environ.setdefault("AI_DB_PATH", _SESSION_GUARD_DB)
 os.environ.setdefault("AI_DB_CONFIG", os.path.join(_SESSION_GUARD_DIR, "config.json"))
 os.environ.setdefault("AI_DB_SKILL_DIRS", os.path.join(_SESSION_GUARD_DIR, "skills"))
+with open(os.environ["AI_DB_CONFIG"], "w", encoding="utf-8") as _guard_cfg:
+    _guard_cfg.write(
+        '{"version": 1, "storage": {"provider": "sqlite", "options": {"path": null}},'
+        ' "retrieval": {"mode": "lexical"}, "embedding": {"provider": "none"},'
+        ' "rerank": {"provider": "none"}}'
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +67,13 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # Patch VectorDB.__init__ default parameter
     if "ai_db" in sys.modules and hasattr(sys.modules["ai_db"], "VectorDB"):
         vdb_cls = sys.modules["ai_db"].VectorDB
-        monkeypatch.setattr(vdb_cls.__init__, "__defaults__", (db_file,), raising=False)
+        monkeypatch.setattr(vdb_cls.__init__, "__defaults__", (db_file, None), raising=False)
+
+    # Every test runs against the config `ai-db init` writes (sqlite + lexical).
+    from ai_db.config_template import build_template
+    import json as _json
+    with open(config_file, "w", encoding="utf-8") as _f:
+        _json.dump(build_template(), _f)
 
     return tmp_path
 

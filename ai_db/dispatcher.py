@@ -36,8 +36,10 @@ class ServiceDispatcher:
     across CLI, MCP, and HTTP transports.
     """
 
-    def __init__(self, db: Optional[Any] = None, db_path: Optional[str] = None):
+    def __init__(self, db: Optional[Any] = None, db_path: Optional[str] = None,
+                 config: Optional[Any] = None):
         self.db = db
+        self.config = config
         self.db_path = db_path or getattr(db, "db_path", None)
         self._lazy_db: Optional[Any] = None
         self._tools: Dict[str, ToolDefinition] = {}
@@ -138,12 +140,12 @@ class ServiceDispatcher:
             except Exception:
                 pass
             from ai_db import VectorDB
-            self._lazy_db = VectorDB(target_path)
+            self._lazy_db = VectorDB(target_path, config=self.config)
             return self._lazy_db
         if self._lazy_db is None:
             from ai_db import VectorDB
             from ai_db.constants import DEFAULT_DB_FILE
-            self._lazy_db = VectorDB(target_path or DEFAULT_DB_FILE)
+            self._lazy_db = VectorDB(target_path or DEFAULT_DB_FILE, config=self.config)
         return self._lazy_db
 
     def close(self) -> None:

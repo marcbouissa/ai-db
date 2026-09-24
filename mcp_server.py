@@ -132,7 +132,13 @@ class StdioMCPServer:
         return None
 
 
-def run_stdio(db_path: str = DEFAULT_DB_FILE, dispatcher: Optional[ServiceDispatcher] = None):
+def run_stdio(db_path: str = DEFAULT_DB_FILE, dispatcher: Optional[ServiceDispatcher] = None,
+              config: Optional[Any] = None):
+    if dispatcher is None:
+        from ai_db.config import load_config
+        cfg = config if config is not None else load_config()
+        dispatcher = ServiceDispatcher(db_path=db_path, config=cfg)
+        dispatcher._get_db()  # fail fast on invalid storage/provider config
     server = StdioMCPServer(db_path=db_path, dispatcher=dispatcher)
     for line in sys.stdin:
         line = line.strip()
