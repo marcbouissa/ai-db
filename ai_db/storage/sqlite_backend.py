@@ -27,7 +27,7 @@ from ai_db.storage.models import (
 
 
 ZLIB_LEVEL = 6
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "8"
 # Tables rebuilt (not migrated) when SCHEMA_VERSION changes; the next sync re-indexes.
 INDEX_TABLES = ("fts_index", "chunks", "symbols", "symbol_refs", "annotations",
                 "syntax_errors", "analysis_refs", "files", "semantic_cache")
@@ -201,12 +201,15 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 token_count INTEGER NOT NULL DEFAULT 0,
                 content_hash TEXT NOT NULL DEFAULT '',
                 parent_id INTEGER NULL REFERENCES chunks(id) ON DELETE SET NULL,
+                symbol_name TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY (filepath) REFERENCES files(filepath) ON DELETE CASCADE
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_filepath ON chunks(filepath)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_file_hash ON chunks(filepath, content_hash)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_parent ON chunks(parent_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_symbol ON chunks(symbol_name)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_qualified ON chunks(filepath, qualified_name)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_project ON chunks(project)")
 
         cur.execute("""
@@ -582,7 +585,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     # =========================================================================
 
     _CHUNK_COLS = ("filepath, chunk_type, name, start_line, end_line, zcontent, project, "
-                   "qualified_name, language, token_count, content_hash")
+                   "qualified_name, language, token_count, content_hash, symbol_name")
+    SYMBOL_CHUNK_TYPES = ("code", "class_header")
 
     def _insert_chunk_rows(self, chunks: List[ChunkRecord]) -> None:
         """Insert chunks + FTS rows and assign ``c.id``. Does not resolve parents."""
@@ -592,7 +596,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         rows = [
             (c.filepath, c.chunk_type, c.name, c.start_line, c.end_line,
              zlib.compress(c.content.encode("utf-8"), level=ZLIB_LEVEL), c.project,
-             c.qualified_name, c.language, c.token_count, c.content_hash)
+             c.qualified_name, c.language, c.token_count, c.content_hash,
+             c.qualified_name.rsplit(".", 1)[-1] if c.chunk_type in self.SYMBOL_CHUNK_TYPES else "")
             for c in chunks
         ]
         width = len(rows[0])
@@ -970,6 +975,59 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         cur = self.conn.execute(
             f"SELECT name, MAX(score) AS s FROM symbol_centrality WHERE {where} GROUP BY name", params)
         return {r["name"]: float(r["s"]) for r in cur.fetchall()}
+
+    def get_refs_from(self, filepath: str, caller_scope: Optional[str],
+                      ref_types: Tuple[str, ...] = ("call",)) -> List[SymbolRefRecord]:
+        """References made inside ``caller_scope`` (e.g. ``module.Class.method``) of a file;
+        ``caller_scope=None`` returns references from every scope of the file."""
+        self._check_closed()
+        scope_sql = "" if caller_scope is None else " AND caller_name = ?"
+        scope_params = [] if caller_scope is None else [caller_scope]
+        cur = self.conn.execute(
+            f"""SELECT id, caller_filepath, caller_name, caller_line, callee_name, ref_type, project
+                FROM symbol_refs WHERE caller_filepath = ?{scope_sql}
+                AND ref_type IN ({",".join("?" * len(ref_types))})
+                ORDER BY caller_line""",
+            [filepath, *scope_params, *ref_types],
+        )
+        return [SymbolRefRecord(id=r["id"], caller_filepath=r["caller_filepath"],
+                                caller_name=r["caller_name"], caller_line=r["caller_line"],
+                                callee_name=r["callee_name"], ref_type=r["ref_type"],
+                                project=r["project"]) for r in cur.fetchall()]
+
+    def find_chunks_by_symbol(self, names: List[str], allowed_projects: Optional[List[str]] = None,
+                              limit_per_name: int = 8) -> Dict[str, List[ChunkRecord]]:
+        """Definition chunks whose last qualified-name component is in ``names``."""
+        self._check_closed()
+        names = sorted(set(names))
+        if not names or (allowed_projects is not None and not allowed_projects):
+            return {}
+        params: List[Any] = list(names)
+        where = f"symbol_name IN ({','.join('?' * len(names))})"
+        if allowed_projects is not None:
+            where += f" AND project IN ({','.join('?' * len(allowed_projects))})"
+            params.extend(allowed_projects)
+        cur = self.conn.execute(
+            f"SELECT id, symbol_name FROM chunks WHERE {where} ORDER BY symbol_name, id", params)
+        ids_by_name: Dict[str, List[int]] = {}
+        for r in cur.fetchall():
+            bucket = ids_by_name.setdefault(r["symbol_name"], [])
+            if len(bucket) < limit_per_name:
+                bucket.append(r["id"])
+        all_ids = [i for ids in ids_by_name.values() for i in ids]
+        by_id = {c.id: c for c in self.get_chunks_by_ids(all_ids)}
+        return {n: [by_id[i] for i in ids if i in by_id] for n, ids in ids_by_name.items()}
+
+    def get_chunk_by_qualified_name(self, filepath: str, qualified_name: str) -> Optional[ChunkRecord]:
+        """First chunk (lowest start line) of ``qualified_name`` in ``filepath``."""
+        self._check_closed()
+        cur = self.conn.execute(
+            "SELECT id FROM chunks WHERE filepath = ? AND qualified_name = ? ORDER BY start_line LIMIT 1",
+            (filepath, qualified_name))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return self.get_chunks_by_ids([row["id"]])[0]
 
     # =========================================================================
     # Symbols & Cross-References

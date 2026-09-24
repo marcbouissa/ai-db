@@ -1,0 +1,20 @@
+{"query": "how does hybrid retrieval fuse bm25 and vector results", "kind": "explain", "expected": [{"filepath": "ai_db/search/retriever.py", "symbol": "HybridRetriever.candidates"}, {"filepath": "ai_db/storage/sqlite_backend.py", "symbol": "search_vectors"}]}
+{"query": "how is the final ranking of search candidates computed", "kind": "explain", "expected": [{"filepath": "ai_db/search/ranking.py", "symbol": "Ranker.rank"}, {"filepath": "ai_db/search/ranking.py", "symbol": "diversify"}]}
+{"query": "how does sync decide which files to reindex", "kind": "explain", "expected": [{"filepath": "ai_db/search/indexer.py", "symbol": "Indexer.sync"}, {"filepath": "ai_db/search/indexer.py", "symbol": "_write_parsed"}]}
+{"query": "how are oversized code chunks split into parts", "kind": "explain", "expected": [{"filepath": "ai_db/parser/chunker.py", "symbol": "add_split"}, {"filepath": "ai_db/parser/chunker.py", "symbol": "count_tokens"}]}
+{"query": "how is the config file validated", "kind": "explain", "expected": [{"filepath": "ai_db/config.py", "symbol": "parse_config"}, {"filepath": "ai_db/config.py", "symbol": "_parse_provider"}]}
+{"query": "how are storage providers discovered from entry points", "kind": "explain", "expected": [{"filepath": "ai_db/storage/factory.py", "symbol": "from_config"}, {"filepath": "ai_db/storage/factory.py", "symbol": "load_provider"}]}
+{"query": "how are embeddings computed for chunks without vectors", "kind": "explain", "expected": [{"filepath": "ai_db/embed/indexing.py", "symbol": "embed_missing"}, {"filepath": "ai_db/storage/sqlite_backend.py", "symbol": "chunks_missing_embeddings"}]}
+{"query": "how are hosted provider http requests retried", "kind": "explain", "expected": [{"filepath": "ai_db/http_client.py", "symbol": "post_json"}]}
+{"query": "how is the fts match expression built from a query", "kind": "explain", "expected": [{"filepath": "ai_db/search/query_builder.py", "symbol": "build_fts"}, {"filepath": "ai_db/search/query_builder.py", "symbol": "expand_terms"}]}
+{"query": "how does investigate fit the pack into the token budget", "kind": "explain", "expected": [{"filepath": "ai_db/analysis/investigate.py", "symbol": "_pack"}, {"filepath": "ai_db/analysis/investigate.py", "symbol": "_finalize"}]}
+{"query": "search_chunks", "kind": "impact", "expected": [{"filepath": "ai_db/search/retriever.py", "symbol": "_bm25"}, {"filepath": "ai_db/analyzer/engine.py", "symbol": "locate_targets"}]}
+{"query": "count_tokens", "kind": "impact", "expected": [{"filepath": "ai_db/parser/chunker.py", "symbol": "add"}, {"filepath": "ai_db/analysis/investigate.py", "symbol": "_pack"}]}
+{"query": "expand_terms", "kind": "impact", "expected": [{"filepath": "ai_db/search/retriever.py", "symbol": "_bm25"}, {"filepath": "ai_db/search/ranking.py", "symbol": "Ranker.rank"}]}
+{"query": "get_chunks_by_ids", "kind": "impact", "expected": [{"filepath": "ai_db/search/retriever.py", "symbol": "HybridRetriever.candidates"}, {"filepath": "ai_db/search/ranking.py", "symbol": "Ranker.rank"}]}
+{"query": "build_fts", "kind": "impact", "expected": [{"filepath": "ai_db/storage/sqlite_backend.py", "symbol": "search_chunks"}]}
+{"query": "parse_config", "kind": "impact", "expected": [{"filepath": "ai_db/config.py", "symbol": "load_config"}, {"filepath": "ai_db/config_template.py", "symbol": "build_template"}]}
+{"query": "embed_missing", "kind": "impact", "expected": [{"filepath": "ai_db/__init__.py", "symbol": "VectorDB.embed_missing"}]}
+{"query": "post_json", "kind": "impact", "expected": [{"filepath": "ai_db/embed/hosted.py", "symbol": "OpenAICompatibleEmbedder._embed"}, {"filepath": "ai_db/embed/hosted.py", "symbol": "VoyageEmbedder._embed"}]}
+{"query": "split_identifier", "kind": "impact", "expected": [{"filepath": "ai_db/search/query_builder.py", "symbol": "expand_terms"}, {"filepath": "ai_db/search/query_builder.py", "symbol": "identifier_words"}]}
+{"query": "materialize_tracked", "kind": "impact", "expected": [{"filepath": "ai_db/cli.py", "symbol": "_run_eval"}]}

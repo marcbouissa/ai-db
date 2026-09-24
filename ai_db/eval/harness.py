@@ -116,3 +116,39 @@ def compare_to_baseline(result: dict[str, Any], baseline: dict[str, Any],
     if drop > tolerance:
         return f"{key} regressed by {drop:.4f} (baseline {baseline[key]}, now {result[key]})"
     return None
+
+
+def run_pack(golden_path: str, root: str, db: Any, budget_tokens: int = 8000,
+             sync: bool = True) -> dict[str, Any]:
+    """Pack recall: fraction of expected symbols present in ``investigate`` evidence.
+
+    Each golden item's ``kind`` is used as the investigate mode.
+    """
+    root = os.path.abspath(root)
+    golden = load_golden(golden_path)
+    if sync:
+        db.sync(root, project=EVAL_PROJECT, verbose=False)
+    recalls: list[float] = []
+    tokens: list[int] = []
+    latencies: list[float] = []
+    per_query: list[dict[str, Any]] = []
+    for item in golden:
+        t0 = time.perf_counter()
+        pack = db.investigate(item["query"], budget_tokens=budget_tokens, mode=item["kind"],
+                              project=EVAL_PROJECT)
+        latencies.append((time.perf_counter() - t0) * 1000.0)
+        ranked = [(os.path.relpath(e["filepath"], root), e["qualified_name"]) for e in pack["evidence"]]
+        r = recall_at_k(ranked, _expected_tuples(item), len(ranked) or 1)
+        recalls.append(r)
+        tokens.append(pack["token_count"])
+        per_query.append({"query": item["query"], "mode": item["kind"], "pack_recall": r,
+                          "tokens": pack["token_count"]})
+    return {
+        "queries": len(golden),
+        "budget_tokens": budget_tokens,
+        "pack_recall": round(statistics.fmean(recalls), 4),
+        "tokens_mean": round(statistics.fmean(tokens), 1),
+        "latency_ms_p50": round(_percentile(latencies, 50), 2),
+        "latency_ms_p95": round(_percentile(latencies, 95), 2),
+        "per_query": per_query,
+    }

@@ -260,6 +260,13 @@ class VectorDB:
     def locate_targets(self, q: str, scope: str = ".", k: int = 5) -> List[Dict[str, Any]]:
         return self.analyzer_engine.locate_targets(q=q, scope=scope, k=k)
 
+    # Investigation (replaces the agent's analysis loop)
+    def investigate(self, query: str, budget_tokens: int = 8000, mode: str = "explain",
+                    **kwargs: Any) -> Dict[str, Any]:
+        from ai_db.analysis.investigate import Investigator
+        return Investigator(self).investigate(query, budget_tokens=budget_tokens, mode=mode,
+                                              **kwargs).to_dict()
+
     # F2: Cross-reference / callers
     def query_callers(self, symbol_name: str, relative_to: Optional[str] = None,
                       project: Optional[str] = None,

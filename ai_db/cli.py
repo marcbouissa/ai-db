@@ -22,7 +22,7 @@ from ai_db.errors import AiDbConfigError
 
 def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
     import tempfile
-    from ai_db.eval.harness import run, compare_to_baseline, materialize_tracked
+    from ai_db.eval.harness import run, run_pack, compare_to_baseline, materialize_tracked
 
     with tempfile.TemporaryDirectory(prefix="ai_db_eval_") as tmp:
         root = os.path.abspath(args.root)
@@ -30,7 +30,10 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
             root = materialize_tracked(root, os.path.join(tmp, "corpus"))
         db = VectorDB(os.path.join(tmp, "eval.db"), config=cfg)
         try:
-            result = run(args.golden, root, db, k=args.k)
+            if args.pack:
+                result = run_pack(args.golden, root, db, budget_tokens=args.budget)
+            else:
+                result = run(args.golden, root, db, k=args.k)
         finally:
             db.close()
     summary = {k: v for k, v in result.items() if k != "per_query"}
@@ -40,6 +43,8 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
             json.dump(result, f, indent=2)
             f.write("\n")
     if args.baseline:
+        if args.pack:
+            raise AiDbConfigError("--baseline gates recall@k; it cannot be combined with --pack")
         with open(args.baseline, "r", encoding="utf-8") as f:
             baseline = json.load(f)
         err = compare_to_baseline(result, baseline)
@@ -273,6 +278,16 @@ def _main(argv: Optional[List[str]] = None) -> int:
     expand_p.add_argument("--format", choices=["json", "raw"], default="json", help="Output format")
     expand_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
+    # investigate
+    inv_p = subparsers.add_parser("investigate", aliases=["inv"], help="One-call evidence pack for a question (replaces grep/read loops)")
+    inv_p.add_argument("query", help="Question or concept")
+    inv_p.add_argument("--mode", choices=["locate", "explain", "impact"], default="explain")
+    inv_p.add_argument("--budget", type=int, default=8000, help="Token budget for the pack (default: 8000)")
+    inv_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
+    inv_p.add_argument("--allow-project", action="append", default=[], help="Allowed project (repeatable)")
+    inv_p.add_argument("--lang", action="append", default=None, help="Only this language (repeatable)")
+    inv_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
+
     # locate
     locate_p = subparsers.add_parser("locate", help="Locate files and snippet spans for a question")
     locate_p.add_argument("query", help="Question or concept to search for")
@@ -340,6 +355,9 @@ def _main(argv: Optional[List[str]] = None) -> int:
     eval_p.add_argument("-k", type=int, default=10, help="Cutoff for recall/nDCG (default: 10)")
     eval_p.add_argument("--baseline", default=None, help="Baseline JSON; fail if recall@k drops > 0.02")
     eval_p.add_argument("--save", default=None, help="Write the result JSON to this path")
+    eval_p.add_argument("--pack", action="store_true",
+                        help="Evaluate investigate packs (pack recall; golden kind = mode)")
+    eval_p.add_argument("--budget", type=int, default=8000, help="Pack token budget for --pack")
     eval_p.add_argument("--all-files", action="store_true",
                         help="Index every file under --root (default: only git-tracked files)")
 
@@ -434,6 +452,13 @@ def _main(argv: Optional[List[str]] = None) -> int:
         proj_name = args.project or detect_project_name(target_path)
         res = dispatcher.execute("sync", {"path": target_path, "project": proj_name, "verbose": True})
         print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
+
+    elif args.command in ("investigate", "inv"):
+        pack = dispatcher.execute("investigate", {
+            "query": args.query, "mode": args.mode, "budget_tokens": args.budget,
+            "project": active_proj, "allow_project": allowed_projs, "languages": args.lang,
+        })
+        print(json.dumps(pack, indent=2, ensure_ascii=False))
 
     elif args.command == "query":
         hits = dispatcher.execute("query", {

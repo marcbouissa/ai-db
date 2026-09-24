@@ -160,7 +160,7 @@ class _AiDbHandler(BaseHTTPRequestHandler):
             self._send_json(404, {
                 "error": "Endpoint not found",
                 "path": self.path,
-                "supported_endpoints": ["GET /health", "GET /status", "GET /tools", "GET /telemetry", "POST /tools/{name}", "POST /"]
+                "supported_endpoints": ["GET /health", "GET /status", "GET /tools", "GET /telemetry", "POST /tools/{name}", "POST /investigate", "POST /"]
             })
 
     def do_POST(self):
@@ -185,6 +185,9 @@ class _AiDbHandler(BaseHTTPRequestHandler):
             if not tool_name:
                 self._send_json(400, {"error": "Missing tool name in URL path"})
                 return
+            tool_args = payload if isinstance(payload, dict) else {}
+        elif clean_path == "/investigate":
+            tool_name = "investigate"
             tool_args = payload if isinstance(payload, dict) else {}
         elif clean_path in ("/", "/call"):
             tool_name = payload.get("tool") or payload.get("name", "")

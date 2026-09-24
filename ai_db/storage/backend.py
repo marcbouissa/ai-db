@@ -110,6 +110,21 @@ class StorageBackend(ABC):
         """('graph' capability) ``{bare_symbol_name: score in [0, 1]}``."""
         raise NotImplementedError(f"{type(self).__name__} must implement get_symbol_centrality")
 
+    def get_refs_from(self, filepath: str, caller_scope: Optional[str],
+                      ref_types: Tuple[str, ...] = ("call",)) -> List[SymbolRefRecord]:
+        """('graph') References made inside ``caller_scope`` (``module.Class.method``);
+        None means every scope of the file."""
+        raise NotImplementedError(f"{type(self).__name__} must implement get_refs_from")
+
+    def find_chunks_by_symbol(self, names: List[str], allowed_projects: Optional[List[str]] = None,
+                              limit_per_name: int = 8) -> Dict[str, List[ChunkRecord]]:
+        """('graph') Definition chunks whose last qualified-name component is in ``names``."""
+        raise NotImplementedError(f"{type(self).__name__} must implement find_chunks_by_symbol")
+
+    def get_chunk_by_qualified_name(self, filepath: str, qualified_name: str) -> Optional[ChunkRecord]:
+        """First chunk of ``qualified_name`` in ``filepath`` or None."""
+        raise NotImplementedError(f"{type(self).__name__} must implement get_chunk_by_qualified_name")
+
     def clear_file_metadata(self, filepath: str) -> None:
         """Delete symbols, refs, annotations, syntax errors and analysis refs of a file
         (but not its file row or chunks)."""

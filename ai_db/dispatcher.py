@@ -413,6 +413,35 @@ class ServiceDispatcher:
             category="telemetry",
         )
 
+        # investigate
+        self.register_tool(
+            name="investigate",
+            description=(
+                "Call this INSTEAD of multiple grep/read/search calls. Returns a complete, ranked "
+                "evidence pack for the question: entry points with reasons, full bodies of the most "
+                "relevant code, stubs + ref handles (use 'expand') for related code, call graph, "
+                "covering tests, recent commits and unresolved symbols, all within a token budget. "
+                "mode: 'locate' (where is X), 'explain' (how does X work: adds callees, classes, "
+                "tests), 'impact' (what breaks if X changes: adds transitive callers, tests)."
+            ),
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The question or concept"},
+                    "mode": {"type": "string", "enum": ["locate", "explain", "impact"], "default": "explain"},
+                    "budget_tokens": {"type": "integer", "default": 8000, "description": "Max tokens of the returned pack (>= 500)"},
+                    "project": {"type": "string", "description": "Project scope"},
+                    "allow_project": {"type": "array", "items": {"type": "string"}, "description": "Allowed projects"},
+                    "languages": {"type": "array", "items": {"type": "string"}},
+                    "chunk_types": {"type": "array", "items": {"type": "string"}},
+                    "modified_since": {"type": "number"},
+                },
+                "required": ["query"],
+            },
+            handler=self._handle_investigate,
+            category="search",
+        )
+
         # 16. query
         self.register_tool(
             name="query",
@@ -781,6 +810,16 @@ class ServiceDispatcher:
         return db.query(search_str, top=top_k, project=project, allowed_projects=allow_projects,
                         languages=args.get("languages"), chunk_types=args.get("chunk_types"),
                         modified_since=args.get("modified_since"))
+
+    def _handle_investigate(self, args: Dict[str, Any]) -> Any:
+        db = self._get_db(args)
+        return db.investigate(
+            args["query"], budget_tokens=int(args.get("budget_tokens", 8000)),
+            mode=args.get("mode", "explain"), project=args.get("project"),
+            allowed_projects=args.get("allow_project") or args.get("allowed_projects"),
+            languages=args.get("languages"), chunk_types=args.get("chunk_types"),
+            modified_since=args.get("modified_since"),
+        )
 
     def _handle_prune(self, args: Dict[str, Any]) -> Any:
         db = self._get_db(args)
