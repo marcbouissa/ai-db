@@ -3,8 +3,14 @@
 
 set -euo pipefail
 
-# Get the installation directory (where this script is located)
-INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve symlinks to find the real installation directory
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ ${SOURCE} != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+INSTALL_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
 
 # Path to the virtual environment's python
 VENV_PYTHON="${INSTALL_DIR}/.venv/bin/python"
