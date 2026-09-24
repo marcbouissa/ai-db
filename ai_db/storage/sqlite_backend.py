@@ -379,12 +379,28 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         cur.execute("DROP TABLE IF EXISTS chunk_vectors")
         cur.execute("DROP TABLE IF EXISTS symbol_centrality")
         cur.execute("DROP TABLE IF EXISTS query_cache")
+        cur.execute("DROP TABLE IF EXISTS query_log")
         cur.execute("DELETE FROM session_state WHERE key = 'index_gen'")
         cur.execute("DELETE FROM session_state WHERE key = 'embed_meta'")
 
     def _create_extra_tables(self, cur: sqlite3.Cursor) -> None:
         # Exact filtered KNN: vectors live in a plain table (FK-cascaded with chunks) and are
         # scored with sqlite-vec's vec_distance_cosine under the same filters as FTS.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS query_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL NOT NULL,
+                tool TEXT NOT NULL,
+                query TEXT NOT NULL,
+                mode TEXT,
+                total_ms REAL NOT NULL,
+                cache_hit INTEGER NOT NULL,
+                stages_json TEXT NOT NULL,
+                providers_json TEXT NOT NULL,
+                top_json TEXT NOT NULL
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_query_log_total ON query_log(total_ms)")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS query_cache (
                 cache_key TEXT PRIMARY KEY,
@@ -1070,6 +1086,38 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             "VALUES (?, ?, ?, ?)",
             (cache_key, index_gen, json.dumps(result, ensure_ascii=False), time.time()))
         self._auto_commit()
+
+    # =========================================================================
+    # Query log (observability)
+    # =========================================================================
+
+    QUERY_LOG_KEEP = 10000
+
+    def log_query(self, entry: Dict[str, Any]) -> None:
+        """Append one query-log row; keeps the newest QUERY_LOG_KEEP rows."""
+        self._check_closed()
+        cur = self.conn.execute(
+            "INSERT INTO query_log (timestamp, tool, query, mode, total_ms, cache_hit, "
+            "stages_json, providers_json, top_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (entry["timestamp"], entry["tool"], entry["query"], entry.get("mode"),
+             float(entry["total_ms"]), int(bool(entry["cache_hit"])),
+             json.dumps(entry.get("stages", {})), json.dumps(entry.get("providers", {})),
+             json.dumps(entry.get("top", []))))
+        self.conn.execute("DELETE FROM query_log WHERE id <= ?",
+                          ((cur.lastrowid or 0) - self.QUERY_LOG_KEEP,))
+        self._auto_commit()
+
+    def get_query_log(self, min_total_ms: float = 0.0, limit: int = 50) -> List[Dict[str, Any]]:
+        self._check_closed()
+        cur = self.conn.execute(
+            "SELECT * FROM query_log WHERE total_ms >= ? ORDER BY id DESC LIMIT ?",
+            (float(min_total_ms), int(limit)))
+        return [{
+            "timestamp": r["timestamp"], "tool": r["tool"], "query": r["query"], "mode": r["mode"],
+            "total_ms": r["total_ms"], "cache_hit": bool(r["cache_hit"]),
+            "stages": json.loads(r["stages_json"]), "providers": json.loads(r["providers_json"]),
+            "top": json.loads(r["top_json"]),
+        } for r in cur.fetchall()]
 
     # =========================================================================
     # Symbols & Cross-References

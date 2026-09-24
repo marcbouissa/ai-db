@@ -769,7 +769,12 @@ class ServiceDispatcher:
             if reset:
                 tracker.reset()
                 return {"status": "reset", "message": "Telemetry metrics reset."}
-            return tracker.get_summary()
+            summary = tracker.get_summary()
+            backend = getattr(db, "backend", None)
+            if backend is not None and hasattr(backend, "get_query_log"):
+                from ai_db.telemetry.stages import stage_stats
+                summary["stages"] = stage_stats(backend.get_query_log(limit=1000))
+            return summary
 
         backend_name = getattr(getattr(db, "backend", None), "backend_name", "sqlite")
         return {

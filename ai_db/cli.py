@@ -342,6 +342,13 @@ def _main(argv: Optional[List[str]] = None) -> int:
     serve_p.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
     serve_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
+    # log
+    log_p = subparsers.add_parser("log", help="Show the query log (latency per stage, top results)")
+    log_p.add_argument("--slow", type=float, default=0.0, help="Only entries with total latency >= this many ms")
+    log_p.add_argument("--limit", type=int, default=20)
+    log_p.add_argument("--format", choices=["text", "json"], default="text")
+    log_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
+
     # telemetry
     telemetry_p = subparsers.add_parser("telemetry", help="View performance and token compression telemetry")
     telemetry_p.add_argument("--reset", action="store_true", help="Reset accumulated telemetry metrics")
@@ -452,6 +459,18 @@ def _main(argv: Optional[List[str]] = None) -> int:
         proj_name = args.project or detect_project_name(target_path)
         res = dispatcher.execute("sync", {"path": target_path, "project": proj_name, "verbose": True})
         print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
+
+    elif args.command == "log":
+        db_inst = dispatcher._get_db({"db": args.db})
+        entries = db_inst.backend.get_query_log(min_total_ms=args.slow, limit=args.limit)
+        if args.format == "json":
+            print(json.dumps(entries, indent=2))
+        else:
+            for e in entries:
+                ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e["timestamp"]))
+                stages = " ".join(f"{k}={v:.1f}" for k, v in e["stages"].items())
+                hit = " cache" if e["cache_hit"] else ""
+                print(f"{ts} {e['tool']:<11} {e['total_ms']:8.1f}ms{hit} [{stages}] {e['query'][:60]}")
 
     elif args.command in ("investigate", "inv"):
         pack = dispatcher.execute("investigate", {
@@ -901,6 +920,8 @@ def _main(argv: Optional[List[str]] = None) -> int:
             weak = res.get("weak_points", {})
             print(f"Token Savings: {tokens.get('net_saved_tokens', tokens.get('net_tokens_saved', 0))} tokens saved ({tokens.get('savings_pct', tokens.get('reduction_pct', 0.0))}%)")
             print(f"Query Latency: avg={latency.get('avg_ms', latency.get('avg_latency_ms', 0.0))}ms, p50={latency.get('p50_ms', 0.0)}ms, p95={latency.get('p95_ms', 0.0)}ms")
+            for stage, st in res.get("stages", {}).items():
+                print(f"  stage {stage:<10} n={st['count']:<5} p50={st['p50_ms']}ms p95={st['p95_ms']}ms")
             print(f"Cache Performance: {cache.get('hits', 0)} hits / {cache.get('lookups', 0)} lookups ({cache.get('hit_rate_pct', 0.0)}%)")
             if weak:
                 print(f"Weak Points: {weak.get('syntax_errors', 0)} syntax errors, {len(weak.get('complexity_hotspots', []))} hotspots")

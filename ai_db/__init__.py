@@ -126,15 +126,40 @@ class VectorDB:
         computing and storing it on a miss."""
         from ai_db.search.cache import cache_key
 
+        t0 = time.perf_counter()
         key = cache_key(tool, query, params, self.retrieval_signature())
         gen = self.backend.get_index_generation()
         hit = self.backend.get_query_cache(key, gen)
         self.last_cache_hit = hit is not None
+        stages: Dict[str, float] = {}
         if hit is not None:
-            return hit
-        result = compute()
-        self.backend.set_query_cache(key, gen, result)
+            result = hit
+        else:
+            self.query_engine.retriever.last_timings = {}
+            self.query_engine.ranker.last_timings = {}
+            result = compute()
+            self.backend.set_query_cache(key, gen, result)
+            stages = {**self.query_engine.retriever.last_timings,
+                      **self.query_engine.ranker.last_timings}
+        self._log_query(tool, query, params.get("mode"), (time.perf_counter() - t0) * 1000,
+                        hit is not None, stages, result)
         return result
+
+    def _log_query(self, tool: str, query: str, mode: Optional[str], total_ms: float,
+                   cache_hit: bool, stages: Dict[str, float], result: Any) -> None:
+        if tool == "investigate":
+            top = [[e["qualified_name"], e["score"]] for e in result["evidence"][:10]]
+        else:
+            top = [[h["chunk_id"], h["score"]] for h in result[:10]]
+        sig = self.retrieval_signature()
+        self.backend.log_query({
+            "timestamp": time.time(), "tool": tool, "query": query, "mode": mode,
+            "total_ms": round(total_ms, 3), "cache_hit": cache_hit,
+            "stages": {k: round(v, 3) for k, v in stages.items()},
+            "providers": {"retriever": sig["mode"], "embedding": sig["embedding_model"],
+                          "rerank": sig["rerank_model"]},
+            "top": top,
+        })
 
     def embed_missing(self) -> int:
         """Embed chunks that have no vector yet (hybrid mode only)."""

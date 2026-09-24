@@ -140,6 +140,15 @@ class StorageBackend(ABC):
     def set_query_cache(self, cache_key: str, index_gen: int, result: Any) -> None:
         raise NotImplementedError(f"{type(self).__name__} must implement set_query_cache")
 
+    def log_query(self, entry: Dict[str, Any]) -> None:
+        """Append a query-log entry: timestamp, tool, query, mode, total_ms, cache_hit,
+        stages {name: ms}, providers {stage: model_id}, top [[chunk_id, score], ...]."""
+        raise NotImplementedError(f"{type(self).__name__} must implement log_query")
+
+    def get_query_log(self, min_total_ms: float = 0.0, limit: int = 50) -> List[Dict[str, Any]]:
+        """Newest-first log entries with ``total_ms >= min_total_ms``."""
+        raise NotImplementedError(f"{type(self).__name__} must implement get_query_log")
+
     def clear_file_metadata(self, filepath: str) -> None:
         """Delete symbols, refs, annotations, syntax errors and analysis refs of a file
         (but not its file row or chunks)."""
