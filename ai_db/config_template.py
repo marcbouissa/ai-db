@@ -12,6 +12,7 @@ from ai_db.config import (
     DEFAULT_RERANK_TOP_N,
     parse_config,
 )
+from ai_db.device import preferred_device
 from ai_db.embed.defaults import MODEL_NOTE, SUGGESTED_EMBEDDING, SUGGESTED_RERANK
 
 
@@ -31,6 +32,10 @@ def build_template(
             raise ValueError(f"no template for embedding provider '{embedding}'")
         emb.update(SUGGESTED_EMBEDDING[embedding])
         emb["_note"] = MODEL_NOTE
+        # Pick the GPU when one is actually usable, else CPU. torch is imported
+        # lazily inside preferred_device() and stays optional.
+        if "device" in emb:
+            emb["device"] = preferred_device()
 
     rr: dict[str, Any] = {"provider": rerank}
     if rerank != "none":
@@ -38,8 +43,14 @@ def build_template(
             raise ValueError(f"no template for rerank provider '{rerank}'")
         rr.update(SUGGESTED_RERANK[rerank])
         rr["_note"] = MODEL_NOTE
+        if "device" in rr:
+            rr["device"] = preferred_device()
 
     options: dict[str, Any] = {"path": None} if storage == "sqlite" else {}
+    if storage == "sqlite":
+        # TODO 13.2: "exact" = brute-force cosine (default, always correct);
+        # "vec0" = sqlite-vec ANN index, much faster at scale.
+        options["vector_index"] = "exact"
     data: dict[str, Any] = {
         "version": CONFIG_VERSION,
         "storage": {"provider": storage, "options": options},

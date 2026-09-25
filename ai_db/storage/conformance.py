@@ -112,7 +112,12 @@ class BackendConformance:
         vb = self._vector_backend(backend)
         self._seed(vb)
         vb.ensure_vector_index(3, "test:model")
-        assert vb.get_embed_meta() == {"model_id": "test:model", "dim": 3}
+        meta = vb.get_embed_meta()
+        assert meta is not None
+        assert meta["model_id"] == "test:model"
+        assert meta["dim"] == 3
+        # the search mode is recorded too, so switching exact<->vec0 forces a reindex
+        assert meta["index"] in ("exact", "vec0")
         missing = vb.chunks_missing_embeddings(limit=10)
         assert len(missing) == 2
         a, b = sorted(missing, key=lambda c: c.start_line)

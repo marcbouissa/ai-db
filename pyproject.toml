@@ -85,6 +85,7 @@ markers = [
     "transports: communication and transport tests",
     "telemetry: telemetry tests",
     "bench: performance benchmarks (run with -m bench)",
+    "slow: long-running tests (full-size corpora, large downloads)",
     "model: tests that download and run real ML models (run with -m model)",
 ]
 

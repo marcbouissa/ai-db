@@ -5,6 +5,7 @@ BM25 scoring, transparent zlib (level 6) compression, savepoint-based nested
 transactions, and one connection per thread (WAL allows concurrent readers).
 """
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -41,6 +42,21 @@ from ai_db.storage.models import (
 
 ZLIB_LEVEL = 6
 SCHEMA_VERSION = "9"
+
+# Process-wide write mutex (TODO 13.6).
+#
+# WAL allows many readers but exactly one writer, and a *deferred* transaction
+# that starts as a reader and later tries to write gets SQLITE_BUSY immediately
+# -- it does not honour busy_timeout -- which surfaces as "database is locked".
+# Serialising writers inside the process removes that upgrade race entirely.
+# It is an RLock so nested transaction() calls on one thread re-enter freely,
+# and it is class-level so every backend instance on the same file contends.
+# Readers never take it, so query latency is unaffected.
+_WRITE_LOCK = threading.RLock()
+
+# No-op context manager for nested savepoints, which already hold the lock.
+_NULL_LOCK = contextlib.nullcontext()
+
 # Tables rebuilt (not migrated) when SCHEMA_VERSION changes; the next sync re-indexes.
 INDEX_TABLES = ("fts_index", "chunks", "symbols", "symbol_refs", "annotations",
                 "syntax_errors", "analysis_refs", "files", "semantic_cache")
@@ -93,25 +109,36 @@ def cosine_distance(a: list[float], b: list[float]) -> float:
 class SQLiteBackend(StorageBackend, VectorCapable):
     """SQLite implementation of the StorageBackend interface."""
 
-    OPTION_KEYS = frozenset({"path"})
+    OPTION_KEYS = frozenset({"path", "vector_index"})
+    VECTOR_INDEX_MODES = ("exact", "vec0")
 
     @classmethod
     def from_options(cls, options: dict[str, Any]) -> "SQLiteBackend":
-        """Entry-point constructor: ``options = {"path": str | None}``."""
+        """Entry-point constructor: ``options = {"path", "vector_index"}``."""
         unknown = set(options) - cls.OPTION_KEYS
         if unknown:
             raise AiDbConfigError(f"unknown sqlite storage option(s): {sorted(unknown)}")
         path = options.get("path")
         if path is not None and not isinstance(path, str):
             raise AiDbConfigError("storage.options.path must be a string or null")
-        return cls(path)  # None -> $AI_DB_PATH or the XDG default location
+        vector_index = options.get("vector_index", "exact")
+        if vector_index not in cls.VECTOR_INDEX_MODES:
+            raise AiDbConfigError(
+                f"storage.options.vector_index must be one of "
+                f"{list(cls.VECTOR_INDEX_MODES)}, got {vector_index!r}")
+        return cls(path, vector_index=vector_index)  # None -> $AI_DB_PATH / XDG default
 
-    def __init__(self, db_path: str | None = None):
+    def __init__(self, db_path: str | None = None, vector_index: str = "exact"):
         if sqlite3.sqlite_version_info < MIN_SQLITE_VERSION:
             raise AiDbConfigError(
                 f"SQLite >= {'.'.join(map(str, MIN_SQLITE_VERSION))} required, "
                 f"found {sqlite3.sqlite_version}"
             )
+        if vector_index not in self.VECTOR_INDEX_MODES:
+            raise AiDbConfigError(
+                f"vector_index must be one of {list(self.VECTOR_INDEX_MODES)}, "
+                f"got {vector_index!r}")
+        self.vector_index = vector_index
         if db_path is None:
             db_path = os.environ.get("AI_DB_PATH", DEFAULT_DB_FILE)
 
@@ -200,7 +227,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     def _auto_commit(self) -> None:
         if self._tx_depth == 0:
-            self.conn.commit()
+            with _WRITE_LOCK:
+                self.conn.commit()
 
     # =========================================================================
     # Lifecycle & Transactions
@@ -439,6 +467,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self._create_extra_tables(cur)
 
         if stored_ver != SCHEMA_VERSION:
+            cur.execute("DROP TABLE IF EXISTS vec_chunks")
             cur.execute(
                 "INSERT OR REPLACE INTO session_state (key, value_json, updated) VALUES (?, ?, ?)",
                 ("schema_version", json.dumps(SCHEMA_VERSION), time.time())
@@ -496,11 +525,29 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             )
         """)
 
+    def _vector_tables(self, cur: sqlite3.Cursor) -> list[str]:
+        """Vector tables that actually exist (vec_chunks only exists in vec0 mode)."""
+        present = {r[0] for r in cur.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table','view') "
+            "AND name IN ('chunk_vectors','vec_chunks')").fetchall()}
+        return [t for t in ("chunk_vectors", "vec_chunks") if t in present]
+
     def _before_delete_chunk_ids(self, cur: sqlite3.Cursor, ids: list[int]) -> None:
-        """Hook: remove rows keyed by chunk id before chunks are deleted."""
+        """Hook: remove vector rows keyed by chunk id before chunks are deleted."""
+        if not ids:
+            return
+        for table in self._vector_tables(cur):
+            for i in range(0, len(ids), 900):
+                part = ids[i:i + 900]
+                cur.execute(
+                    f"DELETE FROM {table} WHERE chunk_id IN ({','.join('?' * len(part))})",
+                    part)
 
     def _before_delete_file_chunks(self, cur: sqlite3.Cursor, filepath: str) -> None:
-        """Hook: remove rows keyed by chunk id before a file's chunks are deleted."""
+        """Hook: remove vector rows for a file's chunks before they are deleted."""
+        rows = cur.execute(
+            "SELECT id FROM chunks WHERE filepath = ?", (filepath,)).fetchall()
+        self._before_delete_chunk_ids(cur, [r["id"] for r in rows])
 
     def close(self) -> None:
         if self._closed:
@@ -515,27 +562,32 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     @contextmanager
     def transaction(self) -> Generator[None, None, None]:
         self._check_closed()
-        self._tx_depth += 1
-        sp_name = f"sp_level_{self._tx_depth}"
-        try:
-            self.conn.execute(f"SAVEPOINT {sp_name}")
-            yield
-            self.conn.execute(f"RELEASE SAVEPOINT {sp_name}")
-            if self._tx_depth == 1:
-                self.conn.commit()
-        except Exception:
+        # Only the outermost transaction serialises writers; nested savepoints on
+        # the same thread already hold the RLock (it is reentrant).
+        outermost = self._tx_depth == 0
+        lock = _WRITE_LOCK if outermost else _NULL_LOCK
+        with lock:
+            self._tx_depth += 1
+            sp_name = f"sp_level_{self._tx_depth}"
             try:
-                self.conn.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                self.conn.execute(f"SAVEPOINT {sp_name}")
+                yield
                 self.conn.execute(f"RELEASE SAVEPOINT {sp_name}")
                 if self._tx_depth == 1:
-                    self.conn.rollback()
-            except sqlite3.Error:
-                # The rollback itself failed (connection already rolled back by
-                # SQLite); the original exception is the one worth surfacing.
-                pass
-            raise
-        finally:
-            self._tx_depth -= 1
+                    self.conn.commit()
+            except Exception:
+                try:
+                    self.conn.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                    self.conn.execute(f"RELEASE SAVEPOINT {sp_name}")
+                    if self._tx_depth == 1:
+                        self.conn.rollback()
+                except sqlite3.Error:
+                    # The rollback itself failed (connection already rolled back by
+                    # SQLite); the original exception is the one worth surfacing.
+                    pass
+                raise
+            finally:
+                self._tx_depth -= 1
 
     # =========================================================================
     # Status & Optimization
@@ -920,10 +972,15 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self._check_closed()
         return self.get_state("embed_meta")
 
-    def ensure_vector_index(self, dim: int, model_id: str) -> None:
+    def ensure_vector_index(self, dim: int, model_id: str,
+                            vector_index: str | None = None) -> None:
         self._check_closed()
+        mode = vector_index or self.vector_index
+        if mode not in self.VECTOR_INDEX_MODES:
+            raise AiDbConfigError(
+                f"vector_index must be one of {list(self.VECTOR_INDEX_MODES)}, got {mode!r}")
         meta = self.get_embed_meta()
-        wanted = {"model_id": model_id, "dim": int(dim)}
+        wanted = {"model_id": model_id, "dim": int(dim), "index": mode}
         if meta is None:
             self.set_state("embed_meta", wanted)
         elif meta != wanted:
@@ -931,6 +988,24 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 f"vector index was built with {meta}, config wants {wanted}; "
                 "run: ai-db reindex --embeddings"
             )
+        if mode == "vec0":
+            self._create_vec0_table(int(dim))
+        self.vector_index = mode
+
+    def _create_vec0_table(self, dim: int) -> None:
+        """ANN table. project is a partition key so it can be constrained in-query."""
+        self.conn.execute(f"""
+            CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
+                chunk_id INTEGER PRIMARY KEY,
+                embedding float[{dim}] distance_metric=cosine,
+                project TEXT partition key,
+                language TEXT,
+                chunk_type TEXT
+            )
+        """)
+
+    def _vec_table(self) -> str:
+        return "vec_chunks" if self.vector_index == "vec0" else "chunk_vectors"
 
     def upsert_embeddings(self, items: list[tuple[int, list[float]]]) -> None:
         self._check_closed()
@@ -942,10 +1017,28 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         for chunk_id, vec in items:
             if len(vec) != meta["dim"]:
                 raise AiDbStorageError(f"chunk {chunk_id}: vector dim {len(vec)} != index dim {meta['dim']}")
-        self.conn.executemany(
-            "INSERT OR REPLACE INTO chunk_vectors (chunk_id, embedding) VALUES (?, ?)",
-            [(cid, sqlite_vec.serialize_float32(vec)) for cid, vec in items],
-        )
+
+        if self.vector_index == "vec0":
+            # vec0 carries the metadata columns so KNN can constrain without a join.
+            rows = []
+            for chunk_id, vec in items:
+                info = self.conn.execute(
+                    "SELECT project, language, chunk_type FROM chunks WHERE id = ?",
+                    (chunk_id,)).fetchone()
+                if info is None:
+                    continue
+                rows.append((chunk_id, sqlite_vec.serialize_float32(vec),
+                             info["project"], info["language"], info["chunk_type"]))
+            self.conn.executemany(
+                "INSERT OR REPLACE INTO vec_chunks "
+                "(chunk_id, embedding, project, language, chunk_type) VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+        else:
+            self.conn.executemany(
+                "INSERT OR REPLACE INTO chunk_vectors (chunk_id, embedding) VALUES (?, ?)",
+                [(cid, sqlite_vec.serialize_float32(vec)) for cid, vec in items],
+            )
         self._auto_commit()
 
     def search_vectors(self, vector: list[float], k: int,
@@ -957,13 +1050,21 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         allowed = f.pop("allowed_projects", None)
         if allowed is not None and len(allowed) == 0:
             return []
-        where: list[str] = []
-        params: list[Any] = [sqlite_vec.serialize_float32(vector)]
-        self._append_filters(where, params, allowed, f.pop("path_prefix", None),
-                             f.pop("languages", None), f.pop("chunk_types", None),
-                             f.pop("modified_since", None))
+        path_prefix = f.pop("path_prefix", None)
+        languages = f.pop("languages", None)
+        chunk_types = f.pop("chunk_types", None)
+        modified_since = f.pop("modified_since", None)
         if f:
             raise ValueError(f"unknown vector filter(s): {sorted(f)}")
+
+        if self.vector_index == "vec0":
+            return self._search_vectors_vec0(
+                vector, k, allowed, languages, chunk_types, path_prefix, modified_since)
+
+        where: list[str] = []
+        params: list[Any] = [sqlite_vec.serialize_float32(vector)]
+        self._append_filters(where, params, allowed, path_prefix,
+                             languages, chunk_types, modified_since)
         params.append(int(k))
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
         cur = self.conn.execute(
@@ -980,12 +1081,67 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         )
         return [(r["chunk_id"], float(r["distance"])) for r in cur.fetchall()]
 
+    def _search_vectors_vec0(self, vector: list[float], k: int,
+                             allowed: list[str] | None, languages: list[str] | None,
+                             chunk_types: list[str] | None, path_prefix: str | None,
+                             modified_since: float | None) -> list[tuple[int, float]]:
+        """ANN KNN. Metadata that vec0 carries is constrained in-query; filters that
+        need the chunks/files join over-fetch k*4 and truncate afterwards."""
+        import sqlite_vec
+
+        conds = ["embedding MATCH ?"]
+        params: list[Any] = [sqlite_vec.serialize_float32(vector)]
+        if allowed is not None:
+            conds.append("project IN (" + ",".join("?" * len(allowed)) + ")")
+            params.extend(allowed)
+        if languages:
+            conds.append("language IN (" + ",".join("?" * len(languages)) + ")")
+            params.extend(languages)
+        if chunk_types:
+            conds.append("chunk_type IN (" + ",".join("?" * len(chunk_types)) + ")")
+            params.extend(chunk_types)
+
+        # These need a join, so KNN must over-fetch and we filter afterwards.
+        needs_join = path_prefix is not None or modified_since is not None
+        fetch = int(k) * 4 if needs_join else int(k)
+        conds.append("k = ?")
+        params.append(fetch)
+
+        rows = self.conn.execute(
+            f"""
+            SELECT chunk_id, distance
+            FROM vec_chunks
+            WHERE {" AND ".join(conds)}
+            ORDER BY distance
+            """,
+            params,
+        ).fetchall()
+
+        if not needs_join:
+            return [(r["chunk_id"], float(r["distance"])) for r in rows[:int(k)]]
+
+        ids = [r["chunk_id"] for r in rows]
+        if not ids:
+            return []
+        meta_where: list[str] = ["chunks.id IN (" + ",".join("?" * len(ids)) + ")"]
+        meta_params: list[Any] = list(ids)
+        self._append_filters(meta_where, meta_params, None, path_prefix,
+                             None, None, modified_since)
+        kept = {
+            r["id"]: None for r in self.conn.execute(
+                f"SELECT chunks.id FROM chunks "
+                f"JOIN files ON files.filepath = chunks.filepath "
+                f"WHERE {' AND '.join(meta_where)}", meta_params).fetchall()
+        }
+        return [(r["chunk_id"], float(r["distance"])) for r in rows
+                if r["chunk_id"] in kept][:int(k)]
+
     def chunks_missing_embeddings(self, limit: int) -> list[ChunkRecord]:
         self._check_closed()
         cur = self.conn.execute(
-            """
+            f"""
             SELECT c.id FROM chunks c
-            LEFT JOIN chunk_vectors cv ON cv.chunk_id = c.id
+            LEFT JOIN {self._vec_table()} cv ON cv.chunk_id = c.id
             WHERE cv.chunk_id IS NULL
             ORDER BY c.id LIMIT ?
             """,
@@ -995,7 +1151,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     def drop_vector_index(self) -> None:
         self._check_closed()
-        self.conn.execute("DELETE FROM chunk_vectors")
+        for table in self._vector_tables(self.conn.cursor()):
+            self.conn.execute(f"DELETE FROM {table}")
         self.conn.execute("DELETE FROM session_state WHERE key = 'embed_meta'")
         self._auto_commit()
 
@@ -1031,18 +1188,38 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     # Graph signals
     # =========================================================================
 
-    def rebuild_symbol_centrality(self) -> None:
-        """Recompute normalized call/inherit in-degree per (project, symbol name)."""
+    def rebuild_symbol_centrality(self, projects: list[str] | None = None) -> None:
+        """Recompute normalized call/inherit in-degree per (project, symbol name).
+
+        ``projects=None`` recomputes everything; a list recomputes only those
+        projects, leaving every other project's rows untouched (TODO 13.4).
+        """
         self._check_closed()
         cur = self.conn.cursor()
         import math
 
-        cur.execute("DELETE FROM symbol_centrality")
-        cur.execute("""
-            SELECT project, callee_name, COUNT(*) AS n FROM symbol_refs
-            WHERE ref_type IN ('call', 'inherit')
-            GROUP BY project, callee_name
-        """)
+        scoped = projects is not None
+        if scoped:
+            wanted = list(dict.fromkeys(projects or []))
+            if not wanted:
+                return
+            placeholders = ",".join("?" for _ in wanted)
+            cur.execute(
+                f"DELETE FROM symbol_centrality WHERE project IN ({placeholders})", wanted)
+            cur.execute(f"""
+                SELECT project, callee_name, COUNT(*) AS n FROM symbol_refs
+                WHERE ref_type IN ('call', 'inherit')
+                  AND project IN ({placeholders})
+                GROUP BY project, callee_name
+            """, wanted)
+        else:
+            cur.execute("DELETE FROM symbol_centrality")
+            cur.execute("""
+                SELECT project, callee_name, COUNT(*) AS n FROM symbol_refs
+                WHERE ref_type IN ('call', 'inherit')
+                GROUP BY project, callee_name
+            """)
+
         rows = cur.fetchall()
         max_by_project: dict[str, int] = {}
         for r in rows:

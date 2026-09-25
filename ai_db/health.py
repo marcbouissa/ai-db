@@ -39,6 +39,7 @@ def check_config(cfg: AppConfig) -> HealthReport:
     if cfg.embedding.enabled:
         from ai_db.embed.registry import build_embedder
 
+        _report_device(report, "embedding", cfg.embedding.options.get("device"))
         try:
             emb = build_embedder(cfg.embedding)
             assert emb is not None
@@ -46,13 +47,15 @@ def check_config(cfg: AppConfig) -> HealthReport:
             if len(vec) != emb.dim:
                 report.failed(f"embedding returned dim {len(vec)}, expected {emb.dim}")
             else:
-                report.passed(f"embedding '{emb.model_id}' dim={emb.dim}")
+                device = getattr(emb, "device", None) or cfg.embedding.options.get("device")
+                report.passed(f"embedding '{emb.model_id}' dim={emb.dim} device={device}")
         except AiDbError as exc:
             report.failed(f"embedding '{cfg.embedding.provider}': {exc}")
 
     if cfg.rerank.enabled:
         from ai_db.rerank.registry import build_reranker
 
+        _report_device(report, "rerank", cfg.rerank.options.get("device"))
         try:
             rr = build_reranker(cfg.rerank)
             assert rr is not None
@@ -62,3 +65,23 @@ def check_config(cfg: AppConfig) -> HealthReport:
             report.failed(f"rerank '{cfg.rerank.provider}': {exc}")
 
     return report
+
+
+def _report_device(report: HealthReport, scope: str, configured: str | None) -> None:
+    """Print the resolved device and torch's CUDA build for a local provider."""
+    from ai_db.device import describe
+
+    d = describe(scope)
+    torch_cuda = d["torch_cuda"] or "n/a"
+    if not d["torch_installed"]:
+        report.passed(
+            f"{scope} device={configured or 'cpu'} (torch not installed; "
+            f"torch.version.cuda={torch_cuda})")
+    elif d["cuda_available"]:
+        report.passed(
+            f"{scope} device={configured or d['preferred_device']} "
+            f"(cuda available, torch.version.cuda={torch_cuda})")
+    else:
+        report.passed(
+            f"{scope} device={configured or d['preferred_device']} "
+            f"(no CUDA device; torch.version.cuda={torch_cuda})")

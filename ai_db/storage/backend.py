@@ -92,8 +92,11 @@ class StorageBackend(ABC):
         """Chunks (with content) for ``ids``, in the given order; unknown ids are skipped."""
         raise NotImplementedError(f"{type(self).__name__} must implement get_chunks_by_ids")
 
-    def rebuild_symbol_centrality(self) -> None:
-        """('graph' capability) Recompute per-symbol normalized call in-degree."""
+    def rebuild_symbol_centrality(self, projects: list[str] | None = None) -> None:
+        """('graph' capability) Recompute per-symbol normalized call in-degree.
+
+        ``projects=None`` recomputes every project; a list scopes the rebuild.
+        """
         raise NotImplementedError(f"{type(self).__name__} must implement rebuild_symbol_centrality")
 
     def get_symbol_centrality(self, names: list[str],
@@ -447,8 +450,13 @@ class VectorCapable(ABC):
     """
 
     @abstractmethod
-    def ensure_vector_index(self, dim: int, model_id: str) -> None:
-        """Create the vector index for ``dim`` and record ``model_id``/``dim`` in embed meta."""
+    def ensure_vector_index(self, dim: int, model_id: str,
+                            vector_index: str | None = None) -> None:
+        """Create the vector index for ``dim`` and record ``model_id``/``dim`` in embed meta.
+
+        ``vector_index`` selects the search implementation ("exact" or "vec0");
+        None keeps whatever the backend was configured with.
+        """
 
     @abstractmethod
     def upsert_embeddings(self, items: list[tuple[int, list[float]]]) -> None:

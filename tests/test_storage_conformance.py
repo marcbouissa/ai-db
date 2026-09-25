@@ -24,6 +24,22 @@ class TestSQLiteConformance(BackendConformance):
         b.close()
 
 
+@pytest.mark.parametrize("vector_index", ["exact", "vec0"])
+class TestSQLiteConformanceVec0(BackendConformance):
+    """The same conformance contract must hold for the sqlite-vec ANN backend.
+
+    TODO 13.2: the only difference is the vector search implementation, so every
+    storage guarantee has to be re-verified against it.
+    """
+
+    @pytest.fixture
+    def backend(self, tmp_path, vector_index):
+        b = SQLiteBackend(str(tmp_path / f"conf_{vector_index}.db"), vector_index=vector_index)
+        b.initialize()
+        yield b
+        b.close()
+
+
 @pytest.fixture
 def dummy_on_path(monkeypatch):
     monkeypatch.syspath_prepend(FIXTURE_DIR)

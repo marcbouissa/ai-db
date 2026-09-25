@@ -77,13 +77,15 @@ class VectorDB:
         self._configure_retrieval()
         # Graph centrality is derived from symbol_refs, so it must be recomputed
         # whenever a sync changed them. Backends without the "graph" capability
-        # have no centrality table and are left untouched.
+        # have no centrality table and are left untouched. Only the projects the
+        # sync actually touched are rebuilt (TODO 13.4).
         if "graph" in self.backend.capabilities():
             self.indexer.post_sync_hooks.append(
-                lambda changed: self.backend.rebuild_symbol_centrality() if changed else None)
+                lambda changed, projects: self.backend.rebuild_symbol_centrality(
+                    sorted(projects) or None) if changed else None)
         # Last hook: any change to the index (chunks, vectors, graph) invalidates cached results.
         self.indexer.post_sync_hooks.append(
-            lambda changed: self.backend.bump_index_generation() if changed else None)
+            lambda changed, _projects: self.backend.bump_index_generation() if changed else None)
         # The embedder only exists after _configure_retrieval; skills and contexts
         # embed at write time, so hand it over once it is known.
         self.skill_router.embedder = self.embedder
@@ -114,9 +116,12 @@ class VectorDB:
             if not isinstance(self.backend, VectorCapable):
                 raise AiDbConfigError(
                     f"{self.backend.backend_name} declares 'vector' but does not implement VectorCapable")
-            self.backend.ensure_vector_index(self.embedder.dim, self.embedder.model_id)
+            self.backend.ensure_vector_index(
+                self.embedder.dim, self.embedder.model_id,
+                vector_index=self.config.storage.options.get("vector_index", "exact"))
             self.query_engine.retriever = HybridRetriever(self.backend, self.embedder)
-            self.indexer.post_sync_hooks.append(lambda _changed: self.embed_missing())
+            self.indexer.post_sync_hooks.append(
+                lambda _changed, _projects: self.embed_missing())
         else:
             self.query_engine.retriever = LexicalRetriever(self.backend)
 

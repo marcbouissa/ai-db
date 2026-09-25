@@ -152,6 +152,38 @@ pip install -e ".[dev]"
 pip install -e ".[all]"
 ```
 
+### GPU acceleration (optional)
+
+`ai-db` never installs CUDA torch for you — pick the wheel that matches your driver:
+
+```bash
+# CUDA 12.8 (recommended; covers Blackwell / RTX 50xx and anything older back to Volta)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+
+# CUDA 11.8 (older drivers, pre-Ampere)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu118
+
+# CPU only
+uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+`ai-db init` writes `"device": "cuda"` when a usable GPU is detected and `"cpu"`
+otherwise, so the usual flow needs no editing. To see what was resolved:
+
+```bash
+ai-db config check
+# OK   embedding device=cuda (cuda available, torch.version.cuda=12.8)
+```
+
+A config that asks for `"device": "cuda"` on a machine without a usable GPU is a
+**hard error**, not a silent downgrade to CPU — a large index that quietly runs
+100× slower on CPU is worse than a clear failure. Override the auto-detected
+value by editing `device` in the config.
+
+Indexing a mid-sized repository typically takes a few minutes on CPU and
+seconds on a modern GPU. This is a target, not a guarantee: it depends entirely
+on your model size, hardware and sequence length.
+
 ### Verification
 Both `ai-db` and `vectordb` console commands are installed as entry points:
 

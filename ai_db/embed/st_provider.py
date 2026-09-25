@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ai_db.device import resolve_device
 from ai_db.embed.base import EmbeddingProvider
 from ai_db.errors import AiDbConfigError
 
@@ -19,7 +20,9 @@ class SentenceTransformersEmbedder(EmbeddingProvider):
         self.model_name: str = options["model"]
         self.batch_size: int = options["batch_size"]
         self.query_prompt: str = options.get("query_prompt", "")
-        self.model = SentenceTransformer(self.model_name, device=options["device"])
+        device = resolve_device(options.get("device"), where="embedding")
+        self.device = device
+        self.model = SentenceTransformer(self.model_name, device=device)
         # renamed in sentence-transformers 6 (get_sentence_embedding_dimension -> get_embedding_dimension)
         get_dim = getattr(self.model, "get_embedding_dimension", None) or \
             self.model.get_sentence_embedding_dimension

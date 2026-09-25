@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from ai_db.device import resolve_device
 from ai_db.errors import AiDbConfigError
 from ai_db.http_client import AiDbProviderError, post_json
 from ai_db.rerank.base import RerankProvider
@@ -29,7 +30,9 @@ class CrossEncoderReranker(RerankProvider):
                 "rerank.provider 'sentence_transformers' needs: pip install 'ai-db[local-embed]'"
             ) from exc
         self.model_name = options["model"]
-        self.model = CrossEncoder(self.model_name, device=options["device"])
+        device = resolve_device(options.get("device"), where="rerank")
+        self.device = device
+        self.model = CrossEncoder(self.model_name, device=device)
         self.model_id = f"sentence_transformers:{self.model_name}"
 
     def score(self, query: str, texts: list[str]) -> list[float]:

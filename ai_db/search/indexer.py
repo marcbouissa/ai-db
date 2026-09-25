@@ -185,8 +185,9 @@ class Indexer:
                 self._write_parsed(parsed)
 
         changed = bool(to_prune or parsed_files)
+        touched = {p.project for p in parsed_files if p.project}
         for hook in self.post_sync_hooks:
-            hook(changed)
+            hook(changed, touched)
 
         proj_skill_dirs = []
         for candidate_skill_dir in ["skills", ".agents/skills", ".agent/skills"]:
@@ -249,8 +250,9 @@ class Indexer:
                     self.db.clear_file_metadata(parsed.filepath)
                 self._write_parsed(parsed)
         changed = bool(to_prune or parsed_files)
+        touched = {p.project for p in parsed_files if p.project}
         for hook in self.post_sync_hooks:
-            hook(changed)
+            hook(changed, touched)
         return {"added": len(parsed_files) - len(updated), "updated": len(updated),
                 "pruned": len(to_prune), "skipped": skipped}
 
@@ -276,7 +278,7 @@ class Indexer:
             self.db.clear_file_metadata(filepath)
             self._write_parsed(parse_file(filepath, file_hash, project))
         for hook in self.post_sync_hooks:
-            hook(True)
+            hook(True, {project})
 
     def prune_file(self, filepath: str):
         """Prunes file and cascades deletion through storage backend."""
