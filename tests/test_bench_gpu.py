@@ -4,25 +4,29 @@ Phase 13 wired device resolution (see ``ai_db/device.py``) and verified the GPU
 was usable, but the benefit was never measured: the "GPU indexing < 1 min"
 check in TODO_NEXT.md has no number behind it. This fills that in.
 
-Two measurements, because they answer different questions:
+**Sizing matters more than anything else here.** A 0.6B model embeds at roughly
+0.24 chunks/s on 16 CPU threads versus ~33 chunks/s on an RTX 3070 -- a ~135x
+gap. A corpus sized to be comfortable on the GPU therefore takes *hours* on the
+CPU arm. The default below is deliberately small: throughput per chunk is
+stable well before the sample is large, and the ratio is what this measures, not
+the absolute corpus size.
 
-1. **Embedding throughput** -- chunks/second for the real embedding model on
-   each device. Isolates the device, with no database in the way.
-2. **End-to-end index time** -- a real ``sync()`` of a real tree, CPU then
-   CUDA. This is what a user waits for, and it includes parsing, chunking,
-   FTS and the vector writes, so it is always slower than (1) alone.
+Measurements:
 
-The corpus is the ai-db source tree itself, truncated to ``AI_DB_BENCH_FILES``
-files, so the chunks are real code chunks rather than lorem ipsum -- embed
-latency is sensitive to sequence length and synthetic padding would flatter
-the GPU.
+1. **Embedding throughput** -- chunks/second per device over real code chunks.
+2. **Query latency** -- a single ``embed_query`` per device: the interactive path.
+3. **End-to-end index time** -- a real ``sync()``, opt-in, because the CPU arm
+   costs minutes per hundred chunks.
+
+The corpus is real code from this repo, not synthetic padding: embed latency is
+sensitive to sequence length and padding would flatter the GPU.
 
 Run with::
 
-    AI_DB_BENCH_FILES=400 pytest tests/test_bench_gpu.py -m bench -q -s
+    uv run pytest tests/test_bench_gpu.py -m bench -q -s
 
-Skipped (not failed) when the embedding model is not cached locally or torch
-has no CUDA device: this benchmark needs assets CI does not have.
+Skips (not fails) when the embedding model is not cached locally or torch has no
+CUDA device: this benchmark needs assets CI does not have.
 """
 from __future__ import annotations
 
@@ -34,9 +38,15 @@ import pytest
 
 pytestmark = pytest.mark.bench
 
-N_FILES = int(os.environ.get("AI_DB_BENCH_FILES", "400"))
+# 24 chunks is ~100 s on CPU and ~1 s on CUDA: enough for a stable per-chunk
+# rate, small enough that the CPU arm does not dominate the run.
+N_CHUNKS = int(os.environ.get("AI_DB_BENCH_CHUNKS", "24"))
 MODEL = os.environ.get("AI_DB_BENCH_MODEL", "Qwen/Qwen3-Embedding-0.6B")
 BATCH = int(os.environ.get("AI_DB_BENCH_BATCH", "32"))
+N_QUERIES = int(os.environ.get("AI_DB_BENCH_QUERIES", "10"))
+# The full-sync comparison costs minutes on the CPU arm, so it is opt-in.
+RUN_SYNC = os.environ.get("AI_DB_BENCH_SYNC") == "1"
+SYNC_ROOT = os.environ.get("AI_DB_BENCH_SYNC_ROOT", "ai_db/parser")
 QUERY_PROMPT = "Instruct: Given a code search query, retrieve relevant code\nQuery: "
 
 
@@ -64,7 +74,7 @@ requires_gpu = pytest.mark.skipif(
 )
 
 
-def _real_chunks(n_files: int) -> list[str]:
+def _real_chunks(limit: int) -> list[str]:
     """Real code chunks from this repo, not synthetic padding."""
     from ai_db.parser.chunker import chunk_file
 
@@ -81,8 +91,8 @@ def _real_chunks(n_files: int) -> list[str]:
                 content = chunk.get("content", "")
                 if content.strip():
                     texts.append(content)
-            if len(texts) >= n_files * 4:
-                return texts
+            if len(texts) >= limit:
+                return texts[:limit]
     return texts
 
 
@@ -115,104 +125,103 @@ def _embedder(device: str):
     })
 
 
+def _sync(device: str) -> None:
+    if device == "cuda":
+        import torch
+        torch.cuda.synchronize()
+
+
+def _report(title: str, report: dict[str, object]) -> None:
+    print(f"\n=== {title} ===", flush=True)
+    for key, value in report.items():
+        print(f"  {key}: {value}", flush=True)
+    print("=== end ===", flush=True)
+
+
 @requires_gpu
 def test_embedding_throughput_cpu_vs_cuda():
     """Chunks/second per device, and the ratio between them."""
-    texts = _real_chunks(N_FILES)
-    assert len(texts) >= 50, f"only found {len(texts)} chunks to embed"
+    texts = _real_chunks(N_CHUNKS)
+    assert len(texts) >= 8, f"only found {len(texts)} chunks to embed"
 
     report: dict[str, object] = {"model": MODEL, "chunks": len(texts),
                                  "batch_size": BATCH}
-    for device in ("cpu", "cuda"):
+    rates: dict[str, float] = {}
+    for device in ("cuda", "cpu"):
+        print(f"  [throughput] loading {device}...", flush=True)
         embedder = _embedder(device)
         # Warm up: the first call pays lazy model load and CUDA context setup,
         # and charging that to the throughput number would be meaningless.
         embedder.embed_documents(texts[:BATCH])
-        if device == "cuda":
-            import torch
-            torch.cuda.synchronize()
+        _sync(device)
         t0 = time.perf_counter()
         for start in range(0, len(texts), BATCH):
             embedder.embed_documents(texts[start:start + BATCH])
-        if device == "cuda":
-            import torch
-            torch.cuda.synchronize()
+        _sync(device)
         elapsed = time.perf_counter() - t0
+        rate = len(texts) / elapsed
+        rates[device] = rate
+        report[f"{device}_chunks_per_s"] = round(rate, 2)
         report[f"{device}_s_per_1k_chunks"] = round(elapsed / len(texts) * 1000, 1)
-        report[f"{device}_chunks_per_s"] = round(len(texts) / elapsed, 1)
         del embedder
 
-    speedup = (report["cpu_s_per_1k_chunks"] / report["cuda_s_per_1k_chunks"]
-               if isinstance(report["cpu_s_per_1k_chunks"], float)
-               and isinstance(report["cuda_s_per_1k_chunks"], float) else 0.0)
-    report["speedup"] = round(speedup, 2)
-    print("\n=== embedding throughput ===")
-    for key, value in report.items():
-        print(f"  {key}: {value}")
-    print("=== end ===")
+    speedup = rates["cuda"] / rates["cpu"] if rates["cpu"] else 0.0
+    report["cuda_speedup"] = round(speedup, 1)
+    _report("embedding throughput", report)
     assert speedup > 1.0, f"CUDA was not faster: {report}"
 
 
+@requires_gpu
+def test_query_latency_cpu_vs_cuda():
+    """A single embed_query() per device: the interactive path."""
+    report: dict[str, object] = {"queries": N_QUERIES}
+    p50: dict[str, float] = {}
+    for device in ("cuda", "cpu"):
+        print(f"  [query latency] loading {device}...", flush=True)
+        embedder = _embedder(device)
+        embedder.embed_query("warm up the model")
+        _sync(device)
+        samples = []
+        for _ in range(N_QUERIES):
+            t0 = time.perf_counter()
+            embedder.embed_query("where is the sqlite backend opened")
+            _sync(device)
+            samples.append((time.perf_counter() - t0) * 1000)
+        ordered = sorted(samples)
+        p50[device] = statistics.median(samples)
+        report[f"{device}_p50_ms"] = round(p50[device], 1)
+        report[f"{device}_p95_ms"] = round(ordered[int(len(ordered) * 0.95) - 1], 1)
+        del embedder
+
+    report["cuda_speedup"] = (round(p50["cpu"] / p50["cuda"], 1)
+                              if p50["cuda"] else 0.0)
+    _report("query latency", report)
+
+
+@pytest.mark.skipif(not RUN_SYNC, reason="set AI_DB_BENCH_SYNC=1 (minutes on the CPU arm)")
 @requires_gpu
 def test_end_to_end_sync_time_cpu_vs_cuda(tmp_path, monkeypatch):
     """A real sync() on each device -- what a user actually waits for."""
     from ai_db import VectorDB
     from ai_db.config import load_config
 
-    report: dict[str, object] = {"model": MODEL, "root": "ai_db"}
-    for device in ("cpu", "cuda"):
+    report: dict[str, object] = {"model": MODEL, "root": SYNC_ROOT}
+    totals: dict[str, float] = {}
+    for device in ("cuda", "cpu"):
+        print(f"  [sync] {device} over {SYNC_ROOT} ...", flush=True)
         db_path = tmp_path / f"{device}.db"
         cfg_path = _write_config(tmp_path / f"{device}.json", db_path, device)
         monkeypatch.setenv("AI_DB_CONFIG", cfg_path)
 
         db = VectorDB(str(db_path), config=load_config(cfg_path))
         t0 = time.perf_counter()
-        stats = db.sync("ai_db", project="bench", verbose=False)
-        elapsed = time.perf_counter() - t0
-        report[f"{device}_sync_s"] = round(elapsed, 1)
-        report[f"{device}_chunks_indexed"] = stats.get("inserted", 0) + stats.get("kept", 0)
+        stats = db.sync(SYNC_ROOT, project="bench", verbose=False)
+        totals[device] = time.perf_counter() - t0
+        report[f"{device}_sync_s"] = round(totals[device], 1)
+        report[f"{device}_chunks"] = stats.get("inserted", 0) + stats.get("kept", 0)
         db.close()
 
-    cpu = report["cpu_sync_s"]
-    cuda = report["cuda_sync_s"]
-    if isinstance(cpu, float) and isinstance(cuda, float) and cuda > 0:
-        report["sync_speedup"] = round(cpu / cuda, 2)
-        report["gpu_under_60s"] = bool(cuda < 60)
-    print("\n=== end-to-end sync (ai_db tree) ===")
-    for key, value in report.items():
-        print(f"  {key}: {value}")
-    print("=== end ===")
-
-
-@requires_gpu
-def test_query_latency_cpu_vs_cuda(tmp_path):
-    """A single embed_query() per device: the interactive path."""
-
-    report: dict[str, object] = {}
-    for device in ("cpu", "cuda"):
-        embedder = _embedder(device)
-        embedder.embed_query("warm up the model")
-        if device == "cuda":
-            import torch
-            torch.cuda.synchronize()
-        samples = []
-        for _ in range(20):
-            t0 = time.perf_counter()
-            embedder.embed_query("where is the sqlite backend opened")
-            if device == "cuda":
-                import torch
-                torch.cuda.synchronize()
-            samples.append((time.perf_counter() - t0) * 1000)
-        report[f"{device}_query_p50_ms"] = round(statistics.median(samples), 1)
-        report[f"{device}_query_p95_ms"] = round(
-            sorted(samples)[int(len(samples) * 0.95) - 1], 1)
-        del embedder
-
-    cpu = report["cpu_query_p50_ms"]
-    cuda = report["cuda_query_p50_ms"]
-    if isinstance(cpu, float) and isinstance(cuda, float) and cuda > 0:
-        report["query_speedup"] = round(cpu / cuda, 2)
-    print("\n=== query latency ===")
-    for key, value in report.items():
-        print(f"  {key}: {value}")
-    print("=== end ===")
+    if totals["cuda"] > 0:
+        report["cuda_speedup"] = round(totals["cpu"] / totals["cuda"], 1)
+        report["gpu_under_60s"] = bool(totals["cuda"] < 60)
+    _report("end-to-end sync", report)

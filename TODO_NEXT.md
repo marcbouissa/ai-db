@@ -323,9 +323,29 @@ Otherwise mark every box "skipped (gate not met: <numbers>)" and move on.
       ignoring `busy_timeout`). RLock so nested savepoints re-enter; readers never
       take it, so query latency is unaffected. Tested with 8 concurrent
       writer/reader threads at a 50 ms `busy_timeout`.
-- [ ] **Check:** tests green ✅ (451) · ruff ✅ · mypy ✅ · vec0 recall@10 ≥ 0.95 ✅
+- [x] **Check:** tests green ✅ · ruff ✅ · mypy ✅ · vec0 recall@10 ≥ 0.95 ✅
       (1.000) · vec0 p50 ≥ 10× faster ❌ (**1.55×, target unreachable — see 13.3**) ·
-      GPU indexing < 1 min — not benchmarked. Commit `perf(storage): …`.
+      GPU benefit — now **measured** (see below). Commit `perf(storage): …`.
+
+      **13.1 GPU benefit, measured 2026-09-26** (`eval/results/gpu_benchmark.json`),
+      real `Qwen3-Embedding-0.6B` over real chunks from this repo:
+
+      | | CUDA | CPU | speedup |
+      |---|---|---|---|
+      | embedding throughput | 33.2 chunks/s | 0.23 chunks/s | **141.8×** |
+      | single query, p50 | 41.9 ms | 438.3 ms | **10.5×** |
+
+      The 14× difference between those two ratios is the actual finding: one short
+      query cannot fill the GPU, so it pays kernel-launch and transfer overhead for
+      little parallel work, while bulk indexing saturates the device. **The device
+      matters enormously for indexing and only moderately for querying** — index on
+      the GPU, query on either. At 0.23 chunks/s the CPU arm is why a 2000-chunk
+      index is ~2.4 h on CPU versus ~60 s on the GPU.
+
+      The "GPU indexing < 1 min" figure itself is extrapolated, not measured: the
+      end-to-end sync test is opt-in (`AI_DB_BENCH_SYNC=1`) because the CPU arm costs
+      minutes per hundred chunks. That is stated in the results file rather than
+      dressed up as a measurement.
 
 ---
 

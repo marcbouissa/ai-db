@@ -1,0 +1,35 @@
+{
+  "benchmark": "embedding throughput and query latency: CPU vs CUDA",
+  "todo": "13.1 (fills the 'GPU indexing < 1 min' check, previously unmeasured)",
+  "date": "2026-09-26",
+  "hardware": "NVIDIA GeForce RTX 3070 Laptop GPU (sm_86, 8 GB VRAM), 16 CPU threads; torch 2.11.0+cu128",
+  "model": "Qwen/Qwen3-Embedding-0.6B",
+  "corpus": {
+    "chunks": 24,
+    "source": "real chunks from ai_db/ (tree-sitter chunker), not synthetic padding",
+    "batch_size": 32
+  },
+  "results": {
+    "cuda_chunks_per_s": 33.2,
+    "cpu_chunks_per_s": 0.23,
+    "cuda_speedup_throughput": 141.8,
+    "cuda_query_p50_ms": 41.9,
+    "cpu_query_p50_ms": 438.3,
+    "cuda_speedup_query": 10.5
+  },
+  "target": {
+    "gpu_under_60s": "not measured here; the end-to-end sync test is opt-in (AI_DB_BENCH_SYNC=1) because the CPU arm costs minutes per 100 chunks. Extrapolating from 33 chunks/s, a 2000-chunk index is ~60 s on the GPU and ~2.4 h on the CPU."
+  },
+  "reading": [
+    "Throughput (141.8x) and per-query latency (10.5x) differ by an order of magnitude, and the gap is the interesting part.",
+    "A single short query cannot fill the GPU, so it pays kernel-launch and transfer overhead for a small amount of parallel work; bulk indexing can saturate it. The same hardware is 14x less useful per interactive call than per batch.",
+    "Consequence: the device matters enormously for indexing and only moderately for querying. Index on the GPU, query on either.",
+    "At 0.23 chunks/s the CPU arm is the reason a large index is impractical without a GPU: 2000 chunks is ~2.4 hours."
+  ],
+  "caveats": [
+    "0.6B model, short chunks (~500 chars). A larger model or longer sequences would shift the ratio; padding was deliberately avoided because it flatters the GPU.",
+    "Single machine, single run, no repetition. The throughput ratio is large enough that run-to-run noise is not material; the query-latency ratio is smaller and would benefit from more samples.",
+    "Absolute CPU numbers depend on core count and BLAS threading."
+  ],
+  "reproduce": "uv run pytest tests/test_bench_gpu.py -m bench -q -s   (skips without CUDA or a cached model)"
+}
