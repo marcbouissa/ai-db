@@ -8,7 +8,7 @@ configured:
 
 ``rerank``, ``fused`` and ``graph`` are min-max normalized over the candidate set;
 ``exact`` is 1 when a query term equals the last component of the chunk's qualified name.
-Only the top ``RERANK_TOP`` fused candidates are reranked; the rest keep fused order below
+Only the top ``rerank_top_n`` fused candidates are reranked; the rest keep fused order below
 them. A diversity pass caps results per file inside the first ``DIVERSITY_WINDOW``.
 """
 
@@ -27,7 +27,6 @@ from ai_db.constants import (
     RANK_W_FUSED,
     RANK_W_GRAPH,
     RANK_W_RERANK,
-    RERANK_TOP,
 )
 from ai_db.embed.base import document_text
 from ai_db.rerank.base import RerankProvider
@@ -64,10 +63,11 @@ def diversify(results: list[SearchResult], window: int = DIVERSITY_WINDOW,
 
 
 class Ranker:
-    def __init__(self, db: Any, reranker: RerankProvider | None = None, doc_weight: float = 0.5):
+    def __init__(self, db: Any, reranker: RerankProvider | None = None, doc_weight: float = 0.5, rerank_top_n: int = 30):
         self.db = db
         self.reranker = reranker
         self.doc_weight = doc_weight
+        self.rerank_top_n = rerank_top_n
         self.last_timings: dict[str, float] = {}
 
     def rank(self, query: str, candidates: list[SearchResult],
@@ -81,8 +81,8 @@ class Ranker:
         centrality = self._centrality(names, allowed_projects)
         t1 = time.perf_counter()
 
-        head = candidates[:RERANK_TOP] if self.reranker else candidates
-        tail = candidates[RERANK_TOP:] if self.reranker else []
+        head = candidates[:self.rerank_top_n] if self.reranker else candidates
+        tail = candidates[self.rerank_top_n:] if self.reranker else []
 
         fused = _minmax([c.score for c in head])
         graph = _minmax([centrality.get(n, 0.0) for n in names[:len(head)]])

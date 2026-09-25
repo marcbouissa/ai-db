@@ -19,8 +19,9 @@ os.environ.setdefault("AI_DB_PATH", _SESSION_GUARD_DB)
 os.environ.setdefault("AI_DB_CONFIG", os.path.join(_SESSION_GUARD_DIR, "config.json"))
 os.environ.setdefault("AI_DB_SKILL_DIRS", os.path.join(_SESSION_GUARD_DIR, "skills"))
 with open(os.environ["AI_DB_CONFIG"], "w", encoding="utf-8") as _guard_cfg:
+    # Must match CONFIG_VERSION (see ai_db/config.py); v1 files are rejected at load.
     _guard_cfg.write(
-        '{"version": 1, "storage": {"provider": "sqlite", "options": {"path": null}},'
+        '{"version": 2, "storage": {"provider": "sqlite", "options": {"path": null}},'
         ' "retrieval": {"mode": "lexical"}, "embedding": {"provider": "none"},'
         ' "rerank": {"provider": "none"}}'
     )

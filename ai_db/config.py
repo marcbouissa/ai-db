@@ -46,7 +46,7 @@ RERANK_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
 }
 
 TOP_LEVEL_KEYS = frozenset(
-    {"version", "storage", "retrieval", "embedding", "rerank", "access", "auto_sync_paths", "index", "retrieval", "rerank", "trace"}
+    {"version", "storage", "retrieval", "embedding", "rerank", "access", "auto_sync_paths", "index", "trace"}
 )
 REQUIRED_TOP_LEVEL = frozenset({"version", "storage", "retrieval", "embedding", "rerank"})
 
@@ -214,7 +214,7 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
     _check_keys(rerank_raw, frozenset({"provider", "options", "top_n"}), "rerank")
     provider = rerank_raw.get("provider")
     if not isinstance(provider, str):
-        raise AiDbConfigError(f"'rerank.provider' must be a string")
+        raise AiDbConfigError("'rerank.provider' must be a string")
     options = {k: v for k, v in rerank_raw.items() if k not in ("provider", "top_n")}
     if provider in RERANK_PROVIDERS:
         required, optional = RERANK_PROVIDERS[provider]
@@ -238,7 +238,7 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         if embedding.provider == "sentence_transformers":
             embedding = ProviderConfig(embedding.provider, {**embedding.options, "device": device_override})
         if rerank.provider == "sentence_transformers":
-            rerank = ProviderConfig(rerank.provider, {**rerank.options, "device": device_override})
+            rerank = RerankConfig(rerank.provider, {**rerank.options, "device": device_override}, rerank.top_n)
 
     if mode == "hybrid" and not embedding.enabled:
         raise AiDbConfigError("retrieval.mode 'hybrid' requires an embedding provider (embedding.provider != 'none')")

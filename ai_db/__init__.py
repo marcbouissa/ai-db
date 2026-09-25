@@ -70,11 +70,17 @@ class VectorDB:
         self.indexer.set_ignore_patterns(self.config.index.ignore)
         self.query_engine = QueryEngine(db=self.backend)
         self.skill_router = SkillRouter(db=self.backend, db_path=self.db_path)
-        self.analyzer_engine = AnalyzerEngine(db=self.backend)
+        self.analyzer_engine = AnalyzerEngine(db=self.backend, query_engine=self.query_engine)
         self.formatters = Formatters
         for component in (self.context_memory, self.query_engine, self.skill_router):
             component.cross_project = self.config.cross_project
         self._configure_retrieval()
+        # Graph centrality is derived from symbol_refs, so it must be recomputed
+        # whenever a sync changed them. Backends without the "graph" capability
+        # have no centrality table and are left untouched.
+        if "graph" in self.backend.capabilities():
+            self.indexer.post_sync_hooks.append(
+                lambda changed: self.backend.rebuild_symbol_centrality() if changed else None)
         # Last hook: any change to the index (chunks, vectors, graph) invalidates cached results.
         self.indexer.post_sync_hooks.append(
             lambda changed: self.backend.bump_index_generation() if changed else None)
@@ -91,7 +97,7 @@ class VectorDB:
         from ai_db.search.retriever import HybridRetriever, LexicalRetriever
 
         self.reranker = build_reranker(self.config.rerank)
-        self.query_engine.ranker = Ranker(self.backend, self.reranker, doc_weight=self.config.index.doc_weight)
+        self.query_engine.ranker = Ranker(self.backend, self.reranker, doc_weight=self.config.index.doc_weight, rerank_top_n=self.config.rerank.top_n)
 
         self.embedder = build_embedder(self.config.embedding)
         if self.config.retrieval_mode == "hybrid":
@@ -313,8 +319,9 @@ class VectorDB:
         return self.analyzer_engine.analyze_batch(targets, depth=depth, q=q, focus=focus, span=span,
                                                  since=since, max_out=max_out, cursor=cursor, ctx_lines=ctx_lines)
 
-    def locate_targets(self, q: str, scope: str = ".", k: int = 5) -> list[dict[str, Any]]:
-        return self.analyzer_engine.locate_targets(q=q, scope=scope, k=k)
+    def locate_targets(self, q: str, scope: str = ".", k: int = 5,
+                       path_prefix: str | None = None) -> list[dict[str, Any]]:
+        return self.analyzer_engine.locate_targets(q=q, scope=scope, k=k, path_prefix=path_prefix)
 
     # Investigation (replaces the agent's analysis loop)
     def investigate(self, query: str, budget_tokens: int = 8000, mode: str = "explain",

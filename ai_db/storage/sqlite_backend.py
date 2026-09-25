@@ -1434,14 +1434,14 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     def search_skills(
         self,
-        query_tokens: list[str],
+        query: str,
         allowed_projects: list[str] | None = None,
         limit: int = 20,
     ) -> list[tuple[str, float]]:
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
-        clean = [t.strip() for t in query_tokens if t.strip()]
+        clean = [t.strip() for t in query.split() if t.strip()]
         if not clean:
             return []
         cur = self.conn.cursor()
@@ -1603,14 +1603,14 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     def search_contexts(
         self,
-        query_tokens: list[str],
+        query: str,
         allowed_projects: list[str] | None = None,
         top_k: int = 3,
     ) -> list[dict[str, Any]]:
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
-        clean = [t.strip() for t in query_tokens if t.strip()]
+        clean = [t.strip() for t in query.split() if t.strip()]
         if not clean:
             return []
         cur = self.conn.cursor()
@@ -1783,6 +1783,25 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         row_err = cur.fetchone()
         files_with_errors = int(row_err["c"]) if row_err else 0
 
+        # Share of indexed files that have at least one recorded syntax error.
+        if total_files > 0:
+            result["syntax_error_density_pct"] = round(
+                files_with_errors * 100.0 / total_files, 1)
+
+        # Compute complexity hotspots (files with most symbols/refs)
+        hotspots: list[dict[str, Any]] = []
+        if total_files > 0:
+            cur.execute("""
+                SELECT f.filepath, COUNT(DISTINCT s.name) as symbol_count
+                FROM files f
+                JOIN symbols s ON f.id = s.file_id
+                GROUP BY f.id
+                ORDER BY symbol_count DESC
+                LIMIT 5
+            """)
+            for r in cur.fetchall():
+                hotspots.append({"filepath": r["filepath"], "symbol_count": r["symbol_count"]})
+
         result["complexity_hotspots"] = hotspots
 
         cur.execute(
@@ -1847,7 +1866,6 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             params.extend(allowed_projects)
         where = " AND ".join(clauses) if clauses else ""
         params.append(limit)
-        where_sql = f"WHERE {where}" if where else ""
         cur.execute(
             f"""
             SELECT name, vec_distance_cosine(embedding, ?) AS distance
@@ -1875,16 +1893,15 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         import sqlite_vec
         clauses = []
         params: list[Any] = [sqlite_vec.serialize_float32(vector)]
-        if allowed_projects is not None:
+        if allowed_projects:
             placeholders = ",".join("?" for _ in allowed_projects)
             clauses.append(f"project IN ({placeholders})")
             params.extend(allowed_projects)
         where = " AND ".join(clauses) if clauses else ""
         params = [sqlite_vec.serialize_float32(vector)]
-        if clauses:
+        if clauses and allowed_projects:
             params.extend(allowed_projects)
         params.append(top_k)
-        where_sql = f"WHERE {where}" if where else ""
         cur.execute(
             f"""
             SELECT session_id, project, title, summary, vec_distance_cosine(embedding, ?) AS distance
@@ -1926,11 +1943,10 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             return []
         expanded = expand_terms(query)
         core = list(dict.fromkeys(expand_terms(query)))
-        fts_query = build_fts(expanded, core)
+        build_fts(expanded, core)  # for side effects / validation
         fts_results = self.search_skills(query, allowed_projects, limit)
         vec_results = self.search_skills_vector(vector, allowed_projects, limit)
         # RRF fusion
-        rrf_k = rrf_k
         scores: dict[str, float] = {}
         for rank, (name, _) in enumerate(fts_results, 1):
             scores[name] = scores.get(name, 0.0) + 1.0 / (rrf_k + rank)
@@ -1959,15 +1975,14 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             return []
         expanded = expand_terms(query)
         core = list(dict.fromkeys(expand_terms(query)))
-        fts_query = build_fts(expanded, core)
+        build_fts(expanded, core)  # for side effects / validation
         fts_results = self.search_contexts(query, allowed_projects, top_k)
         vec_results = self.search_contexts_vector(vector, allowed_projects, top_k)
         # RRF fusion
-        rrf_k = rrf_k
         scores: dict[str, float] = {}
         for rank, item in enumerate(fts_results, 1):
             scores[item["title"]] = scores.get(item["title"], 0.0) + 1.0 / (rrf_k + rank)
-        for rank, (item, dist) in enumerate(vec_results, 1):
+        for rank, item in enumerate(vec_results, 1):
             scores[item["title"]] = scores.get(item["title"], 0.0) + 1.0 / (rrf_k + rank)
         sorted_items = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         # Reconstruct full dicts from top results

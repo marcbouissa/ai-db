@@ -147,35 +147,17 @@ class SkillRouter:
         if not tokens:
             return []
 
-        token_set = set(tokens)
         prompt_lower = prompt.lower()
 
         # Load constant
         from ai_db.constants import SKILL_W_TRIGGER
 
-        all_skills = {
-            sk.name: {
-                "name": sk.name,
-                "description": sk.description,
-                "filepath": sk.filepath,
-                "triggers": sk.triggers,
-                "project": sk.project,
-            }
-            for sk in skills_list
-        }
-
-        tokens = tokenize(prompt)
-        if not tokens:
-            return []
-
-        token_set = set(tokens)
-        prompt_lower = prompt.lower()
-
         # Compute fused retrieval score via search_skills (BM25)
         filtered_tokens = [t for t in tokens if t not in STOP_WORDS and len(t) > 2]
         fused_scores: dict[str, float] = {name: 0.0 for name in all_skills}
         if filtered_tokens:
-            ranked_skills = self.db.search_skills(filtered_tokens, allowed_projects=allowed, limit=20)
+            query_str = " ".join(filtered_tokens)
+            ranked_skills = self.db.search_skills(query_str, allowed_projects=allowed, limit=20)
             if ranked_skills:
                 bm25_values = [s for _, s in ranked_skills]
                 min_bm25 = min(bm25_values)

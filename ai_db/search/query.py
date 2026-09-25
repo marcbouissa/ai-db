@@ -22,7 +22,10 @@ class QueryEngine:
         self.cross_project: dict[str, list[str]] = {}
         # Replaced once by VectorDB according to retrieval.mode.
         self.retriever: Retriever = LexicalRetriever(self.db)
-        self.ranker = Ranker(self.db, doc_weight=getattr(getattr(db, "config", None), "index", None).doc_weight if getattr(db, "config", None) else 0.5)
+        cfg = getattr(db, "config", None)
+        doc_weight = getattr(cfg.index, "doc_weight", 0.5) if cfg and hasattr(cfg, "index") else 0.5
+        rerank_top_n = getattr(cfg.rerank, "top_n", 30) if cfg and hasattr(cfg, "rerank") else 30
+        self.ranker = Ranker(self.db, doc_weight=doc_weight, rerank_top_n=rerank_top_n)
 
     def query(
         self, search_text: str, top_k: int = 5, relative_to: str | None = None,

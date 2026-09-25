@@ -16,7 +16,7 @@
 (class_declaration
   name: (identifier) @name
   (class_heritage
-    (identifier) @base)? @def.class)
+    (identifier) @base)?) @def.class @ref.inherit
 
 ; Export statements
 (export_statement
@@ -36,14 +36,16 @@
   (variable_declaration) @ref.export
 )
 
-; Import statements
+; Import statements (ES modules)
 (import_statement
-  (import_clause
-    (named_imports
-      (import_specifier
-        name: (identifier) @name)*) @ref.import
-    )
-  )
+  source: (string) @module) @ref.import
+
+; Require calls (CommonJS imports) - capture as import
+(call_expression
+  function: (identifier) @callee
+  (#eq? @callee "require")
+  arguments: (arguments
+    (string) @module)) @ref.import
 
 ; Call expressions
 (call_expression

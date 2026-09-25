@@ -1,9 +1,6 @@
 """File outline extraction using tree-sitter queries."""
 from __future__ import annotations
 
-import os
-from typing import Any
-
 from ai_db.parser.ts_graph import extract_graph, language_for
 
 

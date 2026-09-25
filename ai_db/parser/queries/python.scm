@@ -26,6 +26,17 @@
   (dotted_name) @module
   (dotted_name) @name) @ref.import
 
+; Relative imports
+(import_from_statement
+  (relative_import
+    (import_prefix)
+    (dotted_name) @module)
+  (dotted_name) @name) @ref.import
+
+(import_from_statement
+  (relative_import
+    (import_prefix)) @ref.import)
+
 ; Call expressions - capture the call and the called function name
 (call
   function: [

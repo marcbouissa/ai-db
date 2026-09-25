@@ -867,7 +867,7 @@ class TestStorageTier4:
         assert recalled.active_files == ["src/auth.py"]
 
         # Search contexts via FTS
-        search_hits = backend.search_contexts(["OAuth2"], allowed_projects=["global"], top_k=3)
+        search_hits = backend.search_contexts("OAuth2", allowed_projects=["global"], top_k=3)
         assert len(search_hits) > 0
         assert search_hits[0]["session_id"] == "session_oauth"
         backend.close()

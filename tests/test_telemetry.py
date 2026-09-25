@@ -164,7 +164,9 @@ class TestTelemetryTier1FeatureCoverage:
 
         (src / "clean1.py").write_text("def a(): pass\n")
         (src / "clean2.py").write_text("def b(): pass\n")
-        (src / "broken.py").write_text("def c( :\n    pass\n")
+        # Must be an ERROR/MISSING node for tree-sitter; note that `def c( :` alone
+        # parses cleanly (tree-sitter is more lenient than ast.parse).
+        (src / "broken.py").write_text("def c():\n    return 1 +\n")
         vdb.sync(str(src), project="weak_points", verbose=False)
 
         tracker = TelemetryTracker(vdb.conn)

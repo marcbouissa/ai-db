@@ -11,9 +11,12 @@ from ai_db.utils import compute_sha256, tokenize
 
 
 class AnalyzerEngine:
-    def __init__(self, db: Any):
+    def __init__(self, db: Any, query_engine: Any = None):
         self.db = db
         self.backend = getattr(db, "backend", getattr(db, "db", db))
+        # Injected by VectorDB so locate shares the configured retriever/ranker
+        # (lexical or hybrid) instead of reaching into the backend directly.
+        self.query_engine = query_engine
         self.ref_store = ReferenceStore(db=self.backend)
         self._evict_stale_refs()
 
@@ -77,7 +80,6 @@ class AnalyzerEngine:
 
         file_hash = compute_sha256(abs_path)
         tokens_in = max(1, len(content) // 4)
-        ext = os.path.splitext(abs_path)[1].lower()
         all_lines = content.splitlines()
         total_lines = len(all_lines)
 
@@ -327,14 +329,23 @@ class AnalyzerEngine:
             }
         }
 
-    def locate_targets(self, q: str, scope: str = ".", k: int = 5) -> list[dict[str, Any]]:
+    def locate_targets(self, q: str, scope: str = ".", k: int = 5,
+                       path_prefix: str | None = None) -> list[dict[str, Any]]:
         """F10 Relevance Rank: Finds top-k matching files/snippets without dumping entire directory scans."""
-        tokens = tokenize(q)
-        if not tokens:
+        if not tokenize(q):
             return []
 
         scope_abs = os.path.abspath(os.path.expanduser(scope))
-        search_results = self.backend.search_chunks(tokens, allowed_projects=None, top_k=k, path_prefix=scope_abs)
+        filters: dict[str, Any] = {"allowed_projects": None, "path_prefix": scope_abs}
+        if path_prefix:
+            filters["path_prefix"] = os.path.abspath(os.path.expanduser(path_prefix))
+
+        if self.query_engine is not None:
+            search_results = self.query_engine.search(q, filters, k)
+        else:
+            # Standalone use (tests, tools): no configured retriever/ranker available.
+            search_results = self.backend.search_chunks(
+                tokenize(q), top_k=k, **filters)
 
         hits = []
         for r in search_results:

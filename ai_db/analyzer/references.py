@@ -4,7 +4,6 @@ import os
 import time
 from typing import Any
 
-from ai_db.logger import _logger
 from ai_db.storage.models import AnalysisRefRecord
 
 

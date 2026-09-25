@@ -475,8 +475,8 @@ class TestAtomicTransactionRollback:
         assert len(backend.get_skills()) == 0
 
         # Verify FTS tables are empty
-        assert len(backend.search_contexts(["Atomic"])) == 0
-        assert len(backend.search_skills(["Atomic"])) == 0
+        assert len(backend.search_contexts("Atomic")) == 0
+        assert len(backend.search_skills("Atomic")) == 0
 
         backend.close()
 

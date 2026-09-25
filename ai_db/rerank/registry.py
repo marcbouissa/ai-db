@@ -9,7 +9,7 @@ from collections.abc import Callable
 from importlib.metadata import entry_points
 from typing import Any
 
-from ai_db.config import ProviderConfig
+from ai_db.config import ProviderConfig, RerankConfig
 from ai_db.errors import AiDbConfigError
 from ai_db.rerank.base import RerankProvider
 
@@ -36,7 +36,7 @@ BUILTIN: dict[str, Callable[[dict[str, Any]], RerankProvider]] = {
 }
 
 
-def build_reranker(cfg: ProviderConfig) -> RerankProvider | None:
+def build_reranker(cfg: ProviderConfig | RerankConfig) -> RerankProvider | None:
     """Return the configured reranker, or None only when ``provider == 'none'``."""
     if cfg.provider == "none":
         return None

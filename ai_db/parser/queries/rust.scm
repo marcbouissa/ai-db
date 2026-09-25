@@ -7,54 +7,61 @@
   return_type: (_)? @return_type
   body: (block) @body) @def.function
 
-; Method definitions in impl blocks
-(impl_item
-  (function_item
-    name: (identifier) @name
-    parameters: (parameters) @params
-    return_type: (_)? @return_type
-    body: (block) @body)) @def.method
+; Method definitions in impl blocks (function_item inside impl_item)
+(function_item
+  name: (identifier) @name
+  parameters: (parameters) @params
+  return_type: (_)? @return_type
+  body: (block) @body) @def.method
 
 ; Struct definitions
 (struct_item
   name: (type_identifier) @name
-  body: [
-    (struct_body) @body
-    (tuple_struct_body) @body
-  ]) @def.struct
+  body: (field_declaration_list) @body) @def.struct
+
+; Tuple struct definitions
+(struct_item
+  name: (type_identifier) @name
+  body: (ordered_field_declaration_list) @body) @def.struct
+
+; Unit struct definitions (no body)
+(struct_item
+  name: (type_identifier) @name) @def.struct
 
 ; Enum definitions
 (enum_item
   name: (type_identifier) @name
-  body: (enum_body) @body) @def.type
+  body: (enum_variant_list) @body) @def.type
 
 ; Trait definitions
 (trait_item
   name: (type_identifier) @name
-  body: (trait_body) @body) @def.interface
+  body: (declaration_list) @body) @def.interface
 
-; Impl blocks (for trait implementations)
+; Impl blocks (for trait implementations) - first type_identifier is the trait
 (impl_item
-  (type_identifier) @base
-  (for
-    (type_identifier) @trait)?) @ref.inherit
+  (type_identifier) @base) @ref.inherit
 
 ; Type aliases
 (type_item
   name: (type_identifier) @name) @def.type
 
-; Function calls
+; Function calls - simple identifier
 (call_expression
-  function: [
-    (identifier) @callee
-    (scoped_identifier
-      path: (identifier) @mod
-      name: (identifier) @callee)
-    (field_expression
-      field: (field_identifier) @callee)
-  ] @ref.call)
+  function: (identifier) @callee) @ref.call
 
-; Method calls
+; Function calls - scoped identifier (mod::func)
+(call_expression
+  function: (scoped_identifier
+    path: (identifier) @mod
+    name: (identifier) @callee)) @ref.call
+
+; Method calls - field_expression
+(call_expression
+  function: (field_expression
+    field: (field_identifier) @callee)) @ref.call
+
+; Method calls (standalone field_expression)
 (field_expression
   field: (field_identifier) @callee) @ref.call
 
@@ -64,10 +71,9 @@
 
 ; Use statements (imports)
 (use_declaration
-  (use_tree
-    (scoped_identifier
-      path: (identifier) @mod
-      name: (identifier) @name) @ref.import))
+  (scoped_identifier
+    path: (identifier) @mod
+    name: (identifier) @name) @ref.import)
 
 ; External crate declarations
 (extern_crate_declaration

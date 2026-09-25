@@ -31,14 +31,19 @@
   return_type: (type_annotation)? @return_type
   body: (statement_block) @body) @def.method
 
-; Class declarations
+; Class declarations with extends
 (class_declaration
   name: (type_identifier) @name
   (class_heritage
     (extends_clause
-      (identifier) @base)
+      (identifier) @base))?) @def.class @ref.inherit
+
+; Class declarations with implements
+(class_declaration
+  name: (type_identifier) @name
+  (class_heritage
     (implements_clause
-      (type_identifier) @impl)*)? @def.class)
+      (type_identifier) @impl))?) @def.class @ref.inherit
 
 ; Interface declarations
 (interface_declaration
@@ -64,12 +69,9 @@
 (export_statement
   (lexical_declaration) @ref.export)
 
-; Import statements
+; Import statements - capture the module path
 (import_statement
-  (import_clause
-    (named_imports
-      (import_specifier
-        name: (identifier) @name)))) @ref.import
+  source: (string) @module) @ref.import
 
 ; Call expressions
 (call_expression

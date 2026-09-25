@@ -2,7 +2,7 @@ import time
 from typing import Any
 
 from ai_db.storage.models import ContextRecord
-from ai_db.utils import get_allowed_projects, tokenize
+from ai_db.utils import get_allowed_projects
 
 
 class ContextMemory:
@@ -94,10 +94,9 @@ class ContextMemory:
         allowed_projects: list[str] | None = None, top_k: int = 3
     ) -> list[dict[str, Any]]:
         """Searches across saved session contexts using BM25."""
-        tokens = tokenize(query_text)
-        if not tokens:
+        if not query_text or not query_text.strip():
             return []
 
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
-        hits: list[dict[str, Any]] = self.db.search_contexts(tokens, allowed_projects=allowed, top_k=top_k)
+        hits: list[dict[str, Any]] = self.db.search_contexts(query_text, allowed_projects=allowed, top_k=top_k)
         return hits

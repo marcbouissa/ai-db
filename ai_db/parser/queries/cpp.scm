@@ -3,41 +3,30 @@
 ; Function definitions
 (function_definition
   declarator: (function_declarator
-    declarator: [
-      (identifier) @name
-      (qualified_identifier
-        name: (identifier) @name
-        scope: (namespace_identifier) @scope)
-      (operator_name) @name]
+    declarator: (identifier) @name
     parameters: (parameter_list) @params)
   body: (compound_statement) @body) @def.function
 
 ; Function declarations
 (declaration
   (function_declarator
-    declarator: [
-      (identifier) @name
-      (qualified_identifier
-        name: (identifier) @name)
-      (operator_name) @name]
+    declarator: (identifier) @name
     parameters: (parameter_list) @params)) @def.function
 
-; Method definitions in classes
+; Method definitions in classes (qualified identifier)
 (function_definition
   declarator: (function_declarator
     declarator: (qualified_identifier
-      name: (identifier) @name
-      scope: (namespace_identifier) @scope)
+      name: (identifier) @name)
     parameters: (parameter_list) @params)
   body: (compound_statement) @body) @def.method
 
-; Class definitions
+; Class definitions with base classes
 (class_specifier
   name: (type_identifier) @name
   body: (field_declaration_list) @body
-  base_clause: (base_class_clause
-    (base_specifier
-      type: (type_identifier) @base)*)? @def.class
+  (base_class_clause
+    (type_identifier) @base)?) @def.class @ref.inherit
 
 ; Struct definitions
 (struct_specifier
@@ -63,16 +52,20 @@
   (class_specifier
     name: (type_identifier) @name) @def.class)
 
-; Function calls
+; Function calls - simple identifier
 (call_expression
-  function: [
-    (identifier) @callee
-    (field_expression
-      field: (field_identifier) @callee)
-    (qualified_identifier
-      name: (identifier) @callee
-      scope: (namespace_identifier) @scope)
-  ] @ref.call)
+  function: (identifier) @callee) @ref.call
+
+; Function calls - field_expression (method calls)
+(call_expression
+  function: (field_expression
+    field: (field_identifier) @callee)) @ref.call
+
+; Function calls - qualified_identifier (namespace::func)
+(call_expression
+  function: (qualified_identifier
+    (namespace_identifier)
+    (identifier) @callee)) @ref.call
 
 ; Method calls
 (field_expression

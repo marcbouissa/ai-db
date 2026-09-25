@@ -69,3 +69,6 @@ htmlcov/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Local scratch benchmark script (TODO rule 7: never commit)
+token_benchmark.py
