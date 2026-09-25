@@ -23,10 +23,43 @@ from ai_db.dispatcher import ServiceDispatcher
 class StdioMCPServer:
     """Stdio JSON-RPC 2.0 server wrapping ServiceDispatcher."""
 
-    def __init__(self, db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | None = None):
+    def __init__(self, db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | None = None,
+                 stdout: Any = None):
         self.db_path = db_path
         self.dispatcher = dispatcher if dispatcher is not None else ServiceDispatcher(db_path=db_path)
         self.db = getattr(self.dispatcher, "db", None)
+        # Where notifications/progress frames go. Overridable so tests can use
+        # a fake stream instead of the real stdout.
+        self.stdout = stdout if stdout is not None else sys.stdout
+
+    def _progress_callback(self, meta: dict[str, Any]) -> Any:
+        """Build a progress callback if the client supplied a progressToken.
+
+        Returns None otherwise, so a client that does not ask for progress
+        pays nothing and never sees notifications.
+        """
+        token = meta.get("progressToken")
+        if token is None:
+            return None
+        out = self.stdout
+
+        def report(done: int, total: int, message: str = "") -> None:
+            frame = {
+                "jsonrpc": "2.0",
+                "method": "notifications/progress",
+                "params": {
+                    "progressToken": token,
+                    "progress": done,
+                    "total": total,
+                    "message": message,
+                },
+            }
+            # Written straight to the stream and flushed: a long sync must not
+            # look like a hang to the client.
+            out.write(json.dumps(frame) + "\n")
+            out.flush()
+
+        return report
 
     def handle_request(self, req: dict[str, Any]) -> dict[str, Any] | None:
         req_id = req.get("id")
@@ -74,8 +107,9 @@ class StdioMCPServer:
         if method == "tools/call":
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
+            progress = self._progress_callback(params.get("_meta") or {})
             try:
-                res = self.dispatcher.execute(tool_name, arguments)
+                res = self.dispatcher.execute(tool_name, arguments, progress=progress)
                 text = res if isinstance(res, str) else json.dumps(res, indent=2)
                 return {
                     "jsonrpc": "2.0",

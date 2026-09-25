@@ -299,13 +299,15 @@ def _main(argv: list[str] | None = None) -> int:
 
     # investigate
     inv_p = subparsers.add_parser("investigate", aliases=["inv"], help="One-call evidence pack for a question (replaces grep/read loops)")
-    inv_p.add_argument("query", help="Question or concept")
-    inv_p.add_argument("--mode", choices=["locate", "explain", "impact"], default="explain")
+    inv_p.add_argument("query", nargs="?", default="", help="Question or concept (optional in diff mode)")
+    inv_p.add_argument("--mode", choices=["locate", "explain", "impact", "flow", "diff"], default="explain")
     inv_p.add_argument("--budget", type=int, default=8000, help="Token budget for the pack (default: 8000)")
     inv_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
     inv_p.add_argument("--allow-project", action="append", default=[], help="Allowed project (repeatable)")
     inv_p.add_argument("--lang", action="append", default=None, help="Only this language (repeatable)")
     inv_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
+    inv_p.add_argument("--since", default=None, help="diff mode only: git ref to diff against (e.g. HEAD~1)")
+    inv_p.add_argument("--root", default=None, help="diff mode only: repository root to diff in (default: .)")
 
     # locate
     locate_p = subparsers.add_parser("locate", help="Locate files and snippet spans for a question")
@@ -512,6 +514,7 @@ def _main(argv: list[str] | None = None) -> int:
         pack = dispatcher.execute("investigate", {
             "query": args.query, "mode": args.mode, "budget_tokens": args.budget,
             "project": active_proj, "allow_project": allowed_projs, "languages": args.lang,
+            "since": args.since, "root": args.root,
         })
         print(json.dumps(pack, indent=2, ensure_ascii=False))
 

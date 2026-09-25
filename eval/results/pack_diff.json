@@ -1,0 +1,46 @@
+{
+  "queries": 6,
+  "budget_tokens": 8000,
+  "pack_recall": 1.0,
+  "tokens_mean": 6709.0,
+  "latency_ms_p50": 57.03,
+  "latency_ms_p95": 444.33,
+  "per_query": [
+    {
+      "query": "config migration",
+      "mode": "diff",
+      "pack_recall": 1.0,
+      "tokens": 7804
+    },
+    {
+      "query": "config migration",
+      "mode": "diff",
+      "pack_recall": 1.0,
+      "tokens": 7804
+    },
+    {
+      "query": "resolve which device to run embeddings on",
+      "mode": "diff",
+      "pack_recall": 1.0,
+      "tokens": 7865
+    },
+    {
+      "query": "symbol centrality rebuild after sync",
+      "mode": "diff",
+      "pack_recall": 1.0,
+      "tokens": 7864
+    },
+    {
+      "query": "which new test fixture files did this change add",
+      "mode": "diff",
+      "pack_recall": 1.0,
+      "tokens": 4460
+    },
+    {
+      "query": "which go fixture symbols were added",
+      "mode": "diff",
+      "pack_recall": 1.0,
+      "tokens": 4457
+    }
+  ]
+}

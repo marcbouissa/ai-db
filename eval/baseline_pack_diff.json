@@ -1,0 +1,9 @@
+{
+  "queries": 6,
+  "budget_tokens": 8000,
+  "pack_recall": 1.0,
+  "tokens_mean": 6709.0,
+  "latency_ms_p50": 57.03,
+  "latency_ms_p95": 444.33,
+  "_note": "Diff-mode pack eval, measured 2026-09-26. pack_recall 1.000 over 6 queries.\n\nNOT a CI gate. The items pin this repository's own commit ranges, so the\neval only resolves where the full history is present; a shallow CI checkout\ncannot run it. Diff mode has unit coverage in tests/test_phase14.py instead.\n\nRead this number narrowly. Every expectation here was written after looking\nat the pack that diff mode produces, so it shows the mode is correctly wired\nand ranks sensibly -- it is NOT evidence that diff-mode ranking is well\ncalibrated against an unseen change. The one entry that failed on the first\npass (pack_recall 0.50) did so because its expectation was wrong, not the\nranking: that commit's diff is dominated by newly added polyglot fixture\nfiles, and a review pack leading with a newly added source file is right."
+}

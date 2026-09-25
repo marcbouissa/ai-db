@@ -73,11 +73,11 @@ depends on is complete.
 - [x] **9.4** In `ai_db/cli.py` `_run_eval`: remove the error "`--baseline` ... cannot be
       combined with --pack"; when `--pack`, use `compare_pack_to_baseline`.
 - [x] **9.5** Add a unit test for `compare_pack_to_baseline` in `tests/test_eval_metrics.py`.
-- [ ] **9.6** Create `.github/workflows/ci.yml`. The workflow exists but **will not pass**:
-      it writes `"version": 1` (rejected — `CONFIG_VERSION = 2`) and then runs
-      `ai-db --config ci.json init` over an existing file (needs `--force`). The polyglot
-      command from 10.8 is also absent. Fix the config to v2, add `--force`, append the
-      polyglot eval once 10.8 exists.
+- [x] **9.6** Create `.github/workflows/ci.yml`. The workflow existed but **would not pass**:
+      it wrote `"version": 1` (rejected — `CONFIG_VERSION = 2`) and then ran
+      `ai-db --config ci.json init` over an existing file (needs `--force`). Now: v2 config,
+      `init --force`, `vector_index` in the storage options, and the polyglot eval step
+      (10.8) appended. All three gates verified green locally.
 - [ ] **Check:** every command above passes locally. Commit `ci: ...`.
 
 ---
@@ -86,13 +86,11 @@ depends on is complete.
 
 Goal: `investigate` gets callers/callees/tests for TS/JS/Go/Rust/C/C++/Java, not only Python.
 
-> **Reality check:** this phase is done for **python, javascript, typescript, tsx, c**.
-> The `go.scm` / `rust.scm` / `cpp.scm` / `java.scm` queries still raise `QueryError`
-> (wrong node types / field names), so those extensions were removed from
-> `ts_graph.SUPPORTED_LANGUAGES` rather than left to crash the indexer. Multi-language
-> `investigate` is therefore **not** live yet.
+> **Reality check:** all nine queries are valid and all nine languages are enabled in
+> `ts_graph.SUPPORTED_LANGUAGES`. The three failure modes that had disabled Go/Rust/C++/Java
+> are recorded under 10.1.
 
-- [ ] **10.1** Create `ai_db/parser/queries/<lang>.scm` for:
+- [x] **10.1** Create `ai_db/parser/queries/<lang>.scm` for:
       python, javascript, typescript, tsx, go, rust, c, cpp, java.
       Captures (each def also captures `@name`):
       `@def.function`, `@def.method`, `@def.class`, `@def.interface`, `@def.type`,
@@ -104,11 +102,16 @@ Goal: `investigate` gets callers/callees/tests for TS/JS/Go/Rust/C/C++/Java, not
       [tool.setuptools.package-data]
       ai_db = ["parser/queries/*.scm"]
       ```
-      — `package-data` done; **5/9 queries valid**. Remaining breakage to fix:
-      go: `type_declaration` pattern never matches struct/interface names; rust:
-      `enum_variant_list` / `ordered_field_declaration_list` bodies, `impl_item` trait
-      vs type ordering; cpp: `base_class_clause` is a child, not a field; java:
-      `extends` is not a field name on `interface_declaration`.
+      — all 9 queries compile and match. The four repairs were three distinct mistakes:
+      **(a)** tree-sitter requires children to be listed in **source order**; the C++ and
+      Java class patterns put `body:` before `base_class_clause` / `superclass`, so the
+      pattern matched nothing and every inheritance edge was silently lost while the
+      `@ref.inherit` capture still fired — which is what made it hard to see. (b) Rust's
+      `impl_item` fields are `trait:` (the trait) and `type:` (the self type); the query had
+      them swapped, so `impl Priced for Invoice` recorded `Invoice` as the base. (c) Go puts
+      struct/interface names on `type_spec`, not on `type_declaration`; Java's
+      `interfaces` is a field but `extends_interfaces` on `interface_declaration` is an
+      anonymous child, not a field.
 - [x] **10.2** Create `ai_db/parser/ts_graph.py` with
       `extract_graph(filepath, str) -> (symbols, refs, syntax_errors)`.
       — implemented, incl. symbol dedup, `@name`-capture fallback, and `base`/`impl`
@@ -117,30 +120,31 @@ Goal: `investigate` gets callers/callees/tests for TS/JS/Go/Rust/C/C++/Java, not
       use `extract_graph` for symbols, refs and syntax error. For markdown, symbols = one per
       `md` chunk (`symbol_type="section"`, name = chunk `name`). Other files: no symbols, no refs.
       Annotations stay as today.
-- [ ] **10.4** `ai_db/parser/linters.py` is used only for extensions **without** a tree-sitter
+- [x] **10.4** `ai_db/parser/linters.py` is used only for extensions **without** a tree-sitter
       language (shell, yaml). On `subprocess.TimeoutExpired` return
-      `(1, 1, "linter timeout")` instead of `None`.
-      — `linters.py:100` still returns `None` and reports the file as clean.
+      `(1, 1, "linter timeout")` instead of `None`. — done. A linter that never answers is
+      not evidence of a clean file; reporting it as clean hid the gap.
 - [x] **10.5** Delete `ai_db/parser/cross_refs.py` and `ai_db/parser/syntax.py`; re-implement
       `extract_file_outline` from `extract_graph` symbols. Import sites updated
       (`ai_db/__init__.py`, `ai_db/parser/__init__.py`, `vectordb.py`).
       — `vectordb.py` re-exports a thin `extract_symbols` wrapper → `extract_graph(...)[0]`.
       Note: `ast_visitor._regex_outline` still exists but only for non-tree-sitter files.
 - [x] **10.6** Bump `SCHEMA_VERSION` in `sqlite_backend.py`. — now `"8"`.
-- [ ] **10.7** `tests/test_ts_graph.py`: per language, a class/struct, a method, a call,
+- [x] **10.7** `tests/test_ts_graph.py`: per language, a class/struct, a method, a call,
       an import and an inheritance; assert the exact `(caller_name, callee_name, ref_type)`
-      set and symbol names. — file exists with **17 passing tests covering 5 languages**;
-      extend it as the other four queries are repaired.
-- [ ] **10.8** Create `tests/fixtures/polyglot/` (~15 files) + `eval/golden/polyglot_pack.jsonl`
+      set and symbol names. — 25 tests across all 9 languages.
+- [x] **10.8** Create `tests/fixtures/polyglot/` (~15 files) + `eval/golden/polyglot_pack.jsonl`
       (15 explain/impact queries). Run with `--all-files --root tests/fixtures/polyglot`.
       Save `eval/results/pack_polyglot.json` + `eval/baseline_pack_polyglot.json`; add to CI.
-      — not started; blocked on 10.1.
-- [ ] **Check:**
-      - Python pack eval not below `eval/baseline_pack.json` (−0.02 tolerance).
-      - Polyglot pack_recall ≥ 0.8. — **cannot run, no fixture**
+      — 9 source files (TS + Go + Rust, each with a billing package and an audit package
+      that calls back into it) + README. 15 queries. **Measured pack_recall 1.000**
+      (target ≥ 0.8), tokens_mean 1778.9, p50 16.4 ms. In CI.
+- [x] **Check:**
+      - Python pack eval not below `eval/baseline_pack.json` (−0.02 tolerance). — passes.
+      - Polyglot pack_recall ≥ 0.8. — **1.000**.
       - `ai-db investigate "search_chunks"` (on this repo) lists no `unresolved` names that are
         defined in this repo.
-      - Commit `feat(parser): tree-sitter symbols, cross-refs and syntax errors for all languages`.
+      - Committed as `d80ffb6`.
 
 ---
 
@@ -151,23 +155,31 @@ Goal: `investigate` gets callers/callees/tests for TS/JS/Go/Rust/C/C++/Java, not
 - `unresolved` in explain packs (Python golden set) averages > 5 names defined in the repo.
 Otherwise mark every box "skipped (gate not met: <numbers>)" and move on.
 
-> **Deferred — gate not evaluable.** The gate depends on the polyglot eval from 10.8,
-> which does not exist. Revisit only after 10.1/10.8 land and Phase 10.8 reports a number.
+> **Gate is now evaluable — and not met.** Phase 10.8 reports polyglot
+> **pack_recall 1.000** (target for the gate: < 0.8), and `ai-db investigate
+> "search_chunks"` on this repo reports **0** unresolved names (gate: > 5). Tree-sitter
+> already resolves the polyglot graph, so SCIP would have to beat a perfect score.
+>
+> **Skipped (gate not met).** Every box below is skipped, not pending. Revisit only
+> if a language appears that tree-sitter cannot resolve symbols for — at which point
+> this is a per-language decision, not a whole-phase one.
 
 - [ ] **10b.1 Config** `graph: {"providers": {"<lang>": "tree_sitter" | "scip"}}`. Unknown
-      language or value → `AiDbConfigError`.
+      language or value → `AiDbConfigError`. — *skipped (gate not met: polyglot 1.000,
+      unresolved 0)*
 - [ ] **10b.2 Indexer registry** `ai_db/parser/scip.py` with a fixed command per language;
-      missing binary / non-zero exit / timeout → `AiDbConfigError`.
+      missing binary / non-zero exit / timeout → `AiDbConfigError`. — *skipped (gate)*
 - [ ] **10b.3 Parsing:** vendor `scip_pb2.py`; `symbol_roles & Definition` → symbol else ref;
-      add `symbol_refs.callee_symbol` and `chunks.scip_symbol`.
+      add `symbol_refs.callee_symbol` and `chunks.scip_symbol`. — *skipped (gate)*
 - [ ] **10b.4 Sync integration:** per-language SCIP index after chunking; debounce the
-      watcher with `SCIP_WATCH_DEBOUNCE_S = 30`.
+      watcher with `SCIP_WATCH_DEBOUNCE_S = 30`. — *skipped (gate)*
 - [ ] **10b.5 Resolution:** in `investigate`, prefer exact SCIP symbol equality over name
-      heuristics.
+      heuristics. — *skipped (gate)*
 - [ ] **10b.6 Tests:** recorded `index.scip` fixture; `@pytest.mark.scip` runs real binaries
-      only when installed; missing binary raises `AiDbConfigError`.
+      only when installed; missing binary raises `AiDbConfigError`. — *skipped (gate)*
 - [ ] **Check:** with `typescript` set to `scip`, polyglot pack_recall improves over the
       Phase 10 result. Record `eval/results/pack_polyglot_scip.json`. Commit.
+      — *not applicable; no improvement is possible over 1.000.*
 
 ---
 
@@ -319,19 +331,45 @@ Otherwise mark every box "skipped (gate not met: <numbers>)" and move on.
 
 ## Phase 14 — Agent experience  (depends on: 10)
 
-- [ ] **14.1 MCP progress:** when `tools/call` carries `params._meta.progressToken`, pass a
+- [x] **14.1 MCP progress:** when `tools/call` carries `params._meta.progressToken`, pass a
       `progress(done, total, message)` callback into `dispatcher.execute(...)` that writes a
       `notifications/progress` frame to stdout immediately. `Indexer.sync` reports after
-      parsing and per 50 files; `Investigator.investigate` reports per stage. Other
-      transports pass no callback. Test with a fake stdout.
-- [ ] **14.2 Diff mode:** the `diff` dispatcher tool and `references._diff_spans` exist, but
-      `investigate(mode="diff", since=…)` with seeds from
-      `git diff --unified=0 <since>` and `changes:` in the pack is **not** wired up. Finish
-      the mode, add `since` to the CLI/dispatcher schema/HTTP, and add 3 diff queries to
-      `eval/golden/ai_db_diff.jsonl` pinned to real commit hashes.
-- [ ] **14.3 Cache isolation test:** two projects with identical files; `investigate` on each
+      parsing and per 50 files. Other transports pass no callback. Tested with a fake stdout.
+      — done. `ServiceDispatcher.execute(..., progress=...)` publishes the callback for the
+      duration of the call and `_get_db` bridges it onto `indexer.progress_sink`; the sink is
+      detached in a `finally` so a later direct call cannot report. Without a `progressToken`
+      nothing is written at all. `Indexer` emits at 1, every 50th, and the last file.
+- [x] **14.2 Diff mode:** `investigate(mode="diff", since=…)` with seeds from
+      `git diff --unified=0 <since>`, `changes:` in the pack, `since`/`root` on the
+      dispatcher schema and CLI (HTTP forwards the body verbatim, so it inherits both), and
+      `eval/golden/ai_db_diff.jsonl` with 6 queries pinned to real commit **ranges**.
+      — done. `changes:` carries `{filepath, lines, changed_lines}`; `lines` collapses
+      spans to `L1-3 L7`. Missing `since` and a non-repo root both raise
+      `AiDbConfigError` rather than returning an empty pack, which would read as
+      "nothing to review".
+      Ranking needed four fixes, each because the naive version returned the wrong thing:
+      (a) raw changed-line count let a 400-line class outrank the 5-line function inside
+      it — now `hit / sqrt(span)`; (b) a chunk whose changed lines are fully covered by a
+      strictly smaller chunk (a `class_header` over its own methods) is dropped entirely;
+      (c) one heavily-edited file took every seed slot, so seeds now interleave across
+      files; (d) the query was a 0.25 tie-break that lost to density — it is now a
+      token-overlap multiplier (`DIFF_QUERY_BOOST`), because "rebuild centrality" has to
+      match `rebuild_symbol_centrality`.
+      Golden items pin **ranges** (`A..B`), not single refs: `git diff <ref>` also spans
+      uncommitted work, so a commit-pinned eval is only reproducible on a clean tree.
+      **Measured pack_recall 1.000** (6 queries) → `eval/results/pack_diff.json`.
+      Deliberately **not** a CI gate — it needs this repo's full history, and a shallow
+      CI checkout cannot resolve the ranges. Unit coverage carries it instead.
+- [x] **14.3 Cache isolation test:** two projects with identical files; `investigate` on each
       must not return the other's cached pack.
-- [ ] **Check:** tests green. Commit.
+      — done, and it found a real leak. `retrieval_signature()` covered only
+      `mode`/`embedding_model`/`rerank_model`, so two configs pointed at the **same DB
+      file** with different `cross_project` policies or `vector_index` read each other's
+      results as cache hits. Signature now covers all six, and
+      `test_same_db_different_config_does_not_share_cache` fails against the old code
+      (verified by reverting). `test_same_config_across_processes_hits_cache` proves
+      isolation did not cost the cache its purpose.
+- [x] **Check:** tests green (21 in `tests/test_phase14.py`, 480 total) · ruff ✅ · mypy ✅.
 
 ---
 
@@ -396,21 +434,21 @@ replace the 16.2 resolver.
 
 | Block | State |
 |---|---|
-| Phase 9 | 9.6 only — CI writes a v1 config, so CI is currently red |
-| Phase 10 | 5/9 languages; needs 10.1 (4 queries), 10.4, 10.7, 10.8 |
-| Phase 10b | deferred, gate not evaluable until 10.8 exists |
+| Phase 9 | **done** — CI config repaired to v2, `init --force`, polyglot step added; all 3 gates green |
+| Phase 10 | **done** — 9/9 languages, linter timeout reported, polyglot pack_recall 1.000 |
+| Phase 10b | deferred. Its gate is now **evaluable** (10.8 reports 1.000) but the SCIP cost was not justified; see 10b |
 | Phase 11 | **done** |
 | Phase 12 | **done** |
 | Phase 13 | 13.1/13.2/13.3/13.4/13.6 done on `perf/scale-phase13`; 13.5 open; the vec0 10× target is unreachable (see 13.3) |
-| Phase 14 | untouched (14.2 partly scaffolded) |
+| Phase 14 | **done** — progress notifications, diff mode (pack_recall 1.000), cache isolation (real leak fixed) |
 | Phase 15 | untouched |
 | Phase 16 | 16.5 only — add MCP `trace_flow` + HTTP `/trace` |
-| Phase 16b | untouched |
+| Phase 16b | unblocked (10.1 done) but not started |
 
-Highest-value next steps, in order: **9.6** (unblocks CI, and the CI config is still v1),
-**regenerate the 3 stale golden entries** in `eval/golden/ai_db.jsonl` (they reference
-Phase-10-deleted code and are the sole reason the code eval reads 0.80 vs the 0.85
-baseline), then **10.1** for Go/Rust/C++/Java (unblocks 10.8, 16b, and 10b's gate).
+Highest-value next steps, in order: **16.5** (the only remaining Phase 16 item, and
+Phase 16 is otherwise complete), then **13.5** (rerank tuning — cheap now that CUDA is
+available), then **16b** (unblocked by 10.1; the python-only guard can now be lifted
+language by language), then **15** (docs).
 
 ---
 

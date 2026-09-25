@@ -83,7 +83,7 @@ DIVERSITY_WINDOW = 10
 DIVERSITY_MAX_PER_FILE = 3
 
 # investigate
-SEED_K = {"locate": 12, "explain": 8, "impact": 5, "flow": 5}
+SEED_K = {"locate": 12, "explain": 8, "impact": 5, "flow": 5, "diff": 8}
 IMPACT_DEPTH = 3
 MAX_EXPANDED_PER_SEED = 10
 INVESTIGATE_MIN_BUDGET = 500
@@ -93,6 +93,11 @@ MAX_OMITTED = 15
 EXPLAIN_CALLER_SEEDS = 3
 MODULE_SEED_FACTOR = 0.3
 COMPOUND_MAX_DEFINITIONS = 2
+DIFF_QUERY_BOOST = 25.0  # a full query match must outrank raw diff density, or the mode is unusable
+                        # for a targeted "just the X" review; 25 is the density ratio
+                        # beyond which density wins.
+DIFF_SEEDS_PER_FILE = 3  # diversity device only: a diff must not spend every seed slot on one file
+GIT_TIMEOUT_S = 10  # git invocations from investigate/trace must not stall a request
 DELEGATE_MAX_TOKENS = 120  # seeds this small also get their callees' callees
 
 # Skill router

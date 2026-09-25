@@ -20,6 +20,7 @@ from __future__ import annotations
 import builtins
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any
@@ -28,7 +29,10 @@ from ai_db.analysis.pack import EntryPoint, Evidence, InvestigationPack
 from ai_db.analysis.resolve import Resolver, scope_of
 from ai_db.constants import (
     DELEGATE_MAX_TOKENS,
+    DIFF_QUERY_BOOST,
+    DIFF_SEEDS_PER_FILE,
     EXPLAIN_CALLER_SEEDS,
+    GIT_TIMEOUT_S,
     IMPACT_DEPTH,
     INVESTIGATE_BODY_SHARE,
     INVESTIGATE_MIN_BUDGET,
@@ -41,12 +45,14 @@ from ai_db.constants import (
     TRACE_DEPTH,
     TRACE_MAX_NODES,
 )
+from ai_db.errors import AiDbConfigError
 from ai_db.parser.chunker import count_tokens
 from ai_db.search.ranking import last_component
+from ai_db.search.retriever import SNIPPET_CHARS
 from ai_db.storage.models import ChunkRecord, SearchResult
 from ai_db.utils import get_allowed_projects
 
-MODES = ("locate", "explain", "impact", "flow")
+MODES = ("locate", "explain", "impact", "flow", "diff")
 ROLE_ORDER = {"seed": 0, "parent": 1, "callee": 2, "caller": 3, "test": 4}
 _BUILTINS = frozenset(dir(builtins)) | frozenset({
     "append", "extend", "get", "items", "keys", "values", "join", "split", "strip", "format",
@@ -67,6 +73,96 @@ def is_test_path(path: str) -> bool:
     base = parts[-1]
     return "tests" in parts[:-1] or "test" in parts[:-1] or base.startswith("test_") \
         or base.endswith(("_test.py", ".test.ts", ".test.js", ".spec.ts", ".spec.js", "_test.go"))
+
+
+def _git_changed_spans(since: str, root: str) -> dict[str, list[int]]:
+    """Return {absolute_filepath: [changed line numbers]} for `git diff <since>`.
+
+    `--unified=0` drops context lines, so the hunk headers carry the whole
+    signal. Raises AiDbConfigError when git cannot answer: a diff-mode
+    investigation with no diff would silently return an empty pack, which
+    reads as "nothing to review" rather than "I could not look".
+    """
+    try:
+        toplevel = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=GIT_TIMEOUT_S, cwd=root, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as err:
+        raise AiDbConfigError(f"mode 'diff' needs a git repository: {err}") from err
+    if toplevel.returncode != 0:
+        raise AiDbConfigError(f"mode 'diff' needs a git repository: {root} is not in one")
+
+    repo_root = toplevel.stdout.strip()
+    try:
+        diff = subprocess.run(
+            ["git", "diff", "--unified=0", "--no-color", since, "--"],
+            capture_output=True, text=True, timeout=GIT_TIMEOUT_S, cwd=repo_root, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as err:
+        raise AiDbConfigError(f"git diff against {since!r} failed: {err}") from err
+    if diff.returncode != 0:
+        raise AiDbConfigError(f"git diff against {since!r} failed: {diff.stderr.strip()}")
+
+    spans: dict[str, list[int]] = {}
+    current: str | None = None
+    hunk = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+    for line in diff.stdout.splitlines():
+        if line.startswith("+++ "):
+            # "+++ b/path" for a change, "+++ /dev/null" for a deletion
+            target = line[4:].strip()
+            if target == "/dev/null":
+                current = None
+            elif target.startswith("b/"):
+                current = os.path.join(repo_root, target[2:])
+            else:
+                current = os.path.join(repo_root, target)
+            continue
+        if current is None:
+            continue
+        m = hunk.match(line)
+        if m is None:
+            continue
+        start = int(m.group(1))
+        count = int(m.group(2) or 1)
+        spans.setdefault(current, []).extend(range(start, start + count))
+    return spans
+
+
+def _query_tokens(query: str) -> set[str]:
+    """Split a diff-mode query into comparable identifier tokens.
+
+    "symbol centrality rebuild after sync" has to match a chunk whose text says
+    "rebuild_symbol_centrality", so a literal substring test is useless here.
+    """
+    return {t for t in re.split(r"[^a-z0-9]+", query.lower()) if len(t) > 2}
+
+
+def _tokens_present(needle: set[str], chunk: ChunkRecord) -> bool:
+    """True when the chunk mentions enough of the query to be what was asked for.
+
+    Every token counts, on the chunk's text and its qualified name: a caller who
+    says "centrality rebuild" wants that function, not the file it sits in.
+    """
+    text = f"{chunk.qualified_name}\n{chunk.name}\n{chunk.content}".lower()
+    return all(token in text for token in needle)
+
+
+def _line_ranges(lines: list[int]) -> str:
+    """Collapse [1,2,3,7,9,10] into "L1-3 L7 L9-10" for display."""
+    if not lines:
+        return ""
+    ordered = sorted(set(lines))
+    parts: list[str] = []
+    start = prev = ordered[0]
+    for ln in ordered[1:]:
+        if ln == prev + 1:
+            prev = ln
+            continue
+        parts.append(f"L{start}" if start == prev else f"L{start}-{prev}")
+        start = prev = ln
+    parts.append(f"L{start}" if start == prev else f"L{start}-{prev}")
+    return " ".join(parts)
 
 
 @dataclass
@@ -91,19 +187,34 @@ class Investigator:
                     project: str | None = None, allowed_projects: list[str] | None = None,
                     languages: list[str] | None = None, chunk_types: list[str] | None = None,
                     modified_since: float | None = None,
-                    relative_to: str | None = None) -> InvestigationPack:
+                    relative_to: str | None = None,
+                    since: str | None = None,
+                    root: str | None = None) -> InvestigationPack:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
         if budget_tokens < INVESTIGATE_MIN_BUDGET:
             raise ValueError(f"budget_tokens must be >= {INVESTIGATE_MIN_BUDGET}")
-        if not query.strip():
+        if not query.strip() and mode != "diff":
             raise ValueError("query must not be empty")
+        if mode == "diff" and not since:
+            raise AiDbConfigError("mode 'diff' requires 'since' (a git ref to diff against)")
 
         allowed = get_allowed_projects(project or "global", allowed_projects,
                                        self.vdb.query_engine.cross_project)
         filters = {"allowed_projects": allowed, "languages": languages,
                    "chunk_types": chunk_types, "modified_since": modified_since}
-        seeds = self.vdb.query_engine.search(query, filters, SEED_K[mode])
+
+        if mode == "diff":
+            # Seeds come from the diff, not from retrieval.
+            spans = _git_changed_spans(since or "", root or ".")
+            seeds = self._diff_seeds(spans, query, allowed)
+            changes = [{"filepath": path,
+                        "lines": _line_ranges(lines),
+                        "changed_lines": len(lines)}
+                       for path, lines in sorted(spans.items())]
+        else:
+            seeds = self.vdb.query_engine.search(query, filters, SEED_K[mode])
+            changes = []
 
         items: dict[int, _Item] = {}
         edges: list[list[str]] = []
@@ -113,14 +224,15 @@ class Investigator:
         seed_items = sorted((it for it in items.values() if it.role == "seed"),
                             key=lambda it: (-it.score, it.order))
 
-        if mode in ("explain", "impact", "flow"):
+        if mode in ("explain", "impact", "flow", "diff"):
             self._add_parents(seed_items, items)
             self._add_tests(seed_items, allowed, items, tests, relative_to)
         if mode == "explain":
             self._add_callees(seed_items, allowed, items, edges, unresolved)
             # direct users of the top seeds show how the code is entered
             self._add_callers(seed_items[:EXPLAIN_CALLER_SEEDS], allowed, items, edges, depth_limit=1)
-        if mode == "impact":
+        if mode in ("impact", "diff"):
+            # diff mode answers "what breaks because of this change"
             self._add_callers(seed_items, allowed, items, edges, depth_limit=IMPACT_DEPTH)
 
         pack = InvestigationPack(query=query, mode=mode, budget_tokens=budget_tokens)
@@ -137,6 +249,7 @@ class Investigator:
         pack.tests = tests
         pack.unresolved = sorted(unresolved)
         pack.recent_changes = self._recent_changes([it.chunk.filepath for it in seed_items])
+        pack.changes = changes
 
         if mode == "flow":
             # For flow mode: pick the best entry-like seed and run trace from it
@@ -207,6 +320,83 @@ class Investigator:
             existing.score = max(existing.score, score)
             return
         items[_cid(chunk)] = _Item(chunk, role, score, [why], len(items) + 1)
+
+    # ----------------------------------------------------------- diff seeds
+
+    def _diff_seeds(self, spans: dict[str, list[int]], query: str,
+                    allowed: list[str]) -> list[SearchResult]:
+        """Rank the symbols touched by a diff.
+
+        ``query`` is used only to break ties, preferring chunks whose text
+        contains it.
+        """
+        if not spans:
+            return []
+
+        needle = _query_tokens(query)
+        by_file: list[list[SearchResult]] = []
+        for filepath, lines in spans.items():
+            try:
+                chunks = self.db.get_chunks_for_file(filepath)
+            except FileNotFoundError:
+                continue
+            per_file: list[tuple[float, int, int, SearchResult]] = []
+            for chunk in chunks:
+                if chunk.project not in allowed:
+                    continue
+                if chunk.chunk_type == "module":
+                    continue
+                hit = sum(1 for ln in lines if chunk.start_line <= ln <= chunk.end_line)
+                if hit == 0:
+                    continue
+                # Normalize by chunk size: a 400-line class that had three
+                # lines touched must not outrank the 5-line function the change
+                # is actually about. hit/sqrt(span) rises for focused chunks
+                # and falls as the containing chunk grows around the edit.
+                size = max(1, chunk.end_line - chunk.start_line + 1)
+                score = hit / size ** 0.5
+                # The query is the caller telling us which part of the diff
+                # they care about ("just the centrality rebuild"). A tie-break
+                # nudge loses to raw diff density, so it has to be a multiplier.
+                if needle and _tokens_present(needle, chunk):
+                    score *= DIFF_QUERY_BOOST
+                per_file.append((score, size, hit, SearchResult(
+                    chunk_id=chunk.id or 0,
+                    filepath=chunk.filepath,
+                    name=chunk.name,
+                    chunk_type=chunk.chunk_type,
+                    project=chunk.project,
+                    start_line=chunk.start_line,
+                    end_line=chunk.end_line,
+                    score=score,
+                    snippet=chunk.content[:SNIPPET_CHARS],
+                    qualified_name=chunk.qualified_name,
+                    language=chunk.language,
+                    parent_id=chunk.parent_id,
+                    signals={"diff_lines": float(hit),
+                             "diff_file": float(len(lines))},
+                )))
+            # A class_header spans every method in its file, so it always covers
+            # at least as many changed lines as the method that was actually
+            # edited. Drop any chunk whose changed lines are fully covered by a
+            # strictly smaller one, so the seed is the most specific symbol
+            # available rather than its container.
+            specific = [entry for entry in per_file
+                        if not any(other[2] >= entry[2] and other[1] < entry[1]
+                                   for other in per_file if other[3] is not entry[3])]
+            specific.sort(key=lambda row: (-row[0], row[1]))
+            if specific:
+                by_file.append([row[3] for row in specific[:DIFF_SEEDS_PER_FILE]])
+        # Round-robin one chunk per file at a time, and do NOT re-sort: the
+        # interleaved order is the ranking. A commit that rewrites a 400-line
+        # markdown file would otherwise fill every seed slot and hide the code.
+        ordered = sorted(by_file, key=lambda group: -group[0].score)
+        results: list[SearchResult] = []
+        for depth in range(DIFF_SEEDS_PER_FILE):
+            for group in ordered:
+                if depth < len(group):
+                    results.append(group[depth])
+        return results[:SEED_K["diff"]]
 
     def _add_parents(self, seeds: list[_Item], items: dict[int, _Item]) -> None:
         parent_ids = [s.chunk.parent_id for s in seeds if s.chunk.parent_id is not None]

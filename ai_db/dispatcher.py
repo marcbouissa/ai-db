@@ -43,6 +43,8 @@ class ServiceDispatcher:
         self.db_path = db_path or getattr(db, "db_path", None)
         self._lazy_db: Any | None = None
         self._tools: dict[str, ToolDefinition] = {}
+        # Set for the duration of a tools/call that carries a progressToken.
+        self._progress: Any = None
         self._register_default_tools()
 
     def register_tool(
@@ -84,11 +86,17 @@ class ServiceDispatcher:
         """Returns list of all registered tools with schemas."""
         return [tool.to_mcp_dict() for tool in self._tools.values()]
 
-    def execute(self, tool_name: str, arguments: dict[str, Any] | None = None) -> Any:
+    def execute(self, tool_name: str, arguments: dict[str, Any] | None = None,
+                progress: Any = None) -> Any:
         """
         Validates arguments against schema and executes the tool handler.
         Raises KeyError if tool is unregistered.
         Raises ValueError if required arguments are missing.
+
+        ``progress`` is an optional ``progress(done, total, message)`` callback.
+        It is published on the dispatcher for the duration of the call so deep
+        code (indexer, investigator) can report without knowing about MCP.
+        Other transports simply pass None.
         """
         if arguments is None:
             arguments = {}
@@ -99,6 +107,26 @@ class ServiceDispatcher:
         if not tool:
             raise KeyError(f"Unknown tool: '{tool_name}'. Available: {list(self._tools.keys())}")
 
+        previous = self._progress
+        self._progress = progress
+        try:
+            return self._execute_validated(tool_name, tool, arguments)
+        finally:
+            self._progress = previous
+            # Detach the sink so a later direct call (CLI, tests) cannot report.
+            for candidate in (self.db, self._lazy_db):
+                indexer = getattr(candidate, "indexer", None) if candidate else None
+                if indexer is not None and hasattr(indexer, "progress_sink"):
+                    indexer.progress_sink = None
+
+    def report_progress(self, done: int, total: int, message: str = "") -> None:
+        """Emit a progress update if a transport supplied a callback."""
+        cb = getattr(self, "_progress", None)
+        if cb is not None:
+            cb(int(done), int(total), message)
+
+    def _execute_validated(self, tool_name: str, tool: Any,
+                           arguments: dict[str, Any]) -> Any:
         args = dict(arguments)
 
         # Legacy parameter normalization
@@ -128,6 +156,16 @@ class ServiceDispatcher:
 
     def _get_db(self, args: dict[str, Any] | None = None) -> Any:
         """Resolves active VectorDB instance."""
+        db = self._resolve_db(args)
+        # Bridge progress to the indexer, which lives under VectorDB and has no
+        # knowledge of MCP (TODO 14.1).
+        if db is not None and getattr(self, "_progress", None) is not None:
+            indexer = getattr(db, "indexer", None)
+            if indexer is not None:
+                indexer.progress_sink = self.report_progress
+        return db
+
+    def _resolve_db(self, args: dict[str, Any] | None = None) -> Any:
         if self.db is not None:
             return self.db
         target_path = (args.get("db") if args else None) or self.db_path
@@ -436,13 +474,18 @@ class ServiceDispatcher:
                 "relevant code, stubs + ref handles (use 'expand') for related code, call graph, "
                 "covering tests, recent commits and unresolved symbols, all within a token budget. "
                 "mode: 'locate' (where is X), 'explain' (how does X work: adds callees, classes, "
-                "tests), 'impact' (what breaks if X changes: adds transitive callers, tests)."
+                "tests), 'impact' (what breaks if X changes: adds transitive callers, tests), "
+                "'flow' (call path through the graph), 'diff' (what this change touches: seeds "
+                "from `git diff <since>`, plus the callers of every changed symbol, so the pack is "
+                "the review surface of the change)."
             ),
             parameters_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "The question or concept"},
-                    "mode": {"type": "string", "enum": ["locate", "explain", "impact"], "default": "explain"},
+                    "query": {"type": "string", "description": "The question or concept. Optional in diff mode, where it only breaks ties."},
+                    "mode": {"type": "string", "enum": ["locate", "explain", "impact", "flow", "diff"], "default": "explain"},
+                    "since": {"type": "string", "description": "diff mode only: git ref to diff against, e.g. 'HEAD~1', 'main'"},
+                    "root": {"type": "string", "description": "diff mode only: repository root to diff in (default '.')"},
                     "budget_tokens": {"type": "integer", "default": 8000, "description": "Max tokens of the returned pack (>= 500)"},
                     "project": {"type": "string", "description": "Project scope"},
                     "allow_project": {"type": "array", "items": {"type": "string"}, "description": "Allowed projects"},
@@ -450,7 +493,6 @@ class ServiceDispatcher:
                     "chunk_types": {"type": "array", "items": {"type": "string"}},
                     "modified_since": {"type": "number"},
                 },
-                "required": ["query"],
             },
             handler=self._handle_investigate,
             category="search",
@@ -874,6 +916,7 @@ class ServiceDispatcher:
             allowed_projects=args.get("allow_project") or args.get("allowed_projects"),
             languages=args.get("languages"), chunk_types=args.get("chunk_types"),
             modified_since=args.get("modified_since"),
+            since=args.get("since"), root=args.get("root"),
         )
 
     def _handle_prune(self, args: dict[str, Any]) -> Any:

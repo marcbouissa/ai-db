@@ -10,7 +10,7 @@ from typing import Any
 
 from ai_db.eval.metrics import mrr, ndcg_at_k, recall_at_k
 
-VALID_KINDS = ("locate", "explain", "impact")
+VALID_KINDS = ("locate", "explain", "impact", "diff")
 EVAL_PROJECT = "ai-db-eval"
 
 
@@ -146,8 +146,14 @@ def run_pack(golden_path: str, root: str, db: Any, budget_tokens: int = 8000,
     per_query: list[dict[str, Any]] = []
     for item in golden:
         t0 = time.perf_counter()
+        # Diff-mode items name the git ref to diff against; the other modes
+        # have no such field and must not be handed a made-up one.
+        if item["kind"] == "diff" and not item.get("since"):
+            raise ValueError(
+                f"diff golden item {item['query']!r} needs a 'since' git ref")
         pack = db.investigate(item["query"], budget_tokens=budget_tokens, mode=item["kind"],
-                              project=EVAL_PROJECT)
+                              project=EVAL_PROJECT, since=item.get("since"),
+                              root=item.get("root", root))
         latencies.append((time.perf_counter() - t0) * 1000.0)
         ranked = [(os.path.relpath(e["filepath"], root), e["qualified_name"]) for e in pack["evidence"]]
         r = recall_at_k(ranked, _expected_tuples(item), len(ranked) or 1)

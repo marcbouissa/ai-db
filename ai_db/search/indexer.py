@@ -115,6 +115,9 @@ class Indexer:
         self.db = db
         self.db_path = getattr(db, "db_path", getattr(db, "backend_name", "storage"))
         self.post_sync_hooks: list[Any] = []
+        # progress(done, total, message) callback, set by VectorDB when a
+        # transport asked for progress. None means "do not report".
+        self.progress_sink: Any = None
         self._ignore_patterns: list[str] = []
 
     def set_ignore_patterns(self, patterns: list[str]) -> None:
@@ -178,11 +181,13 @@ class Indexer:
         with self.db.transaction():
             for stored_path in to_prune:
                 self.prune_file(stored_path)
-            for parsed in parsed_files:
+            for i, parsed in enumerate(parsed_files, 1):
                 if parsed.filepath in updated_paths:
                     # chunks are diffed in _write_parsed so unchanged ones keep their ids
                     self.db.clear_file_metadata(parsed.filepath)
                 self._write_parsed(parsed)
+                # report after parsing, then every 50 written files (TODO 14.1)
+                self._report(i, len(parsed_files), f"indexed {parsed.filepath}")
 
         changed = bool(to_prune or parsed_files)
         touched = {p.project for p in parsed_files if p.project}
@@ -272,6 +277,14 @@ class Indexer:
             self.db.insert_symbol_refs(parsed.refs)
         if parsed.annotations:
             self.db.insert_annotations(parsed.annotations)
+
+    def _report(self, done: int, total: int, message: str) -> None:
+        """Emit progress if a transport asked for it: always first, then every 50."""
+        if done != 1 and done % 50 != 0 and done != total:
+            return
+        # VectorDB sets this from the dispatcher; None for CLI/tests/raw backends.
+        if self.progress_sink is not None:
+            self.progress_sink(done, total, message)
 
     def _index_file(self, filepath: str, file_hash: str, project: str = "global") -> None:
         with self.db.transaction():

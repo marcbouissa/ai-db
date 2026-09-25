@@ -37,6 +37,9 @@ class InvestigationPack:
     tests: list[dict[str, Any]] = field(default_factory=list)
     recent_changes: list[dict[str, Any]] = field(default_factory=list)
     files_touched: list[str] = field(default_factory=list)
+    # diff mode: the changed line spans the seeds came from, so a reader can
+    # see the change itself and not only the symbols it landed in.
+    changes: list[dict[str, Any]] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
     omitted: list[dict[str, Any]] = field(default_factory=list)
     omitted_count: int = 0

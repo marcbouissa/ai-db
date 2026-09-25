@@ -126,10 +126,20 @@ class VectorDB:
             self.query_engine.retriever = LexicalRetriever(self.backend)
 
     def retrieval_signature(self) -> dict[str, Any]:
+        """Everything that changes what a query would return, for cache isolation.
+
+        A cached pack is only valid for the stack that produced it. Two configs
+        pointed at the same DB file -- different vector index, different
+        cross-project policy, different weights -- would otherwise read each
+        other's results as hits, and the caller has no way to tell. (TODO 14.3)
+        """
         return {
             "mode": self.config.retrieval_mode,
             "embedding_model": self.embedder.model_id if self.embedder else None,
             "rerank_model": self.reranker.model_id if self.reranker else None,
+            "vector_index": self.config.storage.options.get("vector_index", "exact"),
+            "cross_project": self.config.cross_project,
+            "embedder_device": getattr(self.embedder, "device", None),
         }
 
     def _cached(self, tool: str, query: str, params: dict[str, Any], compute: Any) -> Any:
