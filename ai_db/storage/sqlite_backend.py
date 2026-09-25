@@ -8,6 +8,7 @@ transactions, and one connection per thread (WAL allows concurrent readers).
 import json
 import os
 import sqlite3
+import struct
 import threading
 import time
 import zlib
@@ -17,7 +18,13 @@ from typing import Any
 
 from ai_db.constants import DEFAULT_DB_FILE
 from ai_db.errors import AiDbConfigError, AiDbQueryError, AiDbStorageError
-from ai_db.search.query_builder import build_fts, identifier_words, split_identifier
+from ai_db.search.query_builder import (
+    base_terms,
+    build_fts,
+    expand_terms,
+    identifier_words,
+    split_identifier,
+)
 from ai_db.storage.backend import StorageBackend, VectorCapable
 from ai_db.storage.models import (
     AnalysisRefRecord,
@@ -33,10 +40,13 @@ from ai_db.storage.models import (
 )
 
 ZLIB_LEVEL = 6
-SCHEMA_VERSION = "8"
+SCHEMA_VERSION = "9"
 # Tables rebuilt (not migrated) when SCHEMA_VERSION changes; the next sync re-indexes.
 INDEX_TABLES = ("fts_index", "chunks", "symbols", "symbol_refs", "annotations",
                 "syntax_errors", "analysis_refs", "files", "semantic_cache")
+# Derived tables dropped wholesale on a schema bump; repopulated by sync_skills /
+# save_context in hybrid mode.
+DERIVED_TABLES = ("skill_vectors", "context_vectors")
 MIN_SQLITE_VERSION = (3, 35, 0)  # INSERT ... RETURNING
 
 
@@ -52,6 +62,32 @@ def _loads(raw: str, what: str) -> Any:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise AiDbStorageError(f"corrupt JSON in {what}: {exc}") from exc
+
+
+def pack_vector(vec: list[float]) -> bytes:
+    """float32 little-endian blob (stdlib ``struct``; no numpy needed)."""
+    return struct.pack(f"<{len(vec)}f", *vec)
+
+
+def unpack_vector(blob: bytes) -> list[float]:
+    n = len(blob) // 4
+    return list(struct.unpack(f"<{n}f", blob[: n * 4]))
+
+
+def cosine_distance(a: list[float], b: list[float]) -> float:
+    """1 - cosine similarity. Returns 1.0 (maximally distant) on a length
+    mismatch or a zero vector, so a stale vector can never outrank a good one."""
+    if not a or not b or len(a) != len(b):
+        return 1.0
+    dot = na = nb = 0.0
+    for x, y in zip(a, b):
+        dot += x * y
+        na += x * x
+        nb += y * y
+    if na <= 0.0 or nb <= 0.0:
+        return 1.0
+    similarity: float = dot / ((na ** 0.5) * (nb ** 0.5))
+    return 1.0 - similarity
 
 
 class SQLiteBackend(StorageBackend, VectorCapable):
@@ -187,6 +223,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         if stored_ver is not None and stored_ver != SCHEMA_VERSION:
             for table in INDEX_TABLES:
                 cur.execute(f"DROP TABLE IF EXISTS {table}")
+            for table in DERIVED_TABLES:
+                cur.execute(f"DROP TABLE IF EXISTS {table}")
             self._drop_extra_index_tables(cur)
 
         cur.execute("""
@@ -289,6 +327,17 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             )
         """)
 
+        # Hybrid retrieval for skills: BLOB float32 vectors, brute-force cosine.
+        # Plain BLOB (not vec0) so the dimension follows the configured embedder.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS skill_vectors (
+                name TEXT NOT NULL,
+                project TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                PRIMARY KEY (name, project)
+            )
+        """)
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS contexts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -313,6 +362,15 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 summary,
                 content,
                 tokenize = 'porter unicode61'
+            )
+        """)
+
+        # Hybrid retrieval for contexts: cascades away with the parent row.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS context_vectors (
+                context_id INTEGER PRIMARY KEY
+                    REFERENCES contexts(id) ON DELETE CASCADE,
+                embedding BLOB NOT NULL
             )
         """)
 
@@ -1441,11 +1499,11 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
-        clean = [t.strip() for t in query.split() if t.strip()]
-        if not clean:
+        terms = expand_terms(query)
+        if not terms:
             return []
         cur = self.conn.cursor()
-        fts_query = " OR ".join(f'"{t.replace(chr(34), chr(34)+chr(34))}"' for t in clean)
+        fts_query = build_fts(terms, base_terms(query))
 
         clauses = ["fts_skills MATCH ?"]
         params: list[Any] = [fts_query]
@@ -1493,7 +1551,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     # Contexts (Session Memory)
     # =========================================================================
 
-    def save_context(self, context: ContextRecord) -> None:
+    def save_context(self, context: ContextRecord) -> int:
         self._check_closed()
         cur = self.conn.cursor()
         zcontent = zlib.compress(context.full_notes.encode("utf-8"), level=ZLIB_LEVEL)
@@ -1511,9 +1569,12 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 open_tasks = excluded.open_tasks,
                 timestamp = excluded.timestamp,
                 zcontent = excluded.zcontent
+            RETURNING id
             """,
             (context.session_id, context.project, context.title, context.summary, active_json, tasks_json, context.timestamp, zcontent)
         )
+        row = cur.fetchone()
+        context_id = int(row["id"]) if row is not None else 0
 
         cur.execute("DELETE FROM fts_contexts WHERE session_id = ? AND project = ?", (context.session_id, context.project))
         cur.execute(
@@ -1521,6 +1582,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             (context.session_id, context.project, context.title or "", context.summary, context.full_notes[:4000])
         )
         self._auto_commit()
+        return context_id
 
     def get_context(
         self,
@@ -1610,11 +1672,11 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
-        clean = [t.strip() for t in query.split() if t.strip()]
-        if not clean:
+        terms = expand_terms(query)
+        if not terms:
             return []
         cur = self.conn.cursor()
-        fts_query = " OR ".join(f'"{t.replace(chr(34), chr(34)+chr(34))}"' for t in clean)
+        fts_query = build_fts(terms, base_terms(query))
 
         clauses = ["fts_contexts MATCH ?"]
         params: list[Any] = [fts_query]
@@ -1818,31 +1880,29 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     # Vector Search for Skills and Contexts (Hybrid Search Support)
     # =========================================================================
 
-    def _ensure_skills_vector_index(self) -> None:
-        """Ensure the skills vector index exists."""
+    def upsert_skill_vector(self, name: str, project: str, embedding: list[float]) -> None:
+        """Store (or replace) one skill embedding."""
         self._check_closed()
-        cur = self.conn.cursor()
-        cur.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS skills_vectors USING vec0(
-                name TEXT PRIMARY KEY,
-                embedding FLOAT[768] DISTANCE_METRIC=cosine
-            )
-        """)
+        self.conn.execute(
+            "INSERT OR REPLACE INTO skill_vectors (name, project, embedding) VALUES (?, ?, ?)",
+            (name, project, pack_vector(embedding)),
+        )
         self._auto_commit()
 
-    def _ensure_contexts_vector_index(self) -> None:
-        """Ensure the contexts vector index exists."""
+    def delete_skill_vectors(self, name: str, project: str) -> None:
+        """Drop the embedding for a removed skill."""
         self._check_closed()
-        cur = self.conn.cursor()
-        cur.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS contexts_vectors USING vec0(
-                session_id TEXT PRIMARY KEY,
-                embedding FLOAT[768] DISTANCE_METRIC=cosine,
-                project TEXT,
-                language TEXT,
-                chunk_type TEXT
-            )
-        """)
+        self.conn.execute(
+            "DELETE FROM skill_vectors WHERE name = ? AND project = ?", (name, project))
+        self._auto_commit()
+
+    def upsert_context_vector(self, context_id: int, embedding: list[float]) -> None:
+        """Store (or replace) one context embedding, keyed by contexts.id."""
+        self._check_closed()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO context_vectors (context_id, embedding) VALUES (?, ?)",
+            (context_id, pack_vector(embedding)),
+        )
         self._auto_commit()
 
     def search_skills_vector(
@@ -1851,32 +1911,26 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         allowed_projects: list[str] | None = None,
         limit: int = 20,
     ) -> list[tuple[str, float]]:
-        """Search skills via vector similarity."""
+        """Skills by cosine distance to ``vector`` (closest first).
+
+        Brute force: a user has tens of skills, so an ANN index would cost more
+        than it saves and would pin the vector width at DDL time.
+        """
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
-        self._ensure_skills_vector_index()
-        cur = self.conn.cursor()
-        import sqlite_vec
-        clauses = []
-        params: list[Any] = [sqlite_vec.serialize_float32(vector)]
+        sql = "SELECT name, project, embedding FROM skill_vectors"
+        params: list[Any] = []
         if allowed_projects is not None:
-            placeholders = ",".join("?" for _ in allowed_projects)
-            clauses.append(f"project IN ({placeholders})")
+            sql += f" WHERE project IN ({','.join('?' * len(allowed_projects))})"
             params.extend(allowed_projects)
-        where = " AND ".join(clauses) if clauses else ""
-        params.append(limit)
-        cur.execute(
-            f"""
-            SELECT name, vec_distance_cosine(embedding, ?) AS distance
-            FROM skills_vectors
-            {f"WHERE {where}" if where else ""}
-            ORDER BY distance ASC
-            LIMIT ?
-            """,
-            params,
-        )
-        return [(r["name"], round(float(r["distance"]), 3)) for r in cur.fetchall()]
+        rows = self.conn.execute(sql, params).fetchall()
+        scored = [
+            (r["name"], cosine_distance(vector, unpack_vector(r["embedding"])))
+            for r in rows
+        ]
+        scored.sort(key=lambda t: t[1])
+        return [(n, round(d, 4)) for n, d in scored[:limit]]
 
     def search_contexts_vector(
         self,
@@ -1884,45 +1938,33 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         allowed_projects: list[str] | None = None,
         top_k: int = 10,
     ) -> list[dict[str, Any]]:
-        """Search contexts via vector similarity."""
+        """Contexts by cosine distance to ``vector`` (closest first)."""
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
-        self._ensure_contexts_vector_index()
-        cur = self.conn.cursor()
-        import sqlite_vec
-        clauses = []
-        params: list[Any] = [sqlite_vec.serialize_float32(vector)]
-        if allowed_projects:
-            placeholders = ",".join("?" for _ in allowed_projects)
-            clauses.append(f"project IN ({placeholders})")
+        sql = """
+            SELECT c.session_id, c.project, c.title, c.summary, c.timestamp, v.embedding
+            FROM context_vectors v
+            JOIN contexts c ON c.id = v.context_id
+        """
+        params: list[Any] = []
+        if allowed_projects is not None:
+            sql += f" WHERE c.project IN ({','.join('?' * len(allowed_projects))})"
             params.extend(allowed_projects)
-        where = " AND ".join(clauses) if clauses else ""
-        params = [sqlite_vec.serialize_float32(vector)]
-        if clauses and allowed_projects:
-            params.extend(allowed_projects)
-        params.append(top_k)
-        cur.execute(
-            f"""
-            SELECT session_id, project, title, summary, vec_distance_cosine(embedding, ?) AS distance
-            FROM contexts_vectors
-            {f"WHERE {where}" if where else ""}
-            ORDER BY distance ASC
-            LIMIT ?
-            """,
-            params
-        )
-        return [
+        rows = self.conn.execute(sql, params).fetchall()
+        scored = [
             {
                 "session_id": r["session_id"],
                 "project": r["project"],
                 "title": r["title"],
                 "summary": r["summary"],
-                "distance": round(float(r["distance"]), 3),
-                "timestamp": r["timestamp"]
+                "distance": round(cosine_distance(vector, unpack_vector(r["embedding"])), 4),
+                "timestamp": r["timestamp"],
             }
-            for r in cur.fetchall()
+            for r in rows
         ]
+        scored.sort(key=lambda d: d["distance"])
+        return scored[:top_k]
 
     def search_skills_hybrid(
         self,
@@ -1936,14 +1978,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
-        self._ensure_skills_vector_index()
-        from ai_db.search.query_builder import build_fts, expand_terms
-        clean = [t.strip() for t in query.split() if t.strip()]
-        if not clean:
+        if not expand_terms(query):
             return []
-        expanded = expand_terms(query)
-        core = list(dict.fromkeys(expand_terms(query)))
-        build_fts(expanded, core)  # for side effects / validation
         fts_results = self.search_skills(query, allowed_projects, limit)
         vec_results = self.search_skills_vector(vector, allowed_projects, limit)
         # RRF fusion
@@ -1968,51 +2004,34 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
-        self._ensure_contexts_vector_index()
-        from ai_db.search.query_builder import build_fts, expand_terms
-        clean = [t.strip() for t in query.split() if t.strip()]
-        if not clean:
+        if not expand_terms(query):
             return []
-        expanded = expand_terms(query)
-        core = list(dict.fromkeys(expand_terms(query)))
-        build_fts(expanded, core)  # for side effects / validation
         fts_results = self.search_contexts(query, allowed_projects, top_k)
         vec_results = self.search_contexts_vector(vector, allowed_projects, top_k)
-        # RRF fusion
-        scores: dict[str, float] = {}
+
+        # RRF fusion over (session_id, project); title alone is not unique/nullable.
+        scores: dict[tuple[str, str], float] = {}
+        rows: dict[tuple[str, str], dict[str, Any]] = {}
         for rank, item in enumerate(fts_results, 1):
-            scores[item["title"]] = scores.get(item["title"], 0.0) + 1.0 / (rrf_k + rank)
+            key = (item["session_id"], item["project"])
+            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank)
+            rows.setdefault(key, item)
         for rank, item in enumerate(vec_results, 1):
-            scores[item["title"]] = scores.get(item["title"], 0.0) + 1.0 / (rrf_k + rank)
-        sorted_items = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        # Reconstruct full dicts from top results
-        cur = self.conn.cursor()
-        top_titles = [item for item, _ in sorted_items[:top_k]]
-        if not top_titles:
-            return []
-        placeholders = ",".join("?" for _ in top_titles)
-        cur.execute(
-            f"""
-            SELECT fts_contexts.session_id, fts_contexts.project, fts_contexts.title,
-                   fts_contexts.summary, bm25(fts_contexts) as rank, contexts.timestamp
-            FROM fts_contexts
-            JOIN contexts ON fts_contexts.session_id = contexts.session_id AND fts_contexts.project = contexts.project
-            WHERE fts_contexts.title IN ({placeholders})
-            ORDER BY rank
-            LIMIT ?
-            """,
-            top_titles + [top_k]
-        )
+            key = (item["session_id"], item["project"])
+            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank)
+            rows.setdefault(key, item)
+
+        ordered = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
         return [
             {
-                "session_id": r["session_id"],
-                "project": r["project"],
-                "title": r["title"],
-                "summary": r["summary"],
-                "score": round(abs(float(r["rank"])), 3),
-                "timestamp": r["timestamp"]
+                "session_id": rows[key]["session_id"],
+                "project": rows[key]["project"],
+                "title": rows[key]["title"],
+                "summary": rows[key]["summary"],
+                "score": round(score, 6),
+                "timestamp": rows[key]["timestamp"],
             }
-            for r in cur.fetchall()
+            for key, score in ordered
         ]
 
     # =========================================================================

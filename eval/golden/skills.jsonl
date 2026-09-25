@@ -1,0 +1,20 @@
+{"prompt": "can you create a pdf report for me", "expected_skill": "pdf-report"}
+{"prompt": "please build a pdf report from this data", "expected_skill": "pdf-report"}
+{"prompt": "convert this document to pdf", "expected_skill": "pdf-report"}
+{"prompt": "I need a pdf report generated quarterly", "expected_skill": "pdf-report"}
+{"prompt": "build a spreadsheet with these numbers", "expected_skill": "excel-helper"}
+{"prompt": "analyse the excel file I attached", "expected_skill": "excel-helper"}
+{"prompt": "make a pivot table from the csv", "expected_skill": "excel-helper"}
+{"prompt": "help me analyse this spreadsheet of sales", "expected_skill": "excel-helper"}
+{"prompt": "draft an email to the client", "expected_skill": "email-drafter"}
+{"prompt": "rewrite this message to sound professional", "expected_skill": "email-drafter"}
+{"prompt": "reply to this thread please", "expected_skill": "email-drafter"}
+{"prompt": "write an email announcing the outage", "expected_skill": "email-drafter"}
+{"prompt": "review this pull request", "expected_skill": "code-review"}
+{"prompt": "review my code for bugs", "expected_skill": "code-review"}
+{"prompt": "check this diff before I merge", "expected_skill": "code-review"}
+{"prompt": "please review the new module I wrote", "expected_skill": "code-review"}
+{"prompt": "write release notes for 2.1", "expected_skill": "release-notes"}
+{"prompt": "changelog for this version please", "expected_skill": "release-notes"}
+{"prompt": "summarise this release from the commits", "expected_skill": "release-notes"}
+{"prompt": "generate release notes from merged pull requests", "expected_skill": "release-notes"}

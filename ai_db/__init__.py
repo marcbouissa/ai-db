@@ -84,6 +84,10 @@ class VectorDB:
         # Last hook: any change to the index (chunks, vectors, graph) invalidates cached results.
         self.indexer.post_sync_hooks.append(
             lambda changed: self.backend.bump_index_generation() if changed else None)
+        # The embedder only exists after _configure_retrieval; skills and contexts
+        # embed at write time, so hand it over once it is known.
+        self.skill_router.embedder = self.embedder
+        self.context_memory.embedder = self.embedder
         from ai_db.telemetry.tracker import TelemetryTracker
         self.telemetry_tracker = TelemetryTracker(conn=self.conn, db_path=self.db_path)
 

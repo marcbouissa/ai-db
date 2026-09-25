@@ -164,3 +164,51 @@ def run_pack(golden_path: str, root: str, db: Any, budget_tokens: int = 8000,
         "latency_ms_p95": round(_percentile(latencies, 95), 2),
         "per_query": per_query,
     }
+
+
+def load_skills_golden(golden_path: str) -> list[dict[str, Any]]:
+    """Load a skill-routing golden set: one ``{"prompt", "expected_skill"}`` per line."""
+    items: list[dict[str, Any]] = []
+    with open(golden_path, "r", encoding="utf-8") as f:
+        for lineno, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            item = json.loads(line)
+            if not isinstance(item.get("prompt"), str) or not item["prompt"].strip():
+                raise ValueError(f"{golden_path}:{lineno}: 'prompt' must be a non-empty string")
+            if not isinstance(item.get("expected_skill"), str) or not item["expected_skill"].strip():
+                raise ValueError(f"{golden_path}:{lineno}: 'expected_skill' must be a non-empty string")
+            items.append(item)
+    return items
+
+
+def run_skills(golden_path: str, db: Any, top_k: int = 3,
+               min_confidence: float | None = None) -> dict[str, Any]:
+    """Skill routing: top-1 accuracy of ``route_skills`` over a golden prompt set.
+
+    Depends on the *locally installed* skills, so this is deliberately not part
+    of the CI regression gate (see TODO 11.9).
+    """
+    golden = load_skills_golden(golden_path)
+    router = db.skill_router
+    hits: list[float] = []
+    per_query: list[dict[str, Any]] = []
+    for item in golden:
+        routed = router.route_skills(item["prompt"], top_k=top_k,
+                                     min_confidence=min_confidence)
+        top = routed[0]["name"] if routed else None
+        ok = 1.0 if top == item["expected_skill"] else 0.0
+        hits.append(ok)
+        per_query.append({
+            "prompt": item["prompt"],
+            "expected_skill": item["expected_skill"],
+            "routed": top,
+            "top1": ok,
+        })
+    return {
+        "queries": len(golden),
+        "skills_indexed": len(router.db.get_skills()),
+        "top1_accuracy": round(statistics.fmean(hits), 4) if hits else 0.0,
+        "per_query": per_query,
+    }

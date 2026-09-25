@@ -25,20 +25,31 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
         materialize_tracked,
         run,
         run_pack,
+        run_skills,
     )
 
     with tempfile.TemporaryDirectory(prefix="ai_db_eval_") as tmp:
-        root = os.path.abspath(args.root)
-        if not args.all_files:
-            root = materialize_tracked(root, os.path.join(tmp, "corpus"))
-        db = VectorDB(os.path.join(tmp, "eval.db"), config=cfg)
-        try:
-            if args.pack:
-                result = run_pack(args.golden, root, db, budget_tokens=args.budget)
-            else:
-                result = run(args.golden, root, db, k=args.k)
-        finally:
-            db.close()
+        if args.skills:
+            # Skill routing scores against the *locally installed* skills, so it
+            # never syncs a corpus and is not part of the CI gate.
+            db = VectorDB(os.path.join(tmp, "eval.db"), config=cfg)
+            try:
+                result = run_skills(args.golden, db, top_k=args.k,
+                                    min_confidence=args.min_confidence)
+            finally:
+                db.close()
+        else:
+            root = os.path.abspath(args.root)
+            if not args.all_files:
+                root = materialize_tracked(root, os.path.join(tmp, "corpus"))
+            db = VectorDB(os.path.join(tmp, "eval.db"), config=cfg)
+            try:
+                if args.pack:
+                    result = run_pack(args.golden, root, db, budget_tokens=args.budget)
+                else:
+                    result = run(args.golden, root, db, k=args.k)
+            finally:
+                db.close()
     summary = {k: v for k, v in result.items() if k != "per_query"}
     print(json.dumps(summary, indent=2))
     if args.save:
@@ -67,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
-    from ai_db.config_template import build_template, migrate_legacy
+    from ai_db.config_template import build_template, migrate
 
     target = config_path(args.config)
     if args.migrate:
@@ -76,7 +87,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
         with open(target, "r", encoding="utf-8") as f:
             old = json.load(f)
         try:
-            data = migrate_legacy(old)
+            data = migrate(old)
         except ValueError as exc:
             raise AiDbConfigError(f"--migrate: {exc}") from exc
     else:
@@ -387,6 +398,10 @@ def _main(argv: list[str] | None = None) -> int:
     eval_p.add_argument("--pack", action="store_true",
                         help="Evaluate investigate packs (pack recall; golden kind = mode)")
     eval_p.add_argument("--budget", type=int, default=8000, help="Pack token budget for --pack")
+    eval_p.add_argument("--skills", action="store_true",
+                        help="Score skill routing (top-1 accuracy) over a prompt golden set")
+    eval_p.add_argument("--min-confidence", type=float, default=None,
+                        help="min_confidence passed to route_skills (--skills only)")
     eval_p.add_argument("--all-files", action="store_true",
                         help="Index every file under --root (default: only git-tracked files)")
 

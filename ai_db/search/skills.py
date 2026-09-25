@@ -11,10 +11,13 @@ STOP_WORDS = {"with", "for", "the", "and", "that", "this", "from", "into", "need
 
 
 class SkillRouter:
-    def __init__(self, db: Any = None, conn: Any = None, db_path: str = ""):
+    def __init__(self, db: Any = None, conn: Any = None, db_path: str = "",
+                 embedder: Any = None):
         self.db = db if db is not None else conn
         self.cross_project: dict[str, list[str]] = {}
         self.db_path = db_path or getattr(self.db, "db_path", "")
+        # Set by VectorDB in hybrid mode; None (lexical) means no vectors.
+        self.embedder = embedder
 
     def sync_skills(self, skill_dirs: list[str] | None = None, project: str = "global", verbose: bool = True) -> dict[str, int]:
         """Indexes skills from skill directories into skills and fts_skills tables under the specified project scope."""
@@ -44,6 +47,8 @@ class SkillRouter:
         for stored_path, (sname, _) in list(stored.items()):
             if stored_path not in found_set:
                 self.db.delete_skill(filepath=stored_path, project=project, name=sname)
+                if hasattr(self.db, "delete_skill_vectors"):
+                    self.db.delete_skill_vectors(sname, project)
                 pruned += 1
 
         for sfile in found_files:
@@ -109,11 +114,29 @@ class SkillRouter:
                     project=project,
                 )
             )
+            self._embed_skill(skill_name, desc, triggers_str, project)
 
         if verbose:
             db_name = os.path.basename(str(self.db_path))
             print(f"[{db_name}] Skills Sync ({project}): +{added} ~{updated} -{pruned} ={skipped}")
         return {"added": added, "updated": updated, "pruned": pruned, "skipped": skipped}
+
+    def _embed_skill(self, name: str, description: str, triggers: str, project: str) -> None:
+        """Store the skill embedding (hybrid mode only).
+
+        Text is ``description + triggers`` per spec. Best-effort: a missing or
+        failed vector must never stop skills from being indexed.
+        """
+        if self.embedder is None:
+            return
+        try:
+            text = f"{description or ''}\n{triggers or ''}".strip()
+            if not text:
+                return
+            self.db.upsert_skill_vector(name, project,
+                                        self.embedder.embed_documents([text])[0])
+        except Exception as exc:  # noqa: BLE001 - vectorisation is best-effort
+            _logger.debug("skill embedding skipped for %s: %s", name, exc)
 
     def route_skills(self, prompt: str, top_k: int = 3,
                      project: str | None = None, allowed_projects: list[str] | None = None,

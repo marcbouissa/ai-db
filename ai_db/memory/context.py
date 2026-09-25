@@ -1,14 +1,17 @@
 import time
 from typing import Any
 
+from ai_db.logger import _logger
 from ai_db.storage.models import ContextRecord
 from ai_db.utils import get_allowed_projects
 
 
 class ContextMemory:
-    def __init__(self, db: Any = None, conn: Any = None):
+    def __init__(self, db: Any = None, conn: Any = None, embedder: Any = None):
         self.db = db if db is not None else conn
         self.cross_project: dict[str, list[str]] = {}
+        # Set by VectorDB in hybrid mode; None (lexical) means no vectors.
+        self.embedder = embedder
 
     def save_context(
         self, session_id: str, summary: str, project: str | None = None,
@@ -33,7 +36,8 @@ class ContextMemory:
             timestamp=now,
             full_notes=notes_str
         )
-        self.db.save_context(record)
+        context_id = self.db.save_context(record)
+        self._embed_context(record, context_id)
 
         return {
             "session_id": session_id,
@@ -44,6 +48,23 @@ class ContextMemory:
             "open_tasks": open_tasks or [],
             "timestamp": now
         }
+
+    def _embed_context(self, record: ContextRecord, context_id: int) -> None:
+        """Store the context embedding (hybrid mode only).
+
+        Text is ``title + summary`` per spec. Failures are swallowed on purpose:
+        a missing vector must never stop a context from being saved, and the
+        lexical path stays fully functional without one.
+        """
+        if self.embedder is None or not context_id:
+            return
+        try:
+            text = f"{record.title or ''}\n{record.summary}".strip()
+            if not text:
+                return
+            self.db.upsert_context_vector(context_id, self.embedder.embed_documents([text])[0])
+        except Exception as exc:  # noqa: BLE001 - vectorisation is best-effort
+            _logger.debug("context embedding skipped for %s: %s", record.session_id, exc)
 
     def get_context(
         self, session_id: str | None = None, project: str | None = None,

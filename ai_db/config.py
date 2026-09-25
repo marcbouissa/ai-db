@@ -21,6 +21,12 @@ CONFIG_VERSION = 2
 
 RETRIEVAL_MODES = ("lexical", "hybrid")
 
+# v2 defaults. Defined here (next to CONFIG_VERSION) because both `parse_config`
+# fallbacks and `config_template` must agree on them.
+DEFAULT_DOC_WEIGHT = 0.5
+DEFAULT_RERANK_TOP_N = 10
+DEFAULT_INDEX_IGNORE: list[str] = [".agents/**"]
+
 # provider -> (required option keys, optional option keys)
 EMBEDDING_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "none": (frozenset(), frozenset()),
@@ -69,21 +75,21 @@ class ProviderConfig:
 
 @dataclass(frozen=True)
 class IndexConfig:
-    doc_weight: float = 0.5
-    ignore: list[str] = field(default_factory=list)
+    doc_weight: float = DEFAULT_DOC_WEIGHT
+    ignore: list[str] = field(default_factory=lambda: list(DEFAULT_INDEX_IGNORE))
 
 
 @dataclass(frozen=True)
 class RetrievalConfig:
     mode: str
-    doc_weight: float = 0.5
+    doc_weight: float = DEFAULT_DOC_WEIGHT
 
 
 @dataclass(frozen=True)
 class RerankConfig:
     provider: str
     options: dict[str, Any]
-    top_n: int = 30
+    top_n: int = DEFAULT_RERANK_TOP_N
 
     @property
     def enabled(self) -> bool:
@@ -186,9 +192,11 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
     if missing:
         raise AiDbConfigError(f"config is missing required section(s): {sorted(missing)}")
     if data["version"] != CONFIG_VERSION:
+        hint = ("ai-db init --migrate" if data["version"] == 1
+                else "ai-db init --force")
         raise AiDbConfigError(
             f"unsupported config version {data['version']!r}; this ai-db supports "
-            f"version {CONFIG_VERSION}. Run: ai-db init --force"
+            f"version {CONFIG_VERSION}. Run: {hint}"
         )
 
     storage_raw = _require_dict(data["storage"], "storage")
@@ -205,7 +213,7 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
     mode = os.environ.get("AI_DB_RETRIEVAL_MODE") or retrieval_raw.get("mode")
     if mode not in RETRIEVAL_MODES:
         raise AiDbConfigError(f"'retrieval.mode' must be one of {RETRIEVAL_MODES}, got {mode!r}")
-    doc_weight = retrieval_raw.get("doc_weight", 0.5)
+    doc_weight = retrieval_raw.get("doc_weight", DEFAULT_DOC_WEIGHT)
     if not isinstance(doc_weight, (int, float)) or not (0.0 < doc_weight <= 1.0):
         raise AiDbConfigError("'retrieval.doc_weight' must be a float in (0.0, 1.0]")
 
@@ -227,10 +235,10 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
             if not isinstance(top_n, int) or top_n < 1:
                 raise AiDbConfigError("'rerank.top_n' must be a positive integer")
         else:
-            top_n = 30
+            top_n = DEFAULT_RERANK_TOP_N
     else:
         # Provider not in registry (third-party); use default top_n
-        top_n = 30
+        top_n = DEFAULT_RERANK_TOP_N
     rerank = RerankConfig(provider=provider, options=options, top_n=top_n)
 
     device_override = os.environ.get("AI_DB_DEVICE")
@@ -283,10 +291,10 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
 
     index_raw = _require_dict(data.get("index", {}), "index")
     _check_keys(index_raw, frozenset({"doc_weight", "ignore"}), "index")
-    doc_weight = index_raw.get("doc_weight", 0.5)
+    doc_weight = index_raw.get("doc_weight", DEFAULT_DOC_WEIGHT)
     if not isinstance(doc_weight, (int, float)) or not (0.0 < doc_weight <= 1.0):
         raise AiDbConfigError("'index.doc_weight' must be a float in (0.0, 1.0]")
-    ignore = index_raw.get("ignore", [])
+    ignore = index_raw.get("ignore", list(DEFAULT_INDEX_IGNORE))
     if not isinstance(ignore, list) or not all(isinstance(p, str) for p in ignore):
         raise AiDbConfigError("'index.ignore' must be a list of strings")
     index = IndexConfig(doc_weight=doc_weight, ignore=ignore)

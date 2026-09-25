@@ -269,8 +269,8 @@ class StorageBackend(ABC):
     # =========================================================================
 
     @abstractmethod
-    def save_context(self, context: ContextRecord) -> None:
-        """Persist a conversation session context snapshot."""
+    def save_context(self, context: ContextRecord) -> int:
+        """Persist a conversation session context snapshot; returns ``contexts.id``."""
 
     @abstractmethod
     def get_context(
@@ -295,6 +295,18 @@ class StorageBackend(ABC):
         top_k: int = 3,
     ) -> list[dict[str, Any]]:
         """Search saved contexts via full-text search."""
+
+    @abstractmethod
+    def upsert_skill_vector(self, name: str, project: str, embedding: list[float]) -> None:
+        """Store (or replace) the embedding for one skill."""
+
+    @abstractmethod
+    def delete_skill_vectors(self, name: str, project: str) -> None:
+        """Drop the embedding for a removed skill."""
+
+    @abstractmethod
+    def upsert_context_vector(self, context_id: int, embedding: list[float]) -> None:
+        """Store (or replace) the embedding for one context, keyed by contexts.id."""
 
     @abstractmethod
     def search_skills_vector(
