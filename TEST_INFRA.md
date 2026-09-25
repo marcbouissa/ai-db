@@ -4,7 +4,7 @@
 
 The `ai-db` test suite provides automated, requirement-driven verification of all features defined in `PROJECT.md` and `ORIGINAL_REQUEST.md`. The test infrastructure adheres to the following core principles:
 
-1. **Opaque-Box & Requirement-Driven**: Tests exercise public CLI commands (`ai-db`, `vectordb`), standard transports (stdio MCP, HTTP REST), and public interface contracts (`StorageBackend`, `ServiceDispatcher`, `TelemetryTracker`) without depending on private internal functions or implementation details.
+1. **Opaque-Box & Requirement-Driven**: Tests exercise public CLI commands (`ai-db`, `vectordb`), the stdio MCP transport, and public interface contracts (`StorageBackend`, `ServiceDispatcher`, `TelemetryTracker`) without depending on private internal functions or implementation details.
 2. **Complete Feature Coverage**: Every feature across Milestones 1 through 5 (Features 1–23 in `PROJECT.md`) is systematically tested across 4 progressive tiers.
 3. **Hermetic Test Isolation**: Tests execute in completely isolated temporary sandboxes (`isolated_env`, `temp_workspace`, `temp_db`). Tests never touch live user databases, `$HOME/.gemini`, or personal configurations.
 4. **Progressive Testability**: Tests run cleanly and give clear pass/fail signals. Optional components (such as the `torch` / `sentence-transformers` stack behind the `[local-embed]` extra, or a GPU for the device-resolution paths) gracefully skip when dependencies are not present, while fully verifying satisfied features.
@@ -58,7 +58,7 @@ ai-db/
 │   ├── test_bench_index.py         # Indexer benchmark (marked `bench`)
 │   ├── test_bench_vectors.py       # exact vs vec0 vector benchmark (marked `bench`)
 │   └── test_bench_gpu.py           # CPU vs CUDA embedding benchmark (marked `bench`)
-│   ├── test_transports.py         # Features 12–15: ServiceDispatcher, CLI, stdio MCP, HTTP server
+│   ├── test_transports.py         # ServiceDispatcher, CLI, stdio MCP, cross-transport parity
 │   └── test_telemetry.py          # Features 16–20: Latency, 4-format token savings, cache hit metrics
 ```
 
@@ -69,7 +69,7 @@ ai-db/
 - **`tests/test_sanitization.py`**: Verifies 100% absence of personal paths (`/path/to/user`), personal usernames, credentials (AWS, GitHub, OpenAI), private keys, tracked database binaries, and compiled `.pyc` files across git-tracked files.
 - **`tests/test_storage.py`**: Verifies the `StorageBackend` abstract base class, domain DTOs (`FileRecord`, `ChunkRecord`, `SymbolRecord`, `ContextRecord`, `SearchResult`), the SQLite backend (WAL mode, FTS5 BM25, zlib compression, transaction rollback), `StorageBackendFactory`, and SQL call decoupling.
 - **`tests/test_search.py` & `tests/test_parser.py`**: Verifies AST symbol extraction, outline analysis, syntax checking, and BM25 full-text indexing.
-- **`tests/test_transports.py`**: Verifies unified `ServiceDispatcher`, CLI command execution, stdio JSON-RPC 2.0 MCP server, and `ThreadingHTTPServer` REST endpoints.
+- **`tests/test_transports.py`**: Verifies the unified `ServiceDispatcher`, CLI command execution, the stdio JSON-RPC 2.0 MCP server, and parity between the CLI and MCP transports. (The HTTP REST transport and its 12 tests were removed with the server.)
 - **`tests/test_telemetry.py`**: Verifies latency tracking (p50/p95/p99), token compression savings across 4 formats (Stub vs S-Exp vs JSON vs Raw), semantic cache hit rates, and codebase weak points diagnostics.
 
 ---

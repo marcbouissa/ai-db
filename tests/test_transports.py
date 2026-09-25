@@ -6,21 +6,14 @@ Covers:
   - ServiceDispatcher tool registry & execution
   - CLI commands suite (sync, query, symbol, check, status, vectordb parity)
   - stdio JSON-RPC 2.0 MCP server (initialize, ping, tools/list, tools/call)
-  - Threaded HTTP REST server (health, status, tools, POST dispatch, CORS)
+  - Cross-transport parity (MCP vs CLI)
 """
-import json
 import subprocess
 import sys
-import threading
-import urllib.error
-import urllib.request
-from concurrent.futures import ThreadPoolExecutor
-from http.server import HTTPServer
 
 import pytest
 
 from ai_db import VectorDB
-from ai_db.server.http_server import AiDbHandler
 from mcp_server import StdioMCPServer
 
 try:
@@ -58,34 +51,12 @@ def transport_env(tmp_path):
     }
 
 
-@pytest.fixture
-def http_server(transport_env):
-    """Starts an ephemeral AiDbHandler server on 127.0.0.1 in a daemon thread."""
-    server = HTTPServer(("127.0.0.1", 0), AiDbHandler)
-    server.db_path = transport_env["db_file"]
-    host, port = server.server_address
-    base_url = f"http://{host}:{port}"
-
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-
-    yield {
-        "base_url": base_url,
-        "db_path": transport_env["db_file"],
-        "server": server,
-    }
-
-    server.shutdown()
-    server.server_close()
-    thread.join(timeout=2.0)
-
-
 # ==============================================================================
 # Tier 1: Feature Coverage (Happy Path Isolation)
 # ==============================================================================
 
 class TestTransportsTier1FeatureCoverage:
-    """Core capabilities across ServiceDispatcher, CLI, MCP server, and HTTP server."""
+    """Core capabilities across ServiceDispatcher, CLI, and the MCP server."""
 
     def test_service_dispatcher_register_and_list(self):
         """ServiceDispatcher registers tools with schemas and lists them."""
@@ -260,64 +231,6 @@ class TestTransportsTier1FeatureCoverage:
         assert len(content) > 0
         assert "OrderService" in content[0]["text"]
 
-    def test_http_server_get_health(self, http_server):
-        """HTTP GET /health returns HTTP 200 with {'ok': True}."""
-        url = f"{http_server['base_url']}/health"
-        with urllib.request.urlopen(url) as resp:
-            assert resp.status == 200
-            data = json.loads(resp.read().decode("utf-8"))
-            assert data.get("ok") is True
-
-    def test_http_server_get_status(self, http_server):
-        """HTTP GET /status returns HTTP 200 with database status metrics."""
-        url = f"{http_server['base_url']}/status"
-        with urllib.request.urlopen(url) as resp:
-            assert resp.status == 200
-            data = json.loads(resp.read().decode("utf-8"))
-            assert "files" in data
-            assert "chunks" in data
-            assert "symbols" in data
-
-    def test_http_server_get_tools(self, http_server):
-        """HTTP GET /tools returns tool inventory with schemas (M3 feature)."""
-        url = f"{http_server['base_url']}/tools"
-        try:
-            with urllib.request.urlopen(url) as resp:
-                assert resp.status == 200
-                data = json.loads(resp.read().decode("utf-8"))
-                assert isinstance(data, list) or "tools" in data
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                pytest.skip("HTTP route GET /tools not yet implemented (planned for Milestone 3)")
-            raise
-
-    def test_http_server_post_tool_execution(self, http_server, transport_env):
-        """HTTP POST executes tools via envelope {tool, args} or /tools/{name}."""
-        # Test standard POST / tool execution envelope
-        url = f"{http_server['base_url']}/"
-        payload = json.dumps({
-            "tool": "locate",
-            "args": {
-                "query": "create_order",
-                "scope": str(transport_env["src_dir"])
-            }
-        }).encode("utf-8")
-
-        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req) as resp:
-            assert resp.status == 200
-            data = json.loads(resp.read().decode("utf-8"))
-            assert len(data) > 0
-            assert any("service.py" in str(item) for item in data)
-
-
-# ==============================================================================
-# Tier 2: Boundary & Corner Cases
-# ==============================================================================
-
-class TestTransportsTier2BoundaryAndCorner:
-    """Boundary conditions, malformed payloads, invalid routes, and concurrency."""
-
     def test_service_dispatcher_unknown_tool(self):
         """Calling an unregistered tool in ServiceDispatcher raises KeyError."""
         if ServiceDispatcher is None:
@@ -396,62 +309,14 @@ class TestTransportsTier2BoundaryAndCorner:
         })
         assert res_notif is None
 
-    def test_http_server_cors_options(self, http_server):
-        """OPTIONS pre-flight request returns HTTP 204 with CORS headers."""
-        url = f"{http_server['base_url']}/health"
-        req = urllib.request.Request(url, method="OPTIONS")
-        with urllib.request.urlopen(req) as resp:
-            assert resp.status == 204
-            assert resp.headers.get("Access-Control-Allow-Origin") == "*"
-            assert "POST" in resp.headers.get("Access-Control-Allow-Methods", "")
+    def test_transport_parity_mcp_and_cli(self, transport_env):
+        """The same tool returns equivalent results through MCP and the CLI.
 
-    def test_http_server_invalid_json_body(self, http_server):
-        """POST with malformed non-JSON body returns HTTP 400 Bad Request."""
-        url = f"{http_server['base_url']}/"
-        req = urllib.request.Request(
-            url,
-            data=b"INVALID_NOT_JSON",
-            headers={"Content-Type": "application/json"}
-        )
-        with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(req)
-        assert exc_info.value.code == 400
-
-    def test_http_server_unknown_path(self, http_server):
-        """GET request to an unknown route returns HTTP 404 Not Found."""
-        url = f"{http_server['base_url']}/nonexistent_endpoint_xyz"
-        with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(url)
-        assert exc_info.value.code == 404
-
-    def test_http_server_concurrent_requests(self, http_server):
-        """Multiple concurrent requests to HTTP server succeed without locking or timeouts."""
-        url_health = f"{http_server['base_url']}/health"
-        url_status = f"{http_server['base_url']}/status"
-
-        def _fetch(url):
-            with urllib.request.urlopen(url, timeout=5.0) as resp:
-                return resp.status
-
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            tasks = [
-                executor.submit(_fetch, url_health if i % 2 == 0 else url_status)
-                for i in range(16)
-            ]
-            statuses = [t.result() for t in tasks]
-
-        assert all(s == 200 for s in statuses)
-
-
-# ==============================================================================
-# Tier 3: Pairwise Combinations
-# ==============================================================================
-
-class TestTransportsTier3Combinations:
-    """Parity between transport channels (CLI vs HTTP vs MCP)."""
-
-    def test_transport_parity_mcp_and_http(self, http_server, transport_env):
-        """Tool execution via MCP and HTTP returns equivalent locate results."""
+        This is the guarantee that every transport routes through one
+        ServiceDispatcher. It used to be a three-way comparison including HTTP;
+        with HTTP removed the property still matters between the two transports
+        that remain, so it is asserted here rather than dropped.
+        """
         query_text = "create_order"
         scope = str(transport_env["src_dir"])
 
@@ -463,44 +328,24 @@ class TestTransportsTier3Combinations:
             "method": "tools/call",
             "params": {"name": "locate", "arguments": {"query": query_text, "scope": scope}}
         })
+        assert mcp_res["result"]["isError"] is False
         mcp_text = mcp_res["result"]["content"][0]["text"]
 
-        # 2. HTTP execution
-        url = f"{http_server['base_url']}/"
-        payload = json.dumps({
-            "tool": "locate",
-            "args": {"query": query_text, "scope": scope}
-        }).encode("utf-8")
-        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req) as resp:
-            http_data = json.loads(resp.read().decode("utf-8"))
+        # 2. CLI execution of the same tool
+        proc = subprocess.run(
+            [sys.executable, "-m", "ai_db.cli", "locate", query_text,
+             "--scope", scope, "--db", transport_env["db_file"]],
+            capture_output=True, text=True, check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+        cli_text = proc.stdout
 
         assert "service.py" in mcp_text
-        assert any("service.py" in str(item) for item in http_data)
-
-    def test_transport_cli_and_http_status_parity(self, http_server, transport_env):
-        """Database files count matches between CLI status output and HTTP /status endpoint."""
-        # 1. CLI status
-        proc = subprocess.run(
-            [sys.executable, "-m", "ai_db.cli", "status", "--db", transport_env["db_file"]],
-            capture_output=True,
-            text=True,
-            check=False
-        )
-        assert proc.returncode == 0
-        # Parse files count from CLI output: "files:1 |"
-        cli_files = None
-        for part in proc.stdout.split("|"):
-            if "files:" in part:
-                cli_files = int(part.split(":")[1].strip())
-
-        # 2. HTTP status
-        url = f"{http_server['base_url']}/status"
-        with urllib.request.urlopen(url) as resp:
-            http_data = json.loads(resp.read().decode("utf-8"))
-            http_files = http_data.get("files")
-
-        assert cli_files == http_files
+        assert "service.py" in cli_text
+        # Same underlying result, so the file set the two report must agree.
+        mcp_files = {part for part in mcp_text.split() if part.endswith(".py")}
+        cli_files = {part for part in cli_text.split() if part.endswith(".py")}
+        assert mcp_files == cli_files, (mcp_files, cli_files)
 
     def test_transport_dispatcher_dynamic_mcp_registration(self):
         """Newly registered tool in dispatcher is exposed dynamically in tool lists."""
@@ -524,7 +369,7 @@ class TestTransportsTier3Combinations:
 # ==============================================================================
 
 class TestTransportsTier4Workflows:
-    """Simulated end-to-end client sessions via MCP and HTTP API."""
+    """Simulated end-to-end client sessions via the CLI and MCP."""
 
     def test_workflow_agent_ide_integration(self, transport_env):
         """
@@ -582,31 +427,3 @@ class TestTransportsTier4Workflows:
         })
         assert analyze_res["result"]["isError"] is False
         assert "OrderService" in analyze_res["result"]["content"][0]["text"]
-
-    def test_workflow_remote_microservice_http_monitoring(self, http_server, transport_env):
-        """
-        Simulates remote CI/CD monitor interacting with ai-db over HTTP:
-        1. Health probe (GET /health)
-        2. Telemetry / Status check (GET /status)
-        3. Remote tool invocation (POST / with status tool)
-        """
-        # 1. Health check
-        with urllib.request.urlopen(f"{http_server['base_url']}/health") as resp:
-            health = json.loads(resp.read().decode("utf-8"))
-            assert health["ok"] is True
-
-        # 2. Status inspection
-        with urllib.request.urlopen(f"{http_server['base_url']}/status") as resp:
-            status = json.loads(resp.read().decode("utf-8"))
-            assert status["files"] >= 1
-
-        # 3. Tool execution
-        payload = json.dumps({"tool": "status", "args": {}}).encode("utf-8")
-        req = urllib.request.Request(
-            f"{http_server['base_url']}/",
-            data=payload,
-            headers={"Content-Type": "application/json"}
-        )
-        with urllib.request.urlopen(req) as resp:
-            tool_res = json.loads(resp.read().decode("utf-8"))
-            assert tool_res["files"] == status["files"]

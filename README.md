@@ -32,18 +32,16 @@ A high-speed, self-contained local code intelligence engine, vector database, an
   - [7. Natural Language Relevance Ranking (`locate`)](#7-natural-language-relevance-ranking-ai-db-locate)
   - [8. Session Context & Memory Recall (`context` / `remember`)](#8-session-context--memory-recall-ai-db-context--ai-db-remember)
   - [9. Performance & Token Telemetry (`telemetry`)](#9-performance--token-telemetry-ai-db-telemetry)
-  - [10. HTTP REST API Server (`serve`)](#10-http-rest-api-server-ai-db-serve)
-  - [11. Codebase Synchronization (`sync`, `sync-all`, `watch`)](#11-codebase-synchronization-ai-db-sync-sync-all-watch)
-  - [12. Smart Skill Routing (`route-skill`)](#12-smart-skill-routing-ai-db-route-skill)
-  - [13. Code Insights (`callers`, `diff`, `todos`)](#13-code-insights-ai-db-callers-diff-todos)
-  - [14. Database Maintenance (`optimize`, `status`, `prune`)](#14-database-maintenance-ai-db-optimize-status-prune)
+  - [10. Codebase Synchronization (`sync`, `sync-all`, `watch`)](#10-codebase-synchronization-ai-db-sync-sync-all-watch)
+  - [11. Smart Skill Routing (`route-skill`)](#11-smart-skill-routing-ai-db-route-skill)
+  - [12. Code Insights (`callers`, `diff`, `todos`)](#12-code-insights-ai-db-callers-diff-todos)
+  - [13. Database Maintenance (`optimize`, `status`, `prune`)](#13-database-maintenance-ai-db-optimize-status-prune)
 - [Model Context Protocol (MCP) Server](#model-context-protocol-mcp-server)
   - [Claude Desktop Configuration](#claude-desktop-configuration)
   - [Cursor IDE Configuration](#cursor-ide-configuration)
   - [Google Antigravity Configuration](#google-antigravity-configuration)
   - [MCP Tools Reference](#mcp-tools-reference)
     - [Progress notifications](#progress-notifications)
-- [HTTP REST API Reference](#http-rest-api-reference)
 - [Token Optimization Benchmarks](#token-optimization-benchmarks)
 - [Project Scoping & Multi-Repo Access](#project-scoping--multi-repo-access)
 - [Development & Testing](#development--testing)
@@ -69,10 +67,10 @@ Traditional AI coding workflows waste enormous context windows and API costs. Wh
 
 ## Key Features
 
-- **Zero External Dependencies**: The core platform (indexing, AST analysis, search, CLI, MCP stdio server, HTTP REST server) relies strictly on the Python 3 standard library (`sqlite3`, `ast`, `hashlib`, `json`, `http.server`, etc.).
+- **No Heavy Third-Party Dependencies**: The core platform (indexing, AST analysis, search, CLI, MCP stdio server) relies on a small declared runtime stack (tree-sitter, sqlite-vec, tiktoken, numpy) and nothing else. Torch and sentence-transformers are optional (`ai-db[local-embed]`).
 - **Sub-Millisecond Search**: SQLite WAL mode with FTS5 BM25 ranking, identifier-aware tokenization, and zlib level-9 compression executes complex code queries in $< 2\text{ ms}$.
 - **Pluggable Storage Layer (SOLID / Open-Closed)**: Decoupled `StorageBackend` abstraction with a built-in SQLite backend; other databases plug in as separate packages via the `ai_db.storage` entry-point group (see ARCHITECTURE.md §3.4).
-- **Pluggable Transports**: Single unified `ServiceDispatcher` serving CLI commands (`ai-db`, `vectordb`), Model Context Protocol (stdio JSON-RPC 2.0), and threaded HTTP REST endpoints.
+- **Pluggable Transports**: Single unified `ServiceDispatcher` serving CLI commands (`ai-db`, `vectordb`) and the Model Context Protocol (stdio JSON-RPC 2.0). Adding a transport means registering tools, not duplicating logic.
 - **Performance & Token Telemetry**: Quantitative measurement of p50/p95/p99 query latencies, compression savings across 4 serialization formats, semantic cache hit rates, and codebase weak points (syntax error density, complexity hotspots).
 - **Project Isolation & Scoping**: Auto-detects project boundaries via `.git`, `pyproject.toml`, or `package.json` to prevent cross-project context pollution while allowing explicit read-only sharing.
 
@@ -81,20 +79,20 @@ Traditional AI coding workflows waste enormous context windows and API costs. Wh
 ## Architecture at a Glance
 
 ```
-                  ┌────────────────────────────────────────────────┐
+                  ┌────────────────────────┬───────────────────────┐
                   │          AI Clients / Developer Tools          │
                   │   (Claude Desktop, Cursor, Antigravity, CLI)   │
-                  └──────────────┬──────────────────┬──────────────┘
-                                 │                  │
-                         ┌───────▼────────┐  ┌──────▼───────┐
-                         │   CLI / stdio  │  │   HTTP API   │
-                         │ (ai-db, MCP)   │  │ (REST / JSON)│
-                         └───────┬────────┘  └──────┬───────┘
-                                 │                  │
-                     ┌───────────▼──────────────────▼───────────┐
-                     │         Unified ServiceDispatcher        │
-                     │           (Tool Registry & Schema)       │
-                     └─────────────────────┬────────────────────┘
+                  └────────────────────────┬───────────────────────┘
+                                           │
+                          ┌────────────────▼─────────────────┐
+                          │         CLI / stdio MCP          │
+                          │        (ai-db, vectordb)         │
+                          └────────────────┬─────────────────┘
+                                           │
+                     ┌─────────────────────▼───────────────────────┐
+                     │          Unified ServiceDispatcher          │
+                     │          (Tool Registry & Schema)           │
+                     └─────────────────────┬───────────────────────┘
                                            │
          ┌─────────────────────────────────┼─────────────────────────────────┐
          │                                 │                                 │
@@ -487,18 +485,7 @@ Codebase Weak Points: 0 syntax errors, 2 complexity hotspots
 
 ---
 
-### 10. HTTP REST API Server (`ai-db serve`)
-Launches the built-in HTTP server (standard library only, no web framework to install):
-
-```bash
-ai-db serve --port 8765 --host 127.0.0.1
-```
-
-See [HTTP REST API Reference](#http-rest-api-reference) for endpoint details.
-
----
-
-### 11. Codebase Synchronization (`ai-db sync`, `sync-all`, `watch`)
+### 10. Codebase Synchronization (`ai-db sync`, `sync-all`, `watch`)
 
 ```bash
 # Sync current repository or path (incremental, SHA-256 change detection)
@@ -516,7 +503,7 @@ ai-db watch . --daemon
 
 ---
 
-### 12. Smart Skill Routing (`ai-db route-skill`)
+### 11. Smart Skill Routing (`ai-db route-skill`)
 Matches user prompts against installed agent skills in $< 2\text{ ms}$ without polluting LLM prompts:
 
 ```bash
@@ -527,7 +514,7 @@ ai-db route-skill "Create presentation slides" --format path
 
 ---
 
-### 13. Code Insights (`ai-db callers`, `diff`, `todos`, `trace`)
+### 12. Code Insights (`ai-db callers`, `diff`, `todos`, `trace`)
  
 ```bash
 # Find all call sites and references to a symbol
@@ -571,7 +558,7 @@ ai-db trace launch_stage_ov --depth 10 --max-nodes 50          # limit depth/nod
  
 ---
 
-### 14. Database Maintenance (`ai-db optimize`, `status`, `prune`)
+### 13. Database Maintenance (`ai-db optimize`, `status`, `prune`)
 
 ```bash
 # Defragment database, merge FTS5 indexes, and reclaim disk space
@@ -668,8 +655,8 @@ Add `ai-db` to `~/.gemini/antigravity/mcp_config.json` or project MCP settings:
 
 ### MCP Tools Reference
 
-Every tool below is also reachable from the CLI and over HTTP, so an agent can use
-whichever transport it already has.
+Every tool below is also reachable from the CLI, so an agent can use whichever
+transport it already has.
 
 | MCP Tool | Description | Key Arguments |
 |---|---|---|
@@ -704,85 +691,6 @@ Updates are emitted at the first file, every 50th, and the last, each with
 `progress`, `total` and a `message` naming the file. A client that does not send a
 `progressToken` receives nothing extra, and progress is scoped to the call: it is
 detached afterwards, so a later call cannot report through it.
-
----
-
-## HTTP REST API Reference
-
-Run `ai-db serve --port 8765` to start the lightweight HTTP server. All endpoints include automatic CORS preflight (`OPTIONS`) handling.
-
-### Endpoints Overview
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | Liveness check; returns `{"ok": true}` |
-| `GET` | `/status` | Database statistics (files, chunks, symbols, size) |
-| `GET` | `/tools` | List registered tools and JSON Schemas |
-| `POST` | `/` | Execute tool via envelope `{"tool": "<name>", "args": {...}}` |
-| `POST` | `/tools/{name}` | Execute tool with direct JSON arguments body |
-| `GET` | `/telemetry` | Retrieve latency percentiles and token efficiency metrics |
-
-### Example Requests
-
-#### 1. Liveness Check
-```bash
-curl -s http://127.0.0.1:8765/health
-```
-```json
-{
-  "ok": true
-}
-```
-
-#### 2. Locate Relevant Files & Symbols
-```bash
-curl -s -X POST http://127.0.0.1:8765/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tool": "locate",
-    "args": {
-      "query": "authentication token verification",
-      "scope": ".",
-      "k": 3,
-      "format": "json"
-    }
-  }'
-```
-```json
-[
-  {
-    "file": "src/services/auth.py",
-    "name": "verify_token",
-    "span": [94, 120],
-    "score": -3.12,
-    "snippet": "def verify_token(self, token: str) -> dict:\n    payload = jwt.decode(token, self.secret)\n    return payload"
-  }
-]
-```
-
-#### 3. Save Session Context Memory
-```bash
-curl -s -X POST http://127.0.0.1:8765/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tool": "context_save",
-    "args": {
-      "session_id": "auth-api",
-      "title": "API Token Validation",
-      "summary": "Implemented JWT bearer token authentication",
-      "active_files": ["src/services/auth.py"],
-      "open_tasks": ["Add token revocation blacklist"]
-    }
-  }'
-```
-```json
-{
-  "saved": true,
-  "session_id": "auth-api",
-  "project": "my-project",
-  "timestamp": 1726639200.0
-}
-```
 
 ---
 
@@ -855,7 +763,7 @@ pytest tests/test_sanitization.py -v
 # Run storage layer tests
 pytest tests/test_storage.py -v
 
-# Run transport adapter tests (CLI, MCP, HTTP)
+# Run transport adapter tests (CLI, MCP)
 pytest tests/test_transports.py -v
 
 # Run telemetry tests

@@ -7,20 +7,19 @@ ai-db is an extensible, high-performance local code intelligence and vector inde
 The system is decoupled into four primary layers:
 1. **Domain & Core Engine Layer**: AST code parsing, symbol extraction, chunking, and semantic/lexical search algorithms.
 2. **Pluggable Storage Layer**: `StorageBackend` abstract protocol separating data persistence from core logic. SQLite with WAL mode, FTS5 BM25, and zlib compression as the only shipped backend; a pluggable factory resolves a backend by connection string, so a second backend can be added without touching core search, analysis or parser logic. **SQLite is the only implemented backend** — the MySQL adapter described in the original request was scoped out and does not exist.
-3. **Transport & Dispatch Layer**: Unified `ServiceDispatcher` registering tools with JSON Schema and callable handlers. Transport adapters for CLI (`ai-db`, `vectordb`), Model Context Protocol (stdio JSON-RPC), and HTTP REST API (`ThreadingHTTPServer`).
+3. **Transport & Dispatch Layer**: Unified `ServiceDispatcher` registering tools with JSON Schema and callable handlers. Transport adapters for CLI (`ai-db`, `vectordb`) and the Model Context Protocol (stdio JSON-RPC). An HTTP REST adapter shipped briefly and was removed: it could only analyse code on its own filesystem, exposed no authentication and wildcard CORS, and let any caller run `sync` over an arbitrary host path. See ARCHITECTURE.md §4.
 4. **Telemetry Subsystem**: Cross-cutting performance and token telemetry measuring query latency, token compression efficiency across 4 serialization formats (Stub vs S-Exp vs JSON vs Raw), semantic cache hit rates, and codebase weak points diagnostics.
 
 ```
                   ┌────────────────────────────────────────────────┐
                   │                 Clients / AI                   │
-                  └──────────────┬──────────────────┬──────────────┘
-                                 │                  │
-                         ┌───────▼────────┐  ┌──────▼───────┐
-                         │   CLI / stdio  │  │   HTTP API   │
-                         │ (ai-db, MCP)   │  │ (REST / JSON)│
-                         └───────┬────────┘  └──────┬───────┘
-                                 │                  │
-                     ┌───────────▼──────────────────▼───────────┐
+                  └────────────────────┬───────────────────────────┘
+                                       │
+                           ┌───────────▼───────────┐
+                           │    CLI / stdio MCP    │
+                           └───────────┬───────────┘
+                                       │
+                     ┌─────────────────▼─────────────────┐
                      │         Unified ServiceDispatcher        │
                      │          (ai_db/dispatcher.py)           │
                      └─────────────────────┬────────────────────┘
@@ -62,12 +61,12 @@ The system is decoupled into four primary layers:
 | 12 | Unified ServiceDispatcher | Centralized tool registry with JSON Schema and callable handlers for uniform cross-transport dispatch | M3 | R3, survey_2 |
 | 13 | Agnostic CLI Dispatch | CLI command suite executing via `ServiceDispatcher` with uniform error handling and JSON/text formatting | M3 | R3, survey_2 |
 | 14 | Dynamic MCP Server | stdio JSON-RPC 2.0 MCP server dynamically exposing all registered tools from `ServiceDispatcher` | M3 | R3, survey_2 |
-| 15 | Threaded HTTP Server | `ThreadingHTTPServer` (`ai-db serve --port`) exposing `/health`, `/status`, `/telemetry`, `/tools`, `POST /tools/{name}` | M3 | R3, survey_2 |
+| 15 | ~~Threaded HTTP Server~~ | **Removed.** `ThreadingHTTPServer` (`ai-db serve --port`) shipped, then was deleted: filesystem-local only, unauthenticated, wildcard CORS, and `POST /tools/sync` reachable by any caller. Capability superseded by stdio MCP. | M3 | R3, survey_2 |
 | 16 | Latency & Throughput Telemetry | Tracking p50/p95/p99 query latency and throughput across storage backends | M4 | R4, survey_2 |
 | 17 | Token Compression Telemetry | Measuring token consumption and savings across 4 serialization formats (Stub vs S-Exp vs JSON vs Raw) | M4 | R4, survey_2 |
 | 18 | Cache Hit Rate & Resource Trends | Tracking semantic cache hits/misses, ratio %, disk size, and memory usage trends | M4 | R4, survey_2 |
 | 19 | Codebase Weak Points Diagnostic | Detecting syntax error density, cyclomatic complexity hotspots, and unindexed code areas | M4 | R4, survey_2 |
-| 20 | Telemetry Exposure Interfaces | Exposing telemetry metrics via CLI (`ai-db telemetry`), MCP tool (`telemetry`), and HTTP (`GET /telemetry`) | M4 | R4, survey_2 |
+| 20 | Telemetry Exposure Interfaces | Exposing telemetry metrics via CLI (`ai-db telemetry`) and the MCP tool (`telemetry`) | M4 | R4, survey_2 |
 | 21 | Repository Sanitization | Purging all occurrences of `/path/to/user`, personal emails, and local machine configs from all tracked files | M5 | R5, spec_miner |
 | 22 | Architectural Documentation | Comprehensive `ARCHITECTURE.md` explaining SOLID rationale, component decoupling, and extension guides | M5 | R5, spec_miner |
 | 23 | Open-Source README & License | Clean, public `README.md` with quickstart, MCP configuration for Claude/Cursor/Antigravity, and MIT License | M5 | R5, spec_miner |
@@ -79,8 +78,8 @@ The system is decoupled into four primary layers:
 |---|------|-------|-------------|--------|
 | 1 | M1: Packaging & Environment | `pyproject.toml`, `requirements.txt`, `.gitignore`, untrack `.pyc`/`.db`, setup `.venv` | none | DONE |
 | 2 | M2: Pluggable Storage Layer | `StorageBackend` ABC, DTOs, SQLite WAL refactor, Factory, conformance suite, decouple SQL calls. (MySQL adapter was scoped out — see item 10.) | M1 | DONE |
-| 3 | M3: Pluggable Transports | `ServiceDispatcher`, CLI dispatch, dynamic stdio MCP server, Threaded HTTP Server | M2 | DONE |
-| 4 | M4: Performance & Telemetry | Telemetry subsystem (latency, 4-format token savings, cache hit rate, weak points), CLI/MCP/HTTP integration | M2, M3 | IN_PROGRESS (conv: bd8c6eb1-b5e8-4f12-9bc0-4712a6e53664) |
+| 3 | M3: Pluggable Transports | `ServiceDispatcher`, CLI dispatch, dynamic stdio MCP server. (Threaded HTTP Server was later removed — see item 15.) | M2 | DONE |
+| 4 | M4: Performance & Telemetry | Telemetry subsystem (latency, 4-format token savings, cache hit rate, weak points), CLI/MCP integration | M2, M3 | IN_PROGRESS (conv: bd8c6eb1-b5e8-4f12-9bc0-4712a6e53664) |
 | 5 | M5: Sanitization & Documentation | Purge `/path/to/user` across repo, write `ARCHITECTURE.md`, update `README.md`, add `LICENSE` | M1 | IN_PROGRESS (conv: 770b9db7-07a5-4a4a-a1b7-5cd7858bf6e0) |
 | - | E2E Testing Track | Independent opaque-box test harness and test cases (Tiers 1-4), publish `TEST_READY.md` | M1 (runs parallel to M2-M5) | IN_PROGRESS (conv: 3c52e57a-26a5-4325-8a55-54525ff1064a) |
 | 6 | M6: Final Verification | Pass 100% E2E tests + Phase 2 Adversarial Coverage Hardening (Tier 5) | M2, M3, M4, M5, TEST_READY.md | PLANNED |
@@ -166,9 +165,6 @@ ai-db/
 │   │   ├── factory.py          # StorageBackendFactory
 │   │   ├── conformance.py      # backend-agnostic contract suite
 │   │   ├── sqlite_backend.py   # SQLite backend (WAL, FTS5, BM25, zlib)
-│   ├── server/
-│   │   ├── __init__.py
-│   │   └── http_server.py      # ThreadingHTTPServer REST/JSON server
 │   └── telemetry/
 │       ├── __init__.py
 │       ├── tracker.py          # TelemetryTracker

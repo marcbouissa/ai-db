@@ -11,7 +11,7 @@
 `ai-db` is an extensible, high-performance local code intelligence and vector indexing platform engineered specifically for autonomous AI agents, coding assistants (Claude Desktop, Cursor, Antigravity, OpenCodeInterpreter), and developer workflows.
 
 Core tenets of the architecture:
-- **Zero External Runtime Dependencies**: The core package relies exclusively on the Python 3.10+ Standard Library (`ast`, `sqlite3`, `zlib`, `http.server`, `argparse`, `typing`, `json`, `hashlib`, `threading`).
+- **No Heavy Runtime Dependencies**: The core package needs only a small declared stack (tree-sitter, sqlite-vec, tiktoken, watchfiles, numpy) on top of the Python 3.10+ Standard Library (`ast`, `sqlite3`, `zlib`, `argparse`, `typing`, `json`, `hashlib`, `threading`). Torch and sentence-transformers are optional.
 - **Token Optimization First**: AI agents pay heavily for context window consumption. `ai-db` optimizes token consumption through progressive disclosure (`summary` -> `structure` -> `targeted` -> `full`) and alternative serialization formats (Stub skeletons and S-Expressions), achieving 50% to 70% token reductions.
 - **SOLID and KISS Design**: Clear layer boundaries, protocol-based abstractions, interchangeable storage engines, uniform cross-transport dispatching, and dependency injection.
 - **Sub-Millisecond Retrieval**: High-throughput SQLite WAL mode with FTS5 BM25 ranking, zlib level 9 compression for code chunk payloads, and in-memory semantic caching.
@@ -22,15 +22,15 @@ Core tenets of the architecture:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          Clients & AI Agent IDEs                            │
 │           (Claude Desktop, Cursor, Antigravity, Terminal CLI, Scripts)      │
-└───────────────┬─────────────────────────────┬───────────────────────────────┘
-                │                             │
-    ┌───────────▼───────────┐     ┌───────────▼───────────┐     ┌─────────────▼───────────┐
-    │     CLI Interface     │     │    Stdio MCP Server   │     │    HTTP REST / JSON     │
-    │   (ai-db / vectordb)  │     │   (JSON-RPC 2.0 stdio)│     │  (ThreadingHTTPServer)  │
-    └───────────┬───────────┘     └───────────┬───────────┘     └─────────────┬───────────┘
-                │                             │                               │
-                └─────────────────────────────┼───────────────────────────────┘
-                                              │
+└───────────────────┬───────────────────────────────────────────┘
+                    │
+    ┌───────────────▼───────────────┐     ┌───────────────────────────────┐
+    │       CLI Interface           │     │      Stdio MCP Server         │
+    │     (ai-db / vectordb)        │     │    (JSON-RPC 2.0 stdio)       │
+    └───────────────┬───────────────┘     └───────────────┬───────────────┘
+                    │                                       │
+                    └───────────────────┬───────────────────┘
+                                        │
                               ┌───────────────▼───────────────┐
                               │   Unified ServiceDispatcher   │
                               │     (ai_db/dispatcher.py)     │
@@ -241,7 +241,16 @@ If the provider name is not installed, ai-db stops with the list of installed pr
 
 ## 4. Pluggable Transport & Communication Layer
 
-`ai-db` decouples communication interfaces (CLI, MCP, HTTP REST) from business logic through a centralized `ServiceDispatcher`.
+`ai-db` decouples communication interfaces (CLI, MCP) from business logic through a centralized `ServiceDispatcher`.
+
+> **Removed: the HTTP REST transport.** `ai-db serve` and `ai_db/server/http_server.py` were
+> deleted. The server could only ever analyse code on its own filesystem, in its own
+> SQLite file, yet it exposed a network API with wildcard CORS, a tool-discovery endpoint,
+> and no authentication -- and `POST /tools/sync` let any unauthenticated caller index an
+> arbitrary path on the host. The one genuine capability it had over stdio MCP (N concurrent
+> clients on one shared index) was never used and would have needed auth, a read-only mode
+> and tenant isolation before it was safe. MCP over SSH covers the single-client case
+> without a listening port.
 
 ### 4.1 Unified ServiceDispatcher (`ai_db/dispatcher.py`)
 
@@ -258,7 +267,7 @@ class ServiceDispatcher:
         ...
 
     def list_tools(self) -> List[Dict[str, Any]]:
-        """Return registered tools and schemas for MCP tools/list and HTTP GET /tools."""
+        """Return registered tools and schemas for MCP tools/list."""
         ...
 
     def execute(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
@@ -268,13 +277,8 @@ class ServiceDispatcher:
 
 ### 4.2 Transport Adapters
 - **CLI (`ai_db/cli.py`)**: Translates argparse commands to dispatcher tool calls. Formats output for terminal consumption (colored tables, text outlines) or JSON (`--format json`).
-- **MCP Server (`mcp_server.py`)**: Exposes registered tools over stdio JSON-RPC 2.0. Dynamically exports all tools in `tools/list` and executes calls via `dispatcher.execute()`.
-- **HTTP Server (`ai_db/server/http_server.py`)**: Threaded stdlib HTTP server (`ai-db serve --port 8765`). Endpoints:
-  * `GET /health`: Health probe (`{"ok": true}`).
-  * `GET /status`: Database size and indexing metrics.
-  * `GET /tools`: Tool inventory with schemas.
-  * `POST /tools/{name}` & `POST /`: Execute tool with JSON payload.
-  * `GET /telemetry`: Performance and token savings metrics.
+- **MCP Server (`mcp_server.py`)**: Exposes registered tools over stdio JSON-RPC 2.0. Dynamically exports all tools in `tools/list` and executes calls via `dispatcher.execute()`. A `tools/call` carrying `params._meta.progressToken` streams `notifications/progress` frames while a long `sync` runs.
+- **HTTP REST: removed.** See the note at the top of §4. No HTTP transport ships.
 
 ### 4.3 Step-by-Step Guide: Creating a New Transport Adapter
 
@@ -360,7 +364,6 @@ The trace engine provides chronological execution order analysis — the missing
 **Integration:**
 - CLI: `ai-db trace <entry> [options]`
 - MCP tool: `trace`
-- HTTP endpoint: `POST /tools/trace`
 - `investigate --mode flow`: Picks best entry-like seed and runs trace from it
 
 **Storage schema extension** (`symbol_refs` table):
@@ -460,7 +463,7 @@ ai-db/
 │   ├── device.py               # torch device resolution for embed/rerank
 │   ├── errors.py               # The project's exception types
 │   ├── health.py               # Health and readiness reporting
-│   ├── http_client.py          # HTTP transport client
+│   ├── http_client.py          # JSON-over-HTTPS client for hosted model providers
 │   ├── ignorer.py              # Gitignore and path exclusion rules
 │   ├── logger.py               # Standardized logging utilities
 │   ├── utils.py                # Hashing, tokenization, project detection utilities
@@ -533,9 +536,6 @@ ai-db/
 │   │   ├── __init__.py         # Memory exports
 │   │   └── context.py          # ContextMemory (session snapshots and recall)
 │   │
-│   ├── server/                 # Transport servers
-│   │   ├── __init__.py         # Server exports
-│   │   └── http_server.py      # ThreadingHTTPServer REST/JSON API server
 │   │
 │   └── telemetry/              # Performance & token telemetry
 │       ├── __init__.py         # Telemetry exports
@@ -549,7 +549,7 @@ ai-db/
 │   ├── test_storage.py         # StorageBackend, SQLite, Factory, DTOs
 │   ├── test_storage_conformance.py  # Backend-agnostic contract suite
 │   ├── test_storage_adversarial_m2.py # Adversarial storage cases
-│   ├── test_transports.py      # CLI, MCP, HTTP REST, ServiceDispatcher
+│   ├── test_transports.py      # CLI, MCP, ServiceDispatcher parity
 │   ├── test_telemetry.py       # Latency, token compression, cache, weak points
 │   ├── test_parser.py          # Parsing, outlines, syntax diagnostics, chunking
 │   ├── test_ts_graph.py        # Tree-sitter queries for all 9 languages

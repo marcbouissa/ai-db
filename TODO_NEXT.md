@@ -18,7 +18,7 @@ depends on is complete.
    silently degrade, return `[]`, or switch to a weaker path.
 2. **One code path per feature.** Do not keep a regex path next to a tree-sitter path.
 3. **Exceptions:** only catch a specific exception type. The handler must re-raise it
-   wrapped, report it at a transport boundary (HTTP/MCP, marked `# noqa: BLE001` with a
+   wrapped, report it at a transport boundary (MCP, marked `# noqa: BLE001` with a
    reason), or carry a comment explaining why the case is expected.
 4. **Models** are named only in the user config and `ai_db/embed/defaults.py`.
    Do not use outdated models (`all-MiniLM-*`, `bge-*-v1.5`, `text-embedding-ada-002`,
@@ -58,7 +58,7 @@ depends on is complete.
 | Skills / memory | `ai_db/search/skills.py`, `ai_db/memory/context.py` |
 | Analyzer | `ai_db/analyzer/engine.py`, `ai_db/analyzer/references.py` |
 | Eval | `ai_db/eval/harness.py`, `eval/golden/*.jsonl`, `eval/results/*.json` |
-| Transports | `ai_db/dispatcher.py`, `mcp_server.py`, `ai_db/server/http_server.py` |
+| Transports | `ai_db/dispatcher.py`, `mcp_server.py` (the HTTP server was removed) |
 | Root facades | `vectordb.py` (restored as a Python module in `0dc9923`), `mcp_server.py` |
 
 ---
@@ -207,7 +207,7 @@ Otherwise mark every box "skipped (gate not met: <numbers>)" and move on.
       `query_engine.search(q, filters, k)` with
       `{"allowed_projects": None, "path_prefix": abs(scope)}`; the direct
       `search_chunks` call is gone and `VectorDB` injects `query_engine`.
-      `path_prefix` is now an accepted kwarg (its absence was breaking every MCP/HTTP
+      `path_prefix` is now an accepted kwarg (its absence was breaking every MCP
       `locate` call with a 500). A direct-backend path remains only as the
       no-retriever fallback for standalone `AnalyzerEngine` use.
 - [x] **11.6 Context + skill FTS.** `search_skills` / `search_contexts` build their MATCH
@@ -341,7 +341,7 @@ Otherwise mark every box "skipped (gate not met: <numbers>)" and move on.
       nothing is written at all. `Indexer` emits at 1, every 50th, and the last file.
 - [x] **14.2 Diff mode:** `investigate(mode="diff", since=…)` with seeds from
       `git diff --unified=0 <since>`, `changes:` in the pack, `since`/`root` on the
-      dispatcher schema and CLI (HTTP forwards the body verbatim, so it inherits both), and
+      dispatcher schema and CLI, and
       `eval/golden/ai_db_diff.jsonl` with 6 queries pinned to real commit **ranges**.
       — done. `changes:` carries `{filepath, lines, changed_lines}`; `lines` collapses
       spans to `L1-3 L7`. Missing `since` and a non-repo root both raise
@@ -456,10 +456,17 @@ Otherwise mark every box "skipped (gate not met: <numbers>)" and move on.
 - [x] **16.4 Output.** `format_tree` (indented, `⏵ ⏸ ⇉ ↺ ⌁` markers, `[if …]`),
       `format_json`, `format_mermaid` (`sequenceDiagram`), `--with-code` with
       `TRACE_CONTEXT_LINES`, token budget respected.
-- [ ] **16.5 Transports.** `ai-db trace` (CLI) and the dispatcher `trace` route are done.
-      **Missing: the MCP tool `trace_flow` and the HTTP `POST /trace`** — neither
-      `mcp_server.py` nor `ai_db/server/http_server.py` mentions `trace` at all.
-      Also confirm `investigate --mode flow` picks the most entry-like seed.
+- [x] **16.5 Transports.** `ai-db trace` (CLI), the dispatcher `trace` tool, and MCP
+      exposure are all done. **The original note here was wrong** and is corrected:
+      it claimed the MCP tool `trace_flow` was missing because "neither `mcp_server.py`
+      nor `ai_db/server/http_server.py` mentions `trace` at all". True of the source
+      text, but irrelevant — the MCP server reflects the dispatcher registry
+      dynamically and hardcodes no tool list, so the registered `trace` tool is
+      exposed automatically. Verified: `tools/list` returns 21 tools including
+      `trace` and `investigate`. No separate `trace_flow` tool is needed.
+      The HTTP half of this item is moot — the HTTP transport has been removed.
+      Remaining: confirm `investigate --mode flow` picks the most entry-like seed
+      (code exists; not yet asserted by a test).
 - [x] **16.6 Eval.** `eval/baseline_flow.json` + `eval/flow_baseline.py` with order-accuracy
       (LCS) and edge-kind accuracy.
 - [x] **16.7 Docs.** `README.md` shows the marker tree; `ARCHITECTURE.md:358` documents
@@ -481,6 +488,46 @@ replace the 16.2 resolver.
 
 ---
 
+## Post-Phase — HTTP REST transport removed
+
+Not a numbered phase; a removal decided after Phase 16 was otherwise complete.
+
+**Removed:** `ai_db/server/` (the whole package), the `ai-db serve` CLI subparser and its
+dispatch branch, `tests/test_transports.py`'s `http_server` fixture and 9 HTTP tests,
+`test_telemetry_http_endpoint`, and the HTTP REST API Reference section of the README.
+
+**Why.** Asked what the server was for, the honest answer was: nothing it advertised.
+It can only analyse code on its own filesystem, in its own SQLite file — there is no
+URL fetch, no `git clone`, and no remote ingest anywhere in the codebase. But it
+presented as a network API, and that was a liability rather than a feature:
+
+- `Access-Control-Allow-Origin: *` with **no authentication**, and every tool exposed
+  via `POST /tools/{name}` — including `sync`. Verified live: an unauthenticated
+  `POST /tools/sync {"path":"/tmp"}` indexed 1835 files from an arbitrary host path
+  and returned the file list. Any web page the user visits could do this.
+- The `db` argument let any caller point the server at an arbitrary local `.db`, which
+  `_resolve_db` would open or create.
+- `int(self.headers.get("Content-Length", 0))` sat outside the try block, so a
+  malformed header killed the connection with no response (confirmed).
+- No body-size cap, no read timeout, and `log_message` suppressed outright, so a 500
+  left no trace.
+
+**What was kept and why.** The parity guarantee is the valuable part, not the
+transport, so `test_transport_parity_mcp_and_http` was **reframed as
+`test_transport_parity_mcp_and_cli`** rather than deleted — the point is that both
+remaining transports route through one `ServiceDispatcher` and must agree.
+
+`ai_db/http_client.py` is untouched: it is a client for *hosted model providers*
+(OpenAI-compatible, Voyage, Cohere), unrelated to the server, and easy to confuse by name.
+
+**If this is ever wanted back**, the use case that would justify it is N concurrent
+clients on one shared index from a long-lived remote host (devcontainer, Codespaces,
+build agent) — the one thing stdio MCP structurally cannot do. It would need
+authentication, a read-only mode, and tenant isolation first. `access.cross_project` is
+a label grant inside one database and is not a security boundary.
+
+---
+
 ## Quick "what is left" summary
 
 | Block | State |
@@ -493,7 +540,7 @@ replace the 16.2 resolver.
 | Phase 13 | 13.1/13.2/13.3/13.4/13.6 done on `perf/scale-phase13`; 13.5 open; the vec0 10× target is unreachable (see 13.3) |
 | Phase 14 | **done** — progress notifications, diff mode (pack_recall 1.000), cache isolation (real leak fixed) |
 | Phase 15 | **done** — docs corrected against the code; 19 tracked scratch files removed; ruff scoped so a lint run cannot mutate strays |
-| Phase 16 | 16.5 only — add MCP `trace_flow` + HTTP `/trace` |
+| Phase 16 | **done** — 16.5's "missing MCP tool" was a false alarm; the HTTP half is moot |
 | Phase 16b | unblocked (10.1 done) but not started |
 
 Highest-value next steps, in order: **16.5** (the only remaining Phase 16 item, and

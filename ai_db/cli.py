@@ -371,12 +371,6 @@ def _main(argv: list[str] | None = None) -> int:
     todos_p.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
     todos_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
-    # serve (HTTP JSON API server)
-    serve_p = subparsers.add_parser("serve", help="Run HTTP JSON API server")
-    serve_p.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765)")
-    serve_p.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
-    serve_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
-
     # log
     log_p = subparsers.add_parser("log", help="Show the query log (latency per stage, top results)")
     log_p.add_argument("--slow", type=float, default=0.0, help="Only entries with total latency >= this many ms")
@@ -433,12 +427,6 @@ def _main(argv: list[str] | None = None) -> int:
     if args.command == "mcp":
         import mcp_server
         mcp_server.run_stdio(args.db, config=cfg)
-        return 0
-
-    if args.command == "serve":
-        from ai_db.server.http_server import start_http_server
-        print(f"[ai-db serve] Listening on http://{args.host}:{args.port} | DB: {args.db}")
-        start_http_server(args.db, args.host, args.port, config=cfg)
         return 0
 
     if args.command == "watch":

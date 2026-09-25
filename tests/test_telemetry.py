@@ -11,8 +11,6 @@ Tiers:
 import json
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 
 import pytest
 
@@ -222,43 +220,6 @@ class TestTelemetryTier1FeatureCoverage:
             pytest.skip("MCP 'telemetry' tool not yet registered (planned for Milestone 4)")
 
         assert resp["result"]["isError"] is False
-
-    def test_telemetry_http_endpoint(self, telemetry_db):
-        """HTTP server exposes GET /telemetry returning full metrics dictionary."""
-        from http.server import HTTPServer
-
-        from ai_db.server.http_server import AiDbHandler
-
-        server = HTTPServer(("127.0.0.1", 0), AiDbHandler)
-        server.db_path = telemetry_db["db_file"]
-        host, port = server.server_address
-
-        import threading
-        t = threading.Thread(target=server.serve_forever, daemon=True)
-        t.start()
-
-        url = f"http://{host}:{port}/telemetry"
-        try:
-            with urllib.request.urlopen(url) as resp:
-                assert resp.status == 200
-                data = json.loads(resp.read().decode("utf-8"))
-                assert isinstance(data, dict)
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                pytest.skip("HTTP route GET /telemetry not yet implemented (planned for Milestone 4)")
-            raise
-        finally:
-            server.shutdown()
-            server.server_close()
-            t.join(timeout=2.0)
-
-
-# ==============================================================================
-# Tier 2: Boundary & Corner Cases
-# ==============================================================================
-
-class TestTelemetryTier2BoundaryAndCorner:
-    """Division by zero protection, metric resets, and in-memory databases."""
 
     def test_telemetry_zero_queries_no_div_zero(self, telemetry_db):
         """ZeroDivisionError is avoided when retrieving summary with zero recorded queries."""
