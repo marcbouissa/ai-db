@@ -8,6 +8,8 @@ import subprocess
 import time
 from typing import Any
 
+from ai_db.constants import DEFAULT_SKILL_DIRS
+from ai_db.errors import AiDbConfigError
 from ai_db.eval.metrics import mrr, ndcg_at_k, recall_at_k
 
 VALID_KINDS = ("locate", "explain", "impact", "diff")
@@ -198,6 +200,30 @@ def run_skills(golden_path: str, db: Any, top_k: int = 3,
     """
     golden = load_skills_golden(golden_path)
     router = db.skill_router
+
+    # route_skills auto-syncs from the default skill dirs on its first call, so
+    # the eval DB (which is a fresh temp database) would only fill in as a side
+    # effect of scoring the first prompt. Do it up front so the emptiness check
+    # below is accurate rather than racing the router.
+    if not router.db.get_skills():
+        router.sync_skills(verbose=False)
+
+    # Still nothing means the prompt set cannot be scored: every prompt would
+    # miss, reporting as top1_accuracy 0.0 -- indistinguishable from a
+    # genuinely broken router. A silent 0.0 looks like a result; fail with the
+    # fix instead (TODO rule 1: no silent degradation).
+    indexed = len(router.db.get_skills())
+    if indexed == 0:
+        raise AiDbConfigError(
+            f"no skills found, so {golden_path} cannot be scored "
+            f"({len(golden)} prompts would all miss). Point AI_DB_SKILL_DIRS at "
+            f"the directories holding your SKILL.md files (colon-separated for "
+            f"several), or install them under a default skill dir. Note that "
+            f"AI_DB_SKILL_DIRS is read at import time, so it must be set in the "
+            f"environment of the process. Searched: "
+            f"{', '.join(DEFAULT_SKILL_DIRS)}"
+        )
+
     hits: list[float] = []
     per_query: list[dict[str, Any]] = []
     for item in golden:
@@ -214,7 +240,7 @@ def run_skills(golden_path: str, db: Any, top_k: int = 3,
         })
     return {
         "queries": len(golden),
-        "skills_indexed": len(router.db.get_skills()),
+        "skills_indexed": indexed,
         "top1_accuracy": round(statistics.fmean(hits), 4) if hits else 0.0,
         "per_query": per_query,
     }

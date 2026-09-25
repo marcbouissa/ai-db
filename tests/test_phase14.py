@@ -12,6 +12,7 @@ import io
 import json
 import os
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -394,3 +395,54 @@ def test_diff_seeds_span_non_python_languages(filename, code, expected):
     symbols, _, errors = extract_graph(filename, code)
     assert errors == []
     assert expected <= {s["name"] for s in symbols}
+
+
+# ==============================================================================
+# eval: skills must fail loudly rather than report a fake 0.0
+# ==============================================================================
+
+def test_skills_eval_raises_when_no_skills_found(tmp_path, lexical_config,
+                                                 monkeypatch):
+    """Reporting top1_accuracy 0.0 for an empty skill set looks like a result.
+
+    It is indistinguishable from a genuinely broken router, so it has to be an
+    error that names the directories searched.
+    """
+    import ai_db.eval.harness as harness_mod
+    import ai_db.search.skills as skills_mod
+    from ai_db.errors import AiDbConfigError
+    from ai_db.eval.harness import run_skills
+
+    monkeypatch.setenv("AI_DB_CONFIG", lexical_config)
+    # Both modules bind DEFAULT_SKILL_DIRS at import time, so each consumer has
+    # to be patched: the harness for the error message, skills.py for the search
+    # that actually happens. Patch the module objects, not dotted strings.
+    for target in (harness_mod, skills_mod):
+        monkeypatch.setattr(target, "DEFAULT_SKILL_DIRS",
+                            [str(tmp_path / "no-such-skill-dir")])
+    db = VectorDB(str(tmp_path / "empty.db"))
+    with pytest.raises(AiDbConfigError) as excinfo:
+        run_skills(str(Path(__file__).parent.parent / "eval/golden/skills.jsonl"), db)
+    message = str(excinfo.value)
+    assert "no skills found" in message
+    assert "AI_DB_SKILL_DIRS" in message
+    assert "no-such-skill-dir" in message, "the error must name what it searched"
+    db.close()
+
+
+def test_skills_eval_autosyncs_from_skill_dirs(tmp_path, lexical_config, monkeypatch):
+    """The eval DB is a fresh temp database, so skills must be discovered."""
+    import ai_db.eval.harness as harness_mod
+    import ai_db.search.skills as skills_mod
+    from ai_db.eval.harness import run_skills
+
+    fixtures = Path(__file__).parent.parent / "tests/fixtures/skills"
+    monkeypatch.setenv("AI_DB_CONFIG", lexical_config)
+    for target in (harness_mod, skills_mod):
+        monkeypatch.setattr(target, "DEFAULT_SKILL_DIRS", [str(fixtures)])
+    db = VectorDB(str(tmp_path / "skills.db"))
+    result = run_skills(
+        str(Path(__file__).parent.parent / "eval/golden/skills.jsonl"), db)
+    assert result["skills_indexed"] == 5, result
+    assert result["top1_accuracy"] == 1.0, result
+    db.close()

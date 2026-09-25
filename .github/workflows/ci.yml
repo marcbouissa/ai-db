@@ -43,7 +43,7 @@ jobs:
         run: pytest -q
 
       - name: Lint
-        run: ruff check . --exclude token_benchmark.py
+        run: ruff check .   # scope + exclusions come from [tool.ruff] in pyproject.toml
 
       - name: Type check
         run: mypy ai_db mcp_server.py

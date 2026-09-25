@@ -404,6 +404,28 @@ Otherwise mark every box "skipped (gate not met: <numbers>)" and move on.
       `tests/test_packaging.py::test_core_zero_runtime_dependencies` asserted the right
       thing under a lying name; renamed to
       `test_core_runtime_dependencies_exclude_heavy_ml` (assertions unchanged).
+- [x] **Follow-ups raised by 15.2, fixed in the same commit:**
+  - `eval --skills` reported `{"skills_indexed": 0, "top1_accuracy": 0.0}` when no
+    skills were present — indistinguishable from a broken router, and it reads like
+    a result. `run_skills` now auto-syncs first (so the check is accurate rather
+    than racing `route_skills`, which already auto-syncs internally) and raises
+    `AiDbConfigError` naming every directory it searched.
+  - The README instruction I had just written for it was **wrong**: it said
+    `ai-db sync <dir>`, which indexes SKILL.md files as ordinary chunks and creates
+    no skill records. The correct prerequisite is only `AI_DB_SKILL_DIRS`, because
+    the eval DB is a fresh temporary database and the router auto-discovers skills
+    into it. Verified end to end: 5 skills, top-1 1.0.
+  - `[tool.ruff]` had no `include`, so `ruff check .` — what CI runs — reached every
+    `.py` in the tree and `ruff check --fix` would rewrite any stray script. That is
+    the mechanism by which the 19 debugging files were silently modified. Now
+    pinned to the project's own code, with `token_benchmark.py` excluded in config
+    so the exclusion is not lost when a caller omits the CLI flag. Scope limit
+    stated in the config and the test: `include` filters *discovery*, so naming a
+    file explicitly still processes it (correct — the user pointed at it).
+  - The stray-script regression test initially asserted the wrong thing and caught
+    a real limit in the fix, which is why the limit is now documented rather than
+    papered over.
+
 - [x] **Check:** `grep -rni "mysql\|zero.dependenc" *.md` — the 10 remaining hits are
       all either an explicit correction ("was scoped out", "is *not* zero-dependency")
       or the annotated historical record in `ORIGINAL_REQUEST.md`. No stale claim
@@ -470,7 +492,7 @@ replace the 16.2 resolver.
 | Phase 12 | **done** |
 | Phase 13 | 13.1/13.2/13.3/13.4/13.6 done on `perf/scale-phase13`; 13.5 open; the vec0 10× target is unreachable (see 13.3) |
 | Phase 14 | **done** — progress notifications, diff mode (pack_recall 1.000), cache isolation (real leak fixed) |
-| Phase 15 | **done** — docs corrected against the code; 19 tracked scratch files removed |
+| Phase 15 | **done** — docs corrected against the code; 19 tracked scratch files removed; ruff scoped so a lint run cannot mutate strays |
 | Phase 16 | 16.5 only — add MCP `trace_flow` + HTTP `/trace` |
 | Phase 16b | unblocked (10.1 done) but not started |
 

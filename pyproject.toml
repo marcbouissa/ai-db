@@ -92,6 +92,25 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# Pin ruff to the project's own code. Without an `include`, the `ruff check .`
+# that CI runs also picks up any stray .py dropped at the repo root -- and
+# `ruff check --fix` will happily *rewrite* it, which is how 19 leftover
+# debugging scripts ended up silently modified. An explicit allowlist means a
+# whole-tree lint run can never mutate a file nobody is looking at.
+# `include` filters discovery only: naming a file explicitly on the command
+# line still processes it, which is the correct behaviour for a user who
+# points ruff at their own file.
+include = [
+    "ai_db/**/*.py",
+    "tests/**/*.py",
+    "eval/**/*.py",
+    "mcp_server.py",
+    "vectordb.py",
+]
+# token_benchmark.py is a local scratch benchmark and is gitignored; keeping it
+# out here means the exclusion does not depend on every caller remembering a
+# --exclude flag.
+exclude = ["token_benchmark.py"]
 
 [tool.mypy]
 python_version = "3.12"

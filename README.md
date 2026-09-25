@@ -300,11 +300,16 @@ ai-db eval --pack --golden eval/golden/polyglot_pack.jsonl \
 ai-db eval --pack --golden eval/golden/ai_db_diff.jsonl --root . --all-files
 
 # Skill routing: top-1 accuracy over a prompt -> skill golden set.
-# NOTE: skills must already be indexed, or this reports skills_indexed: 0 and
-# top1_accuracy: 0.0 without explaining why. Sync the skill dirs first.
-AI_DB_SKILL_DIRS=tests/fixtures/skills ai-db sync tests/fixtures/skills
+# Skills are discovered from the default skill dirs, or from AI_DB_SKILL_DIRS
+# (colon-separated) if set. The eval DB is a fresh temporary database, so it
+# auto-syncs the skills on first use -- there is nothing to sync beforehand.
 AI_DB_SKILL_DIRS=tests/fixtures/skills ai-db eval --skills --golden eval/golden/skills.jsonl
 # -> {"queries": 20, "skills_indexed": 5, "top1_accuracy": 1.0}
+# If no skills are found the command fails and names the directories it
+# searched, rather than reporting a top1_accuracy of 0.0 that would be
+# indistinguishable from a broken router.
+# NB: AI_DB_SKILL_DIRS is read at import time -- set it in the environment of
+# the process, not from Python after ai-db has started.
 
 ai-db log --slow 500        # slow queries with per-stage latency
 ```

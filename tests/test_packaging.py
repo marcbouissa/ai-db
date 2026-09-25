@@ -73,6 +73,50 @@ class TestPackagingTier1:
         )
         assert project.get("description"), "project.description must be non-empty"
 
+    def test_ruff_scope_is_pinned_to_project_code(self):
+        """`ruff check .` must not reach files outside the project's own code.
+
+        Without an explicit `include`, a `ruff check --fix` run (which is what a
+        developer reaches for, and what an editor integration runs on save) will
+        rewrite any stray .py dropped at the repo root. That is how 19 leftover
+        debugging scripts ended up silently modified.
+        """
+        pyproject = load_pyproject()
+        ruff = pyproject.get("tool", {}).get("ruff", {})
+        include = ruff.get("include")
+        assert include, "[tool.ruff] must pin `include`, else ruff lints the whole tree"
+        allowed = {p for entry in include for p in entry.split("/") if p not in ("**", "**/*.py", "")}
+        assert "ai_db" in allowed and "tests" in allowed, include
+        # The gitignored local benchmark must be excluded in config, not only on
+        # the command line, so the exclusion cannot be lost by a caller.
+        assert "token_benchmark.py" in ruff.get("exclude", []), (
+            f"token_benchmark.py must be in [tool.ruff].exclude, got {ruff.get('exclude')}"
+        )
+
+    def test_repo_wide_ruff_run_does_not_touch_a_stray_script(self):
+        """A repo-wide `ruff check --fix .` must leave a stray root file alone.
+
+        Scope note: ruff's `include` filters *discovery*. Naming a file
+        explicitly on the command line still processes it, and that is correct
+        -- a user who points ruff at their own file means it. What must not
+        happen is a whole-tree run silently rewriting files nobody is looking
+        at, which is how the 19 debugging scripts were modified.
+        """
+        probe = REPO_ROOT / "ruff_scope_probe_tmp.py"
+        probe.write_text("import os\nimport sys\nx = 1\n", encoding="utf-8")
+        before = probe.read_bytes()
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "ruff", "check", "--fix", "--select", "F401", "."],
+                cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+            )
+            assert probe.read_bytes() == before, (
+                "a repo-wide `ruff check --fix .` rewrote a file outside its "
+                f"configured include: {result.stdout}"
+            )
+        finally:
+            probe.unlink(missing_ok=True)
+
     def test_core_runtime_dependencies_exclude_heavy_ml(self):
         """TC-PKG-T1-04: Core runtime deps are the parsing/index stack; ML stays optional.
 
