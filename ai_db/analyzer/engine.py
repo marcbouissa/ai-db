@@ -1,13 +1,12 @@
-import ast
 import glob
 import hashlib
 import json
 import os
-import re
 import time
 from typing import Any
 
 from ai_db.analyzer.references import ReferenceStore
+from ai_db.parser.ts_graph import extract_graph, language_for
 from ai_db.utils import compute_sha256, tokenize
 
 
@@ -123,80 +122,49 @@ class AnalyzerEngine:
             self._save_to_semantic_cache(cache_key, file_hash, res)
             return res
 
-        # Extract symbols using AST or regex
+        # Extract symbols using tree-sitter for supported languages
         symbols_found: list[dict[str, Any]] = []
         notes = []
         q_tokens = set(tokenize(q or "")) if q else set()
 
-        if ext in (".py", ".pyi"):
-            try:
-                tree = ast.parse(content, filename=abs_path)
-                for node in tree.body:
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        end_ln = getattr(node, "end_lineno", node.lineno)
-                        prefix = "async def " if isinstance(node, ast.AsyncFunctionDef) else "def "
-                        sig_line = all_lines[node.lineno - 1].strip() if 0 <= node.lineno - 1 < total_lines else f"{prefix}{node.name}(...)"
-                        body_block = "\n".join(all_lines[node.lineno - 1 : end_ln])
-                        ref_id = self._store_analysis_ref(abs_path, node.name, node.lineno, end_ln, "def", body_block)
-                        symbols_found.append({
-                            "name": node.name,
-                            "kind": "def",
-                            "sig": sig_line.rstrip(":"),
-                            "span": [node.lineno, end_ln],
-                            "ref": ref_id,
-                            "body": body_block
-                        })
-                    elif isinstance(node, ast.ClassDef):
-                        end_ln = getattr(node, "end_lineno", node.lineno)
-                        sig_line = all_lines[node.lineno - 1].strip() if 0 <= node.lineno - 1 < total_lines else f"class {node.name}"
-                        body_block = "\n".join(all_lines[node.lineno - 1 : end_ln])
-                        ref_id = self._store_analysis_ref(abs_path, node.name, node.lineno, end_ln, "class", body_block)
-                        class_entry: dict[str, Any] = {
-                            "name": node.name,
-                            "kind": "class",
-                            "sig": sig_line.rstrip(":"),
-                            "span": [node.lineno, end_ln],
-                            "ref": ref_id,
-                            "body": body_block,
-                            "methods": []
-                        }
-                        for sub in node.body:
-                            if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                                sub_end = getattr(sub, "end_lineno", sub.lineno)
-                                sub_prefix = "async def " if isinstance(sub, ast.AsyncFunctionDef) else "def "
-                                sub_sig = all_lines[sub.lineno - 1].strip() if 0 <= sub.lineno - 1 < total_lines else f"{sub_prefix}{sub.name}(...)"
-                                sub_body = "\n".join(all_lines[sub.lineno - 1 : sub_end])
-                                sub_ref = self._store_analysis_ref(abs_path, f"{node.name}.{sub.name}", sub.lineno, sub_end, "method", sub_body)
-                                class_entry["methods"].append({
-                                    "name": sub.name,
-                                    "kind": "method",
-                                    "sig": sub_sig.rstrip(":"),
-                                    "span": [sub.lineno, sub_end],
-                                    "ref": sub_ref,
-                                    "body": sub_body
-                                })
-                        symbols_found.append(class_entry)
-            except (SyntaxError, ValueError) as e:
-                # unparseable Python: the regex outline below describes the file instead
-                notes.append(f"AST unavailable: {e}")
-
-        # Fallback to regex symbol extraction if AST returned nothing
-        if not symbols_found:
-            for i, line in enumerate(all_lines, 1):
-                stripped = line.strip()
-                if not stripped or stripped.startswith(("#", "//", "/*", "*")):
-                    continue
-                m = re.match(r"^(?:export\s+|public\s+|private\s+|protected\s+|static\s+|async\s+)*(class|interface|type|struct|def|function|fn)\s+([A-Za-z0-9_$]+)", stripped)
-                if m:
-                    kind = m.group(1)
-                    sname = m.group(2)
+        # Get symbols from tree-sitter for supported languages
+        lang = language_for(abs_path)
+        if lang is not None:
+            ts_symbols, _, _ = extract_graph(abs_path, content)
+            for sym in ts_symbols:
+                sym_name = sym["name"]
+                sym_type = sym["symbol_type"]
+                sym_line = sym["line"]
+                signature = sym.get("signature")
+                # Find end line from chunks
+                end_line = sym_line
+                for chunk in self.db.get_chunks_for_file(abs_path):
+                    if chunk.name == sym_name and chunk.start_line == sym_line:
+                        end_line = chunk.end_line
+                        break
+                body_block = "\n".join(all_lines[sym_line - 1 : end_line])
+                ref_id = self._store_analysis_ref(abs_path, sym_name, sym_line, end_line, sym_type, body_block)
+                symbols_found.append({
+                    "name": sym_name,
+                    "kind": sym_type,
+                    "sig": signature or sym_name,
+                    "span": [sym_line, end_line],
+                    "ref": ref_id,
+                    "body": body_block
+                })
+        else:
+            # For unsupported languages (markdown, text), build symbols from chunks
+            chunks = self.db.get_chunks_for_file(abs_path)
+            for chunk in chunks:
+                if chunk.chunk_type in ("md", "section", "text", "lib_meta"):
+                    ref_id = self._store_analysis_ref(abs_path, chunk.name, chunk.start_line, chunk.end_line, chunk.chunk_type, chunk.content)
                     symbols_found.append({
-                        "name": sname,
-                        "kind": kind,
-                        "sig": stripped[:120].rstrip("{:;"),
-                        "span": [i, min(total_lines, i + 15)],
-                        "ref": f"ref:{hashlib.sha1(f'{abs_path}:{i}:{sname}'.encode()).hexdigest()[:8]}",
-                        "body": stripped
+                        "name": chunk.name,
+                        "kind": chunk.chunk_type,
+                        "sig": chunk.qualified_name,
+                        "span": [chunk.start_line, chunk.end_line],
+                        "ref": ref_id,
+                        "body": chunk.content
                     })
 
         # F1 Depth Control & F3 Question-Driven Filtering

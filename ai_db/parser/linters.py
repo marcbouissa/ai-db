@@ -4,6 +4,7 @@ Runs external linter tools on file content and returns (line, col, message) erro
 Validators are opt-in: each only fires if the CLI tool is found on PATH.
 Custom validators can be added via config.json: { "validators": { ".ts": ["npx","tsc","--noEmit","{file}"] } }
 """
+import ast
 import os
 import re
 import shutil
@@ -102,6 +103,20 @@ class ExternalLinter:
             os.unlink(tmp_path)
 
         return None
+
+
+def validate_python_syntax(content: str, filepath: str) -> tuple[int, int, str] | None:
+    """
+    Validates Python syntax using the built-in ast module.
+    Returns (line, col, message) on error, None if valid.
+    """
+    try:
+        ast.parse(content, filename=filepath)
+    except SyntaxError as e:
+        return (e.lineno or 1, e.offset or 1, e.msg)
+    except ValueError as e:
+        return (1, 1, str(e))
+    return None
 
 
 # Module-level singleton — avoids re-reading config on every file

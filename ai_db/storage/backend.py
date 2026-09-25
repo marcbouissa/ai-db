@@ -249,11 +249,20 @@ class StorageBackend(ABC):
     @abstractmethod
     def search_skills(
         self,
-        query_tokens: list[str],
+        query: str,
         allowed_projects: list[str] | None = None,
         limit: int = 20,
     ) -> list[tuple[str, float]]:
         """Search skills via FTS BM25, returning list of (skill_name, score)."""
+
+    @abstractmethod
+    def sync_skills(
+        self,
+        skill_dirs: list[str] | None = None,
+        project: str = "global",
+        verbose: bool = True,
+    ) -> dict[str, int]:
+        """Discover and index skills from skill directories into the skills table."""
 
     # =========================================================================
     # Context Memory
@@ -281,14 +290,51 @@ class StorageBackend(ABC):
     @abstractmethod
     def search_contexts(
         self,
-        query_tokens: list[str],
+        query: str,
         allowed_projects: list[str] | None = None,
         top_k: int = 3,
     ) -> list[dict[str, Any]]:
         """Search saved contexts via full-text search."""
 
-    # =========================================================================
-    # Analysis References
+    @abstractmethod
+    def search_skills_vector(
+        self,
+        vector: list[float],
+        allowed_projects: list[str] | None = None,
+        limit: int = 20,
+    ) -> list[tuple[str, float]]:
+        """Search skills via vector similarity, returning list of (skill_name, distance)."""
+
+    @abstractmethod
+    def search_contexts_vector(
+        self,
+        vector: list[float],
+        allowed_projects: list[str] | None = None,
+        top_k: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search contexts via vector similarity."""
+
+    @abstractmethod
+    def search_skills_hybrid(
+        self,
+        query: str,
+        vector: list[float],
+        allowed_projects: list[str] | None = None,
+        limit: int = 20,
+        rrf_k: int = 60,
+    ) -> list[tuple[str, float]]:
+        """Search skills via hybrid BM25 + vector (RRF fusion)."""
+
+    @abstractmethod
+    def search_contexts_hybrid(
+        self,
+        query: str,
+        vector: list[float],
+        allowed_projects: list[str] | None = None,
+        top_k: int = 10,
+        rrf_k: int = 60,
+    ) -> list[dict[str, Any]]:
+        """Search contexts via hybrid BM25 + vector (RRF fusion)."""
     # =========================================================================
 
     @abstractmethod

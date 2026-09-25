@@ -5,7 +5,8 @@ import json
 import pytest
 
 from ai_db import VectorDB
-from ai_db.analysis.investigate import is_test_path, qualified_of, scope_of
+from ai_db.analysis.investigate import is_test_path
+from ai_db.analysis.resolve import qualified_of, scope_of
 from ai_db.dispatcher import ServiceDispatcher
 from ai_db.parser.chunker import count_tokens
 

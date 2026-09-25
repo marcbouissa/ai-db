@@ -25,8 +25,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ai_db.analysis.pack import EntryPoint, Evidence, InvestigationPack
+from ai_db.analysis.resolve import Resolver, scope_of
 from ai_db.constants import (
-    COMPOUND_MAX_DEFINITIONS,
     DELEGATE_MAX_TOKENS,
     EXPLAIN_CALLER_SEEDS,
     IMPACT_DEPTH,
@@ -37,14 +37,16 @@ from ai_db.constants import (
     MAX_TESTS,
     MODULE_SEED_FACTOR,
     SEED_K,
+    TRACE_CONTEXT_LINES,
+    TRACE_DEPTH,
+    TRACE_MAX_NODES,
 )
 from ai_db.parser.chunker import count_tokens
-from ai_db.search.query_builder import split_identifier
 from ai_db.search.ranking import last_component
 from ai_db.storage.models import ChunkRecord, SearchResult
 from ai_db.utils import get_allowed_projects
 
-MODES = ("locate", "explain", "impact")
+MODES = ("locate", "explain", "impact", "flow")
 ROLE_ORDER = {"seed": 0, "parent": 1, "callee": 2, "caller": 3, "test": 4}
 _BUILTINS = frozenset(dir(builtins)) | frozenset({
     "append", "extend", "get", "items", "keys", "values", "join", "split", "strip", "format",
@@ -67,18 +69,6 @@ def is_test_path(path: str) -> bool:
         or base.endswith(("_test.py", ".test.ts", ".test.js", ".spec.ts", ".spec.js", "_test.go"))
 
 
-def scope_of(qualified_name: str) -> str:
-    """Chunk qualified name -> cross-ref caller scope (``module.Class.method``)."""
-    return f"module.{qualified_name}"
-
-
-def qualified_of(scope: str) -> str | None:
-    """Cross-ref caller scope -> chunk qualified name (None for module-level code)."""
-    if scope == "module":
-        return None
-    return scope.removeprefix("module.")
-
-
 @dataclass
 class _Item:
     chunk: ChunkRecord
@@ -93,6 +83,7 @@ class Investigator:
         self.vdb = vdb
         self.db = vdb.backend
         self._import_cache: dict[str, set[str]] = {}
+        self._resolver = Resolver(self.db)
 
     # ------------------------------------------------------------------ api
 
@@ -122,7 +113,7 @@ class Investigator:
         seed_items = sorted((it for it in items.values() if it.role == "seed"),
                             key=lambda it: (-it.score, it.order))
 
-        if mode in ("explain", "impact"):
+        if mode in ("explain", "impact", "flow"):
             self._add_parents(seed_items, items)
             self._add_tests(seed_items, allowed, items, tests, relative_to)
         if mode == "explain":
@@ -146,8 +137,40 @@ class Investigator:
         pack.tests = tests
         pack.unresolved = sorted(unresolved)
         pack.recent_changes = self._recent_changes([it.chunk.filepath for it in seed_items])
+
+        if mode == "flow":
+            # For flow mode: pick the best entry-like seed and run trace from it
+            from ai_db.analysis.trace import TraceEngine
+            from ai_db.analysis.trace_format import format_tree
+            entry_seed = self._pick_entry_seed(seed_items)
+            if entry_seed:
+                trace_engine = TraceEngine(
+                    self.db,
+                    allowed_projects=allowed,
+                )
+                trace_result = trace_engine.trace(
+                    entry=entry_seed.chunk.qualified_name,
+                    depth=TRACE_DEPTH,
+                    max_nodes=TRACE_MAX_NODES,
+                    direction="down",
+                    include_tests=False,
+                )
+                # Store trace in pack for later output
+                pack.trace_result = trace_result
+                pack.trace_output = format_tree(trace_result, with_code=True, context_lines=TRACE_CONTEXT_LINES)
+
         self._pack(pack, items, edges, relative_to)
         return pack
+
+    def _pick_entry_seed(self, seed_items: list[_Item]) -> _Item | None:
+        """Pick the most entry-like seed for flow tracing.
+        Prefers: module-level code, __main__, then highest-scored seed."""
+        for it in seed_items:
+            if it.chunk.chunk_type == "module":
+                return it
+            if "__main__" in it.chunk.qualified_name:
+                return it
+        return seed_items[0] if seed_items else None
 
     # ------------------------------------------------------------ gathering
 
@@ -193,53 +216,6 @@ class Investigator:
             if parent is not None and parent.chunk_type == "class_header":
                 self._add(items, parent, "parent", s.score * 0.5, f"class of {s.chunk.qualified_name}")
 
-    def _imports(self, filepath: str) -> set[str]:
-        """Dotted-name parts imported anywhere in ``filepath`` (cached per call)."""
-        cached = self._import_cache.get(filepath)
-        if cached is None:
-            cached = set()
-            for ref in self.db.get_refs_from(filepath, None, ("import",)):
-                cached.update(ref.callee_name.split("."))
-            self._import_cache[filepath] = cached
-        return cached
-
-    def _linked(self, user_file: str, definition: ChunkRecord) -> bool:
-        """``user_file`` can reach ``definition``: same file, or it imports the definition's
-        module (file stem) or its top-level name."""
-        if user_file == definition.filepath:
-            return True
-        stem = os.path.splitext(os.path.basename(definition.filepath))[0]
-        top = definition.qualified_name.split(".")[0]
-        return bool(self._imports(user_file) & {stem, top})
-
-    def _resolve(self, names: set[str], near: ChunkRecord,
-                 found: dict[str, list[ChunkRecord]]) -> dict[str, list[ChunkRecord]]:
-        """Deterministic name resolution (never the caller itself): a definition in the same
-        file, else one the file imports, else the only definition of that name, else — for
-        compound names only — up to COMPOUND_MAX_DEFINITIONS definitions. Other names stay
-        unresolved."""
-        out: dict[str, list[ChunkRecord]] = {}
-        for name in names:
-            cands = [c for c in found.get(name, []) if c.id != near.id]
-            same = [c for c in cands if c.filepath == near.filepath]
-            linked = [c for c in cands if self._linked(near.filepath, c)]
-            if same or linked:
-                out[name] = sorted(same or linked, key=_cid)[:1]
-            elif len(cands) == 1:
-                out[name] = cands
-            elif cands and len(split_identifier(name)) >= 2:
-                # compound name, several definitions (interface + implementation): keep both
-                out[name] = sorted(cands, key=_cid)[:COMPOUND_MAX_DEFINITIONS]
-        return out
-
-    def _caller_links_to(self, ref: Any, target: ChunkRecord) -> bool:
-        """A caller counts if the called name is a compound identifier (``search_chunks``,
-        ``parseConfig``: collisions are rare, so duck-typed calls like ``self.db.search_chunks``
-        are kept), or if its file can reach the target (same file or import). Single-word
-        names need the link (``re.search`` must not count as ``Engine.search``)."""
-        name = last_component(target.qualified_name)
-        return len(split_identifier(name)) >= 2 or self._linked(ref.caller_filepath, target)
-
     def _add_callees(self, seeds: list[_Item], allowed: list[str], items: dict[int, _Item],
                      edges: list[list[str]], unresolved: set[str]) -> None:
         """One hop of callees; a second hop through thin delegates (small bodies)."""
@@ -253,13 +229,13 @@ class Investigator:
                 names = list(dict.fromkeys(r.callee_name for r in refs if r.callee_name not in _BUILTINS))
                 per_src.append((chunk, score, names))
                 all_names |= set(names)
-            found = self.db.find_chunks_by_symbol(sorted(all_names), allowed)
+            self.db.find_chunks_by_symbol(sorted(all_names), allowed)  # populate resolver cache
             next_frontier = []
             for chunk, score, names in per_src:
-                resolved = self._resolve(set(names), chunk, found)
+                result = self._resolver.resolve_callees(set(names), chunk, allowed)
                 if hop == 1:
-                    unresolved |= set(names) - set(resolved)
-                targets = [c for n in names if n in resolved for c in resolved[n]]
+                    unresolved |= result.unresolved
+                targets = [c for n in names if n in result.resolved for c in result.resolved[n]]
                 for callee in targets[:MAX_EXPANDED_PER_SEED]:
                     self._add(items, callee, "callee", score * (0.6 ** hop),
                               f"called by {chunk.qualified_name}")
@@ -270,10 +246,6 @@ class Investigator:
             if not frontier:
                 return
 
-    def _callers_of(self, name: str, allowed: list[str]) -> list[Any]:
-        refs = self.db.query_symbol_callers(callee_name=name, allowed_projects=allowed, limit=100)
-        return [r for r in refs if r.ref_type in ("call", "inherit")]
-
     def _add_callers(self, seeds: list[_Item], allowed: list[str], items: dict[int, _Item],
                      edges: list[list[str]], depth_limit: int) -> None:
         frontier = [(s.chunk, s.score) for s in seeds]
@@ -282,18 +254,13 @@ class Investigator:
             next_frontier = []
             for target, score in frontier:
                 name = last_component(target.qualified_name)
+                callers = self._resolver.resolve_callers(name, target, allowed, limit=100)
                 added = 0
-                for ref in self._callers_of(name, allowed):
-                    qn = qualified_of(ref.caller_name)
-                    if qn is None or added >= MAX_EXPANDED_PER_SEED:
-                        continue
-                    if not self._caller_links_to(ref, target):
-                        continue
-                    caller = self.db.get_chunk_by_qualified_name(ref.caller_filepath, qn)
-                    if caller is None:
-                        continue
+                for caller in callers:
+                    if added >= MAX_EXPANDED_PER_SEED:
+                        break
                     edges.append([caller.qualified_name, target.qualified_name])
-                    if caller.id in seen:
+                    if caller.id is None or caller.id in seen:
                         continue
                     seen.add(caller.id)
                     added += 1
@@ -312,16 +279,11 @@ class Investigator:
             if is_test_path(s.chunk.filepath):
                 continue
             name = last_component(s.chunk.qualified_name)
-            for ref in self._callers_of(name, allowed):
-                qn = qualified_of(ref.caller_name)
-                if qn is None or not is_test_path(ref.caller_filepath):
-                    continue
-                if not self._caller_links_to(ref, s.chunk):
-                    continue
+            test_callers = self._resolver.find_test_callers(name, s.chunk, allowed, limit=100)
+            for chunk in test_callers:
                 if len(tests) >= MAX_TESTS:
                     return
-                chunk = self.db.get_chunk_by_qualified_name(ref.caller_filepath, qn)
-                if chunk is None or chunk.id in listed:
+                if chunk.id is None or chunk.id in listed:
                     continue
                 listed.add(chunk.id)
                 self._add(items, chunk, "test", s.score * 0.4, f"tests {s.chunk.qualified_name}")

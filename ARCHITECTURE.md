@@ -343,6 +343,34 @@ LLM context windows are constrained and expensive. `ai-db` avoids dumping whole 
 | **Stub** | Skeletons with signatures, docstrings, and `...` bodies | ~50% (50% savings) | Agent reasoning, planning, and interface verification |
 | **S-Exp** | Lisp-style S-expression token-minimal syntax | ~37% (63% savings) | High-volume batch retrieval under tight context limits |
 
+### 5.2 Call-Flow Trace Engine (`ai_db/analysis/trace.py`)
+
+The trace engine provides chronological execution order analysis — the missing link between "what calls what" and "in what order does it execute". It reads the enriched `symbol_refs` table (call order `seq`, `await_kind`, `guard`, `receiver`) and walks the call graph depth-first in `seq` order.
+
+**Key capabilities:**
+- **Entry points**: Symbol name, `file:line`, or script file (uses `__main__` or module-level code as root)
+- **Direction**: Down (callees, default) or Up (callers)
+- **Await-kind markers**: `sync`, `await`, `spawn`, `callback`, `deferred`
+- **Readiness summary**: For every `spawn`/`callback`/`deferred` edge, identifies the nearest subsequent `wait`/`await` on the same path (or reports "not awaited")
+- **Output formats**: Indented tree (default), JSON, Mermaid `sequenceDiagram`
+- **Code context**: `--with-code` includes ±N lines around each call site (configurable via `TRACE_CONTEXT_LINES`)
+
+**Wait pattern detection**: Default patterns in `TRACE_WAIT_PATTERNS` (`wait_*`, `*_until*`, `join`, `result`, `gather`, `wait_for`, etc.) plus per-project override via `trace.wait_patterns` / `trace.wait_patterns_extend` in the v2 config.
+
+**Integration:**
+- CLI: `ai-db trace <entry> [options]`
+- MCP tool: `trace`
+- HTTP endpoint: `POST /tools/trace`
+- `investigate --mode flow`: Picks best entry-like seed and runs trace from it
+
+**Storage schema extension** (`symbol_refs` table):
+```sql
+call_col INTEGER,          -- column offset of the call
+seq INTEGER,               -- call order within caller body
+await_kind TEXT,           -- 'sync' | 'await' | 'spawn' | 'callback' | 'deferred'
+guard TEXT,                -- enclosing if/while/try condition text
+receiver TEXT              -- e.g., 'self.db', 'asyncio', 'module.func'
+```
 ---
 
 ## 6. Performance & Telemetry Subsystem

@@ -417,19 +417,48 @@ ai-db route-skill "Create presentation slides" --format path
 
 ---
 
-### 13. Code Insights (`ai-db callers`, `diff`, `todos`)
-
+### 13. Code Insights (`ai-db callers`, `diff`, `todos`, `trace`)
+ 
 ```bash
 # Find all call sites and references to a symbol
 ai-db callers verify_token
-
+ 
 # Show changed spans since last indexed snapshot or git ref
 ai-db diff src/services/auth.py --since last
-
+ 
 # Extract TODO, FIXME, and HACK annotations across project
 ai-db todos --kind fixme
+ 
+# Trace chronological call flow from an entry point (symbol, file:line, or script)
+ai-db trace launch_stage_ov                                    # trace down from symbol
+ai-db trace src/services/auth.py:94                            # trace from file:line
+ai-db trace ./scripts/deploy.py                                # trace from script (__main__)
+ai-db trace open_stage --direction up                          # trace callers up
+ai-db trace launch_stage_ov --format mermaid                   # mermaid sequence diagram
+ai-db trace launch_stage_ov --format json --with-code          # JSON with code context
+ai-db trace launch_stage_ov --depth 10 --max-nodes 50          # limit depth/nodes
 ```
-
+ 
+*Example Output (tree format):*
+```
+⏵ launch_stage_ov
+    ⏸ open_stage L5
+      ⇉ _load_async L11       # spawned (asyncio.create_task)
+      │   ⏸ _fetch_assets L16
+      ⏵ _init_ui L12
+    ⏸ wait_for_stage_load L6
+      ⏵ _wait_ready L28
+    ⏸ preload_prefabs L7
+```
+ 
+**Readiness Summary** (printed after trace):
+```
+`_load_async` spawned by `open_stage` (not awaited)
+`_fetch_assets` runs after `wait_for_stage_load` (sync, stage_manager.py:28)
+```
+ 
+**Markers:** `⏵` sync call · `⏸` awaited · `⇉` spawned/fire-and-forget · `↺` callback · `⌁` deferred (event handler)
+ 
 ---
 
 ### 14. Database Maintenance (`ai-db optimize`, `status`, `prune`)
@@ -528,7 +557,7 @@ Add `ai-db` to `~/.gemini/antigravity/mcp_config.json` or project MCP settings:
 ```
 
 ### MCP Tools Reference
-
+ 
 | MCP Tool | Description | Key Arguments |
 |---|---|---|
 | `analyze` | Multi-depth AST analysis with token budgeting | `targets`, `depth`, `q`, `focus`, `span`, `format` |
@@ -538,7 +567,8 @@ Add `ai-db` to `~/.gemini/antigravity/mcp_config.json` or project MCP settings:
 | `context_recall` | Recall chat checkpoint or search past memories | `session_id`, `query` |
 | `optimize` | Compact FTS5 index, vacuum DB, set default format | `prune_missing`, `default_format` |
 | `telemetry` | Retrieve performance and token efficiency metrics | `json` |
-
+| `trace` | Chronological call flow from entry point (symbol, file:line, script) | `entry`, `direction`, `depth`, `max_nodes`, `format`, `with_code`, `include_tests` |
+ 
 ---
 
 ## HTTP REST API Reference

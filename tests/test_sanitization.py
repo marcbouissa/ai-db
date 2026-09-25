@@ -27,8 +27,8 @@ def get_tracked_files() -> list[str]:
 
 
 def is_non_test_tracked_file(rel_path: str) -> bool:
-    """Filter out test files and .agents metadata to avoid self-referential false positives."""
-    return not rel_path.startswith(("tests/", ".agents/"))
+    """Filter out test files, .agents metadata, and virtual environments to avoid self-referential false positives."""
+    return not rel_path.startswith(("tests/", ".agents/", ".venv/", "venv/", ".venv/", ".mypy_cache/"))
 
 
 # ==============================================================================
@@ -356,7 +356,10 @@ class TestSanitizationTier3:
         matching = [f for f in tracked if Path(f).suffix in extensions]
         assert len(matching) > 0, "No tracked files found matching target extensions"
         for rel_path in matching:
-            content = (REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="ignore")
+            abs_path = REPO_ROOT / rel_path
+            if not abs_path.exists():
+                continue
+            content = abs_path.read_text(encoding="utf-8", errors="ignore")
             assert "PRIVATE KEY-----" not in content, f"Private key in {rel_path}"
             assert "ghp_" not in content, f"GitHub token in {rel_path}"
 

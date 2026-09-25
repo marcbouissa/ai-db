@@ -1471,7 +1471,23 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             )
         except sqlite3.OperationalError as exc:
             raise AiDbQueryError(fts_query, exc) from exc
-        return [(r["name"], round(abs(float(r["rank"])), 3)) for r in cur.fetchall()]
+        return [(r["name"], -float(r["rank"])) for r in cur.fetchall()]
+
+    # =========================================================================
+    # Skill Sync
+    # =========================================================================
+
+    def sync_skills(
+        self,
+        skill_dirs: list[str] | None = None,
+        project: str = "global",
+        verbose: bool = True,
+    ) -> dict[str, int]:
+        """Discover and index skills from skill directories into the skills table."""
+        from ai_db.search.skills import SkillRouter
+
+        router = SkillRouter(db=self, db_path=self.db_path)
+        return router.sync_skills(skill_dirs=skill_dirs, project=project, verbose=verbose)
 
     # =========================================================================
     # Contexts (Session Memory)
@@ -1767,25 +1783,6 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         row_err = cur.fetchone()
         files_with_errors = int(row_err["c"]) if row_err else 0
 
-        if total_files > 0:
-            result["syntax_error_density_pct"] = round((files_with_errors / total_files) * 100.0, 2)
-
-        cur.execute(
-            """
-            SELECT f.filepath, COUNT(s.id) as sym_count
-            FROM files f
-            JOIN symbols s ON f.filepath = s.filepath
-            GROUP BY f.filepath
-            ORDER BY sym_count DESC
-            LIMIT 10
-            """
-        )
-        hotspots = []
-        for r in cur.fetchall():
-            hotspots.append({
-                "filepath": r["filepath"],
-                "symbols_count": int(r["sym_count"]),
-            })
         result["complexity_hotspots"] = hotspots
 
         cur.execute(
@@ -1797,3 +1794,212 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         )
         result["unindexed_or_stale_files"] = [r["filepath"] for r in cur.fetchall()]
         return result
+
+    # =========================================================================
+    # Vector Search for Skills and Contexts (Hybrid Search Support)
+    # =========================================================================
+
+    def _ensure_skills_vector_index(self) -> None:
+        """Ensure the skills vector index exists."""
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS skills_vectors USING vec0(
+                name TEXT PRIMARY KEY,
+                embedding FLOAT[768] DISTANCE_METRIC=cosine
+            )
+        """)
+        self._auto_commit()
+
+    def _ensure_contexts_vector_index(self) -> None:
+        """Ensure the contexts vector index exists."""
+        self._check_closed()
+        cur = self.conn.cursor()
+        cur.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS contexts_vectors USING vec0(
+                session_id TEXT PRIMARY KEY,
+                embedding FLOAT[768] DISTANCE_METRIC=cosine,
+                project TEXT,
+                language TEXT,
+                chunk_type TEXT
+            )
+        """)
+        self._auto_commit()
+
+    def search_skills_vector(
+        self,
+        vector: list[float],
+        allowed_projects: list[str] | None = None,
+        limit: int = 20,
+    ) -> list[tuple[str, float]]:
+        """Search skills via vector similarity."""
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        self._ensure_skills_vector_index()
+        cur = self.conn.cursor()
+        import sqlite_vec
+        clauses = []
+        params: list[Any] = [sqlite_vec.serialize_float32(vector)]
+        if allowed_projects is not None:
+            placeholders = ",".join("?" for _ in allowed_projects)
+            clauses.append(f"project IN ({placeholders})")
+            params.extend(allowed_projects)
+        where = " AND ".join(clauses) if clauses else ""
+        params.append(limit)
+        where_sql = f"WHERE {where}" if where else ""
+        cur.execute(
+            f"""
+            SELECT name, vec_distance_cosine(embedding, ?) AS distance
+            FROM skills_vectors
+            {f"WHERE {where}" if where else ""}
+            ORDER BY distance ASC
+            LIMIT ?
+            """,
+            params,
+        )
+        return [(r["name"], round(float(r["distance"]), 3)) for r in cur.fetchall()]
+
+    def search_contexts_vector(
+        self,
+        vector: list[float],
+        allowed_projects: list[str] | None = None,
+        top_k: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search contexts via vector similarity."""
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        self._ensure_contexts_vector_index()
+        cur = self.conn.cursor()
+        import sqlite_vec
+        clauses = []
+        params: list[Any] = [sqlite_vec.serialize_float32(vector)]
+        if allowed_projects is not None:
+            placeholders = ",".join("?" for _ in allowed_projects)
+            clauses.append(f"project IN ({placeholders})")
+            params.extend(allowed_projects)
+        where = " AND ".join(clauses) if clauses else ""
+        params = [sqlite_vec.serialize_float32(vector)]
+        if clauses:
+            params.extend(allowed_projects)
+        params.append(top_k)
+        where_sql = f"WHERE {where}" if where else ""
+        cur.execute(
+            f"""
+            SELECT session_id, project, title, summary, vec_distance_cosine(embedding, ?) AS distance
+            FROM contexts_vectors
+            {f"WHERE {where}" if where else ""}
+            ORDER BY distance ASC
+            LIMIT ?
+            """,
+            params
+        )
+        return [
+            {
+                "session_id": r["session_id"],
+                "project": r["project"],
+                "title": r["title"],
+                "summary": r["summary"],
+                "distance": round(float(r["distance"]), 3),
+                "timestamp": r["timestamp"]
+            }
+            for r in cur.fetchall()
+        ]
+
+    def search_skills_hybrid(
+        self,
+        query: str,
+        vector: list[float],
+        allowed_projects: list[str] | None = None,
+        limit: int = 20,
+        rrf_k: int = 60,
+    ) -> list[tuple[str, float]]:
+        """Search skills via hybrid BM25 + vector (RRF fusion)."""
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        self._ensure_skills_vector_index()
+        from ai_db.search.query_builder import build_fts, expand_terms
+        clean = [t.strip() for t in query.split() if t.strip()]
+        if not clean:
+            return []
+        expanded = expand_terms(query)
+        core = list(dict.fromkeys(expand_terms(query)))
+        fts_query = build_fts(expanded, core)
+        fts_results = self.search_skills(query, allowed_projects, limit)
+        vec_results = self.search_skills_vector(vector, allowed_projects, limit)
+        # RRF fusion
+        rrf_k = rrf_k
+        scores: dict[str, float] = {}
+        for rank, (name, _) in enumerate(fts_results, 1):
+            scores[name] = scores.get(name, 0.0) + 1.0 / (rrf_k + rank)
+        for rank, (name, dist) in enumerate(vec_results, 1):
+            scores[name] = scores.get(name, 0.0) + 1.0 / (rrf_k + rank)
+        # Sort by score descending
+        sorted_skills = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        return [(name, score) for name, score in sorted_skills[:limit]]
+
+    def search_contexts_hybrid(
+        self,
+        query: str,
+        vector: list[float],
+        allowed_projects: list[str] | None = None,
+        top_k: int = 10,
+        rrf_k: int = 60,
+    ) -> list[dict[str, Any]]:
+        """Search contexts via hybrid BM25 + vector (RRF fusion)."""
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return []
+        self._ensure_contexts_vector_index()
+        from ai_db.search.query_builder import build_fts, expand_terms
+        clean = [t.strip() for t in query.split() if t.strip()]
+        if not clean:
+            return []
+        expanded = expand_terms(query)
+        core = list(dict.fromkeys(expand_terms(query)))
+        fts_query = build_fts(expanded, core)
+        fts_results = self.search_contexts(query, allowed_projects, top_k)
+        vec_results = self.search_contexts_vector(vector, allowed_projects, top_k)
+        # RRF fusion
+        rrf_k = rrf_k
+        scores: dict[str, float] = {}
+        for rank, item in enumerate(fts_results, 1):
+            scores[item["title"]] = scores.get(item["title"], 0.0) + 1.0 / (rrf_k + rank)
+        for rank, (item, dist) in enumerate(vec_results, 1):
+            scores[item["title"]] = scores.get(item["title"], 0.0) + 1.0 / (rrf_k + rank)
+        sorted_items = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        # Reconstruct full dicts from top results
+        cur = self.conn.cursor()
+        top_titles = [item for item, _ in sorted_items[:top_k]]
+        if not top_titles:
+            return []
+        placeholders = ",".join("?" for _ in top_titles)
+        cur.execute(
+            f"""
+            SELECT fts_contexts.session_id, fts_contexts.project, fts_contexts.title,
+                   fts_contexts.summary, bm25(fts_contexts) as rank, contexts.timestamp
+            FROM fts_contexts
+            JOIN contexts ON fts_contexts.session_id = contexts.session_id AND fts_contexts.project = contexts.project
+            WHERE fts_contexts.title IN ({placeholders})
+            ORDER BY rank
+            LIMIT ?
+            """,
+            top_titles + [top_k]
+        )
+        return [
+            {
+                "session_id": r["session_id"],
+                "project": r["project"],
+                "title": r["title"],
+                "summary": r["summary"],
+                "score": round(abs(float(r["rank"])), 3),
+                "timestamp": r["timestamp"]
+            }
+            for r in cur.fetchall()
+        ]
+
+    # =========================================================================
+    # Analysis References
+    # =========================================================================

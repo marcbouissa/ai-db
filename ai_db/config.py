@@ -17,7 +17,7 @@ from typing import Any
 
 from ai_db.errors import AiDbConfigError
 
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
 
 RETRIEVAL_MODES = ("lexical", "hybrid")
 
@@ -46,7 +46,7 @@ RERANK_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
 }
 
 TOP_LEVEL_KEYS = frozenset(
-    {"version", "storage", "retrieval", "embedding", "rerank", "access", "auto_sync_paths"}
+    {"version", "storage", "retrieval", "embedding", "rerank", "access", "auto_sync_paths", "index", "retrieval", "rerank", "trace"}
 )
 REQUIRED_TOP_LEVEL = frozenset({"version", "storage", "retrieval", "embedding", "rerank"})
 
@@ -68,25 +68,61 @@ class ProviderConfig:
 
 
 @dataclass(frozen=True)
+class IndexConfig:
+    doc_weight: float = 0.5
+    ignore: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RetrievalConfig:
+    mode: str
+    doc_weight: float = 0.5
+
+
+@dataclass(frozen=True)
+class RerankConfig:
+    provider: str
+    options: dict[str, Any]
+    top_n: int = 30
+
+    @property
+    def enabled(self) -> bool:
+        return self.provider != "none"
+
+
+@dataclass(frozen=True)
 class AppConfig:
     version: int
     storage: StorageConfig
-    retrieval_mode: str
+    retrieval: RetrievalConfig
     embedding: ProviderConfig
-    rerank: ProviderConfig
+    rerank: RerankConfig
     cross_project: dict[str, list[str]] = field(default_factory=dict)
     auto_sync_paths: list[str] = field(default_factory=list)
+    index: IndexConfig = field(default_factory=IndexConfig)
+    trace_wait_patterns: list[str] | None = None
+    trace_wait_patterns_extend: list[str] | None = None
     source_path: str | None = None
+
+    @property
+    def retrieval_mode(self) -> str:
+        """Backward compatibility property."""
+        return self.retrieval.mode
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "version": self.version,
             "storage": {"provider": self.storage.provider, "options": dict(self.storage.options)},
-            "retrieval": {"mode": self.retrieval_mode},
+            "retrieval": {"mode": self.retrieval.mode, "doc_weight": self.retrieval.doc_weight},
             "embedding": {"provider": self.embedding.provider, **self.embedding.options},
-            "rerank": {"provider": self.rerank.provider, **self.rerank.options},
+            "rerank": {"provider": self.rerank.provider, "top_n": self.rerank.top_n, **self.rerank.options},
+            "index": {"doc_weight": self.index.doc_weight, "ignore": self.index.ignore},
             "access": {"cross_project": {k: list(v) for k, v in self.cross_project.items()}},
             "auto_sync_paths": list(self.auto_sync_paths),
+            "trace": {
+                "wait_patterns": self.trace_wait_patterns,
+                "wait_patterns_extend": self.trace_wait_patterns_extend,
+            },
         }
 
 
@@ -165,13 +201,37 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
     )
 
     retrieval_raw = _require_dict(data["retrieval"], "retrieval")
-    _check_keys(retrieval_raw, frozenset({"mode"}), "retrieval")
+    _check_keys(retrieval_raw, frozenset({"mode", "doc_weight"}), "retrieval")
     mode = os.environ.get("AI_DB_RETRIEVAL_MODE") or retrieval_raw.get("mode")
     if mode not in RETRIEVAL_MODES:
         raise AiDbConfigError(f"'retrieval.mode' must be one of {RETRIEVAL_MODES}, got {mode!r}")
+    doc_weight = retrieval_raw.get("doc_weight", 0.5)
+    if not isinstance(doc_weight, (int, float)) or not (0.0 < doc_weight <= 1.0):
+        raise AiDbConfigError("'retrieval.doc_weight' must be a float in (0.0, 1.0]")
 
     embedding = _parse_provider(data["embedding"], "embedding", EMBEDDING_PROVIDERS)
-    rerank = _parse_provider(data["rerank"], "rerank", RERANK_PROVIDERS)
+    rerank_raw = _require_dict(data["rerank"], "rerank")
+    _check_keys(rerank_raw, frozenset({"provider", "options", "top_n"}), "rerank")
+    provider = rerank_raw.get("provider")
+    if not isinstance(provider, str):
+        raise AiDbConfigError(f"'rerank.provider' must be a string")
+    options = {k: v for k, v in rerank_raw.items() if k not in ("provider", "top_n")}
+    if provider in RERANK_PROVIDERS:
+        required, optional = RERANK_PROVIDERS[provider]
+        missing = required - set(options)
+        if missing:
+            raise AiDbConfigError(f"'rerank' provider '{provider}' requires {sorted(missing)}")
+        _check_keys(options, required | optional, "rerank")
+        if "top_n" in rerank_raw:
+            top_n = rerank_raw["top_n"]
+            if not isinstance(top_n, int) or top_n < 1:
+                raise AiDbConfigError("'rerank.top_n' must be a positive integer")
+        else:
+            top_n = 30
+    else:
+        # Provider not in registry (third-party); use default top_n
+        top_n = 30
+    rerank = RerankConfig(provider=provider, options=options, top_n=top_n)
 
     device_override = os.environ.get("AI_DB_DEVICE")
     if device_override:
@@ -208,14 +268,40 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
     if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
         raise AiDbConfigError("'auto_sync_paths' must be a list of strings")
 
+    trace_raw = _require_dict(data.get("trace", {}), "trace")
+    _check_keys(trace_raw, frozenset({"wait_patterns", "wait_patterns_extend"}), "trace")
+    trace_wait_patterns = trace_raw.get("wait_patterns")
+    if trace_wait_patterns is not None and (
+        not isinstance(trace_wait_patterns, list) or not all(isinstance(p, str) for p in trace_wait_patterns)
+    ):
+        raise AiDbConfigError("'trace.wait_patterns' must be a list of strings")
+    trace_wait_patterns_extend = trace_raw.get("wait_patterns_extend")
+    if trace_wait_patterns_extend is not None and (
+        not isinstance(trace_wait_patterns_extend, list) or not all(isinstance(p, str) for p in trace_wait_patterns_extend)
+    ):
+        raise AiDbConfigError("'trace.wait_patterns_extend' must be a list of strings")
+
+    index_raw = _require_dict(data.get("index", {}), "index")
+    _check_keys(index_raw, frozenset({"doc_weight", "ignore"}), "index")
+    doc_weight = index_raw.get("doc_weight", 0.5)
+    if not isinstance(doc_weight, (int, float)) or not (0.0 < doc_weight <= 1.0):
+        raise AiDbConfigError("'index.doc_weight' must be a float in (0.0, 1.0]")
+    ignore = index_raw.get("ignore", [])
+    if not isinstance(ignore, list) or not all(isinstance(p, str) for p in ignore):
+        raise AiDbConfigError("'index.ignore' must be a list of strings")
+    index = IndexConfig(doc_weight=doc_weight, ignore=ignore)
+
     return AppConfig(
         version=CONFIG_VERSION,
         storage=storage,
-        retrieval_mode=mode,
+        retrieval=RetrievalConfig(mode=mode, doc_weight=doc_weight),
         embedding=embedding,
         rerank=rerank,
         cross_project=cross,
         auto_sync_paths=list(paths),
+        index=index,
+        trace_wait_patterns=trace_wait_patterns,
+        trace_wait_patterns_extend=trace_wait_patterns_extend,
         source_path=source_path,
     )
 

@@ -15,10 +15,9 @@ from ai_db.constants import HARD_IGNORE_DIRS, PARALLEL_PARSE_MIN_FILES
 from ai_db.ignorer import AidbIgnore
 from ai_db.logger import _logger
 from ai_db.parser.annotations import extract_annotations
-from ai_db.parser.ast_visitor import extract_symbols
 from ai_db.parser.chunker import chunk_file
-from ai_db.parser.cross_refs import extract_cross_refs
-from ai_db.parser.syntax import validate_python_syntax
+from ai_db.parser.linters import get_linter
+from ai_db.parser.ts_graph import extract_graph, language_for
 from ai_db.storage.models import (
     AnnotationRecord,
     ChunkRecord,
@@ -38,17 +37,47 @@ def parse_file(filepath: str, file_hash: str, project: str) -> ParsedFile:
     mtime = os.path.getmtime(filepath)
     parsed = ParsedFile(filepath=filepath, sha256=file_hash, last_modified=mtime, project=project)
 
-    ext = os.path.splitext(filepath)[1].lower()
-    if ext in (".py", ".pyi"):
-        err = validate_python_syntax(content, filepath)
+    lang = language_for(filepath)
+    if lang is not None:
+        # Use tree-sitter for all supported languages
+        symbols, refs, syntax_errors = extract_graph(filepath, content)
+        if syntax_errors:
+            line, col, msg = syntax_errors[0]
+            parsed.syntax_error = SyntaxErrorRecord(
+                filepath=filepath, line=line, col=col, message=msg, timestamp=time.time(), project=project
+            )
+        parsed.symbols = [
+            SymbolRecord(
+                name=s["name"], symbol_type=s["symbol_type"], filepath=s["filepath"],
+                line=s["line"], signature=s.get("signature"), project=project,
+            )
+            for s in symbols
+        ]
+        parsed.refs = [
+            SymbolRefRecord(
+                caller_filepath=filepath,
+                caller_name=r["caller_name"],
+                caller_line=r["caller_line"],
+                call_col=r.get("call_col"),
+                seq=r.get("seq"),
+                callee_name=r["callee_name"],
+                ref_type=r["ref_type"],
+                await_kind=r.get("await_kind"),
+                guard=r.get("guard"),
+                receiver=r.get("receiver"),
+                project=project,
+            )
+            for r in refs
+        ]
     else:
-        from ai_db.parser.linters import get_linter
+        # Fallback for unsupported languages (markdown, text, etc.)
         err = get_linter().validate(filepath, content)
-    if err:
-        line, col, msg = err
-        parsed.syntax_error = SyntaxErrorRecord(
-            filepath=filepath, line=line, col=col, message=msg, timestamp=time.time(), project=project
-        )
+        if err:
+            line, col, msg = err
+            parsed.syntax_error = SyntaxErrorRecord(
+                filepath=filepath, line=line, col=col, message=msg, timestamp=time.time(), project=project
+            )
+        # For unsupported languages, no symbols or refs
 
     parsed.chunks = [
         ChunkRecord(
@@ -66,20 +95,6 @@ def parse_file(filepath: str, file_hash: str, project: str) -> ParsedFile:
             parent_index=c["parent_index"],
         )
         for c in chunk_file(filepath, content)
-    ]
-    parsed.symbols = [
-        SymbolRecord(
-            name=s["name"], symbol_type=s["symbol_type"], filepath=s["filepath"],
-            line=s["line"], signature=s.get("signature"), project=project,
-        )
-        for s in extract_symbols(filepath, content)
-    ]
-    parsed.refs = [
-        SymbolRefRecord(
-            caller_filepath=filepath, caller_name=r["caller_name"], caller_line=r["caller_line"],
-            callee_name=r["callee_name"], ref_type=r["ref_type"], project=project,
-        )
-        for r in extract_cross_refs(filepath, content)
     ]
     parsed.annotations = [
         AnnotationRecord(
@@ -100,11 +115,16 @@ class Indexer:
         self.db = db
         self.db_path = getattr(db, "db_path", getattr(db, "backend_name", "storage"))
         self.post_sync_hooks: list[Any] = []
+        self._ignore_patterns: list[str] = []
+
+    def set_ignore_patterns(self, patterns: list[str]) -> None:
+        """Set additional ignore patterns from config."""
+        self._ignore_patterns = patterns or []
 
     def scan_directory(self, root_dir: str) -> list[str]:
         candidates = []
         root_dir = os.path.abspath(root_dir)
-        ignorer = AidbIgnore(root_dir)
+        ignorer = AidbIgnore(root_dir, self._ignore_patterns)
         for root, dirs, files in os.walk(root_dir):
             dirs[:] = [d for d in dirs if d not in HARD_IGNORE_DIRS]
             for f in files:
@@ -190,7 +210,7 @@ class Indexer:
         root_dir = os.path.abspath(root_dir)
         if project is None:
             project = detect_project_name(root_dir)
-        ignorer = AidbIgnore(root_dir)
+        ignorer = AidbIgnore(root_dir, self._ignore_patterns)
         to_prune: list[str] = []
         jobs: list[tuple[str, str, str]] = []
         updated = set()

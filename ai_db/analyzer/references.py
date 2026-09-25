@@ -72,14 +72,16 @@ class ReferenceStore:
 
         Resolution order:
         1. If `since` is a git ref (hash/branch/tag), run `git show <since>:<relpath>`.
-        2. If git fails or `since` is None/'last', reconstruct old text from stored DB chunks.
-        3. If nothing stored, treat entire file as added.
+        2. If `since` is "last" or "db", reconstruct old text from stored DB chunks.
+        3. Any other `since` value requires git; if not in a repo or git fails, raise AiDbConfigError.
         """
         import subprocess as _sp
 
+        from ai_db.errors import AiDbConfigError
+
         old_text: str | None = None
 
-        # 1. Try git-based diff when since looks like a git ref
+        # 1. Try git-based diff when since looks like a git ref (not "last" or "db")
         if since and since not in ("last", "db"):
             try:
                 repo_root_res = _sp.run(
@@ -97,13 +99,17 @@ class ReferenceStore:
                     )
                     if result.returncode == 0:
                         old_text = result.stdout
+                    else:
+                        raise AiDbConfigError(f"--since {since} needs the file to be in a git repository: git show failed")
+                else:
+                    raise AiDbConfigError(f"--since {since} needs the file to be in a git repository: not in a git repo")
             except (OSError, _sp.TimeoutExpired) as e:
-                # git missing/slow: `since` cannot be resolved from git; the stored
-                # chunks below are the documented source for this case
-                _logger.debug(f"_diff_spans git unavailable: {e}")
+                raise AiDbConfigError(f"--since {since} needs the file to be in a git repository: {e}")
 
-        # 2. Fallback: reconstruct from stored DB chunks using get_chunks_for_file
+        # 2. Fallback: reconstruct from stored DB chunks using get_chunks_for_file (only for "last" or "db")
         if old_text is None:
+            if since and since not in ("last", "db"):
+                raise AiDbConfigError(f"--since {since} needs the file to be in a git repository")
             chunks = self.db.get_chunks_for_file(filepath)
             if not chunks:
                 return {"added": [[1, len(current_content.splitlines())]], "removed": [], "changed": []}

@@ -71,6 +71,11 @@ class SymbolRefRecord:
     ref_type: str  # 'call', 'import', 'inherit'
     project: str = "global"
     id: int | None = None
+    call_col: int | None = None
+    seq: int | None = None
+    await_kind: str | None = None  # 'sync', 'await', 'spawn', 'callback', 'deferred'
+    guard: str | None = None
+    receiver: str | None = None
 
 
 @dataclass(slots=True)

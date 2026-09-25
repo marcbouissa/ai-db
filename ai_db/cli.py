@@ -300,6 +300,7 @@ def _main(argv: list[str] | None = None) -> int:
     locate_p = subparsers.add_parser("locate", help="Locate files and snippet spans for a question")
     locate_p.add_argument("query", help="Question or concept to search for")
     locate_p.add_argument("--scope", default=".", help="Directory scope to restrict search (default: .)")
+    locate_p.add_argument("--path-prefix", default=None, help="Path prefix within scope to further restrict search")
     locate_p.add_argument("-k", type=int, default=5, help="Number of target candidates (default: 5)")
     locate_p.add_argument("--format", "--fmt", dest="format", choices=["json", "stub", "sexp"], default=None, help="Output format")
     locate_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")

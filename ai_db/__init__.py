@@ -22,9 +22,10 @@ from ai_db.constants import (
 )
 from ai_db.errors import AiDbConfigError, AiDbError, AiDbQueryError
 from ai_db.memory.context import ContextMemory
-from ai_db.parser.ast_visitor import extract_file_outline, extract_symbols
+from ai_db.parser.ast_visitor import extract_file_outline
 from ai_db.parser.chunker import chunk_file
-from ai_db.parser.syntax import validate_python_syntax
+from ai_db.parser.linters import validate_python_syntax
+from ai_db.parser.ts_graph import extract_graph, language_for
 from ai_db.search.indexer import Indexer
 from ai_db.search.query import QueryEngine
 from ai_db.search.skills import SkillRouter
@@ -66,6 +67,7 @@ class VectorDB:
         self.conn = getattr(self.backend, "conn", None)
         self.context_memory = ContextMemory(db=self.backend)
         self.indexer = Indexer(db=self.backend)
+        self.indexer.set_ignore_patterns(self.config.index.ignore)
         self.query_engine = QueryEngine(db=self.backend)
         self.skill_router = SkillRouter(db=self.backend, db_path=self.db_path)
         self.analyzer_engine = AnalyzerEngine(db=self.backend)
@@ -89,10 +91,7 @@ class VectorDB:
         from ai_db.search.retriever import HybridRetriever, LexicalRetriever
 
         self.reranker = build_reranker(self.config.rerank)
-        self.query_engine.ranker = Ranker(self.backend, self.reranker)
-        if "graph" in self.backend.capabilities():
-            self.indexer.post_sync_hooks.append(
-                lambda changed: self.backend.rebuild_symbol_centrality() if changed else None)
+        self.query_engine.ranker = Ranker(self.backend, self.reranker, doc_weight=self.config.index.doc_weight)
 
         self.embedder = build_embedder(self.config.embedding)
         if self.config.retrieval_mode == "hybrid":
@@ -381,11 +380,12 @@ __all__ = [
     "config_path",
     "detect_project_name",
     "extract_file_outline",
-    "extract_symbols",
+    "extract_graph",
     "format_as_sexp",
     "format_as_stub",
     "get_allowed_projects",
     "get_session_state",
+    "language_for",
     "load_config",
     "run_watch",
     "set_session_state",

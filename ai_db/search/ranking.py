@@ -64,9 +64,10 @@ def diversify(results: list[SearchResult], window: int = DIVERSITY_WINDOW,
 
 
 class Ranker:
-    def __init__(self, db: Any, reranker: RerankProvider | None = None):
+    def __init__(self, db: Any, reranker: RerankProvider | None = None, doc_weight: float = 0.5):
         self.db = db
         self.reranker = reranker
+        self.doc_weight = doc_weight
         self.last_timings: dict[str, float] = {}
 
     def rank(self, query: str, candidates: list[SearchResult],
@@ -86,6 +87,12 @@ class Ranker:
         fused = _minmax([c.score for c in head])
         graph = _minmax([centrality.get(n, 0.0) for n in names[:len(head)]])
         exact = [1.0 if n.lower() in terms else 0.0 for n in names[:len(head)]]
+
+        # Apply doc_weight to md/txt chunks (documentation)
+        if self.doc_weight != 1.0:
+            for i, c in enumerate(head):
+                if c.chunk_type in ("md", "txt"):
+                    fused[i] *= self.doc_weight
 
         if self.reranker is not None:
             chunks = {c.id: c for c in self.db.get_chunks_by_ids([h.chunk_id for h in head])}

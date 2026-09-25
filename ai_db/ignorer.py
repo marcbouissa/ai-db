@@ -10,10 +10,14 @@ import re
 class AidbIgnore:
     """Parses .aidbignore files and tests whether a relative path should be ignored."""
 
-    def __init__(self, root_dir: str):
+    def __init__(self, root_dir: str, extra_patterns: list[str] | None = None):
         self.root = os.path.abspath(root_dir)
         self.patterns: list[re.Pattern] = []
         self._load(os.path.join(self.root, ".aidbignore"))
+        if extra_patterns:
+            for pattern in extra_patterns:
+                if pattern and not pattern.startswith("#"):
+                    self.patterns.append(self._compile(pattern))
 
     def _load(self, path: str):
         if not os.path.exists(path):

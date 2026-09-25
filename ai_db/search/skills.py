@@ -7,6 +7,8 @@ from ai_db.logger import _logger
 from ai_db.storage.models import SkillRecord
 from ai_db.utils import compute_sha256, get_allowed_projects, tokenize
 
+STOP_WORDS = {"with", "for", "the", "and", "that", "this", "from", "into", "need", "want", "help", "please", "make", "create", "have", "been"}
+
 
 class SkillRouter:
     def __init__(self, db: Any = None, conn: Any = None, db_path: str = ""):
@@ -79,7 +81,10 @@ class SkillRouter:
             # Extract triggers from frontmatter and headers
             triggers_found = []
             for trigger_match in re.findall(r"(?:Actions|Platforms|Styles|Triggers):\s*([^\n]+)", raw_content, re.IGNORECASE):
-                triggers_found.append(trigger_match.strip())
+                # Clean up trigger: remove leading "- ", bullet points, etc.
+                trig = trigger_match.strip()
+                trig = re.sub(r"^[-*]\s+", "", trig)
+                triggers_found.append(trig)
 
             # Headers in markdown
             headers = [h.strip("# \t\r\n") for h in re.findall(r"^#+\s+(.+)$", body_content, re.MULTILINE)]
@@ -145,84 +150,81 @@ class SkillRouter:
         token_set = set(tokens)
         prompt_lower = prompt.lower()
 
-        scores: dict[str, float] = {name: 0.0 for name in all_skills}
-        reasons: dict[str, list[str]] = {name: [] for name in all_skills}
+        # Load constant
+        from ai_db.constants import SKILL_W_TRIGGER
 
-        # Project-local priority boost: skills specific to the current project get boosted
-        for name, sk in all_skills.items():
-            if project and sk.get("project") == project:
-                scores[name] += 4.0
-                reasons[name].append(f"Project-local skill ({project})")
+        all_skills = {
+            sk.name: {
+                "name": sk.name,
+                "description": sk.description,
+                "filepath": sk.filepath,
+                "triggers": sk.triggers,
+                "project": sk.project,
+            }
+            for sk in skills_list
+        }
 
-        STOP_WORDS = {"with", "for", "the", "and", "that", "this", "from", "into", "need", "want", "help", "please", "make", "create", "have", "been"}
+        tokens = tokenize(prompt)
+        if not tokens:
+            return []
 
-        # 1. Skill name matching (only full multi-word or non-generic token)
-        for name, sk in all_skills.items():
-            name_lower = name.lower()
-            if re.search(r"\b" + re.escape(name_lower) + r"\b", prompt_lower):
-                scores[name] += 12.0
-                reasons[name].append(f"Direct skill mention '{name}'")
-            elif "-" in name_lower:
-                name_words = name_lower.replace("-", " ")
-                if name_words in prompt_lower:
-                    scores[name] += 14.0
-                    reasons[name].append(f"Direct skill mention '{name}'")
+        token_set = set(tokens)
+        prompt_lower = prompt.lower()
 
-        # 2. Trigger / Action keywords matching
-        for name, sk in all_skills.items():
-            trig = (sk["triggers"] or "").lower()
-            desc = (sk["description"] or "").lower()
-
-            matched_triggers = []
-            for t in token_set:
-                if len(t) < 4 or t in STOP_WORDS:
-                    continue
-                if re.search(r"\b" + re.escape(t) + r"\b", trig):
-                    matched_triggers.append(t)
-                    scores[name] += 3.5
-                elif re.search(r"\b" + re.escape(t) + r"\b", desc):
-                    matched_triggers.append(t)
-                    scores[name] += 1.5
-
-            if matched_triggers:
-                top_matched = list(dict.fromkeys(matched_triggers))[:4]
-                reasons[name].append(f"Matched triggers: {', '.join(top_matched)}")
-
-        # 3. FTS BM25 Ranking across skills in allowed projects
+        # Compute fused retrieval score via search_skills (BM25)
         filtered_tokens = [t for t in tokens if t not in STOP_WORDS and len(t) > 2]
+        fused_scores: dict[str, float] = {name: 0.0 for name in all_skills}
         if filtered_tokens:
             ranked_skills = self.db.search_skills(filtered_tokens, allowed_projects=allowed, limit=20)
-            for name, bm25_score in ranked_skills:
-                if name in scores:
-                    scores[name] += bm25_score * 1.5
-                    if bm25_score > 2.0 and not any("Semantic" in r for r in reasons[name]):
-                        reasons[name].append("High semantic relevance")
+            if ranked_skills:
+                bm25_values = [s for _, s in ranked_skills]
+                min_bm25 = min(bm25_values)
+                max_bm25 = max(bm25_values)
+                if max_bm25 > min_bm25:
+                    bm25_range = max_bm25 - min_bm25
+                    for name, bm25_score in ranked_skills:
+                        if name in fused_scores:
+                            normalized = (bm25_score - min_bm25) / bm25_range
+                            fused_scores[name] = normalized * 5.0
+                else:
+                    for name, _ in ranked_skills:
+                        if name in fused_scores:
+                            fused_scores[name] = 2.5
 
-        # 4. Domain / Intent specific heuristic boosts
-        intent_rules = [
-            (r"\b(banner|banners|cover|display ad|hero section|creative asset|linkedin|twitter|instagram|facebook)\b", "banner-design", "Banner & creative asset keywords"),
-            (r"\b(syntax|parse error|syntax error|ast|lint|broken code|pre[- ]flight)\b", "ai-db-knowledge", "Code validation & syntax diagnostics"),
-            (r"\b(symbol|definition|where is (class|def|function)|outline|skeleton)\b", "ai-db-knowledge", "Symbol definition & structure inspection"),
-            (r"\b(slide|slides|presentation|pitch deck|powerpoint|speaker note)\b", "slides", "Presentation & slide generation"),
-            (r"\b(ui|ux|interface|component|tailwind|shadcn|dark mode|responsive)\b", "ui-ux-pro-max", "UI/UX component engineering"),
-            (r"\b(brand|identity|logo|typography scale|tokens|design system)\b", "brandkit", "Brand identity & guidelines"),
-            (r"\b(landing page|portfolio|anti-slop|brutalist|editorial|minimalist)\b", "design-taste-frontend", "Aesthetic frontend styling"),
-            (r"\b(antigravity|agy|slash command|sidecar|subagent)\b", "antigravity-guide", "Antigravity system & commands")
-        ]
+        # Exact trigger phrase bonus
+        trigger_bonus = {}
+        for name, sk in all_skills.items():
+            trig_str = (sk.get("triggers") or "").lower()
+            # Split triggers by " | " delimiter and check each individually
+            for trig in trig_str.split(" | "):
+                trig = trig.strip()
+                if trig and re.search(r"\b" + re.escape(trig) + r"\b", prompt_lower):
+                    trigger_bonus[name] = 1.0
+                    break
 
-        for pattern, target_skill, reason in intent_rules:
-            if re.search(pattern, prompt_lower) and target_skill in scores:
-                scores[target_skill] += 6.0
-                if reason not in reasons[target_skill]:
-                    reasons[target_skill].append(reason)
+        # Compute final scores: fused BM25 + trigger bonus
+        scores: dict[str, float] = {}
+        reasons: dict[str, list[str]] = {name: [] for name in all_skills}
 
-        # Normalize confidence to 0.0 - 1.0 range
+        for name in all_skills:
+            fused = fused_scores.get(name, 0.0)
+            trigger_bonus_val = SKILL_W_TRIGGER if trigger_bonus.get(name, 0.0) > 0.0 else 0.0
+            score = fused + trigger_bonus_val
+            if score > 0:
+                scores[name] = score
+                # Build reasons
+                if name in fused_scores and fused_scores[name] > 0:
+                    reasons[name].append(f"BM25 score: {fused_scores[name]:.2f}")
+                if trigger_bonus.get(name, 0.0) > 0.0:
+                    reasons[name].append("Exact trigger phrase match")
+
+        # Normalize confidence to 0.0 - 1.0 range using min-max scaling
         max_score = max(scores.values()) if scores else 0.0
         results = []
         if max_score > 0:
             sorted_skills = sorted(scores.items(), key=lambda x: x[1], reverse=True)
             for name, score in sorted_skills[:top_k]:
-                confidence = min(0.99, round(score / (max_score + 2.0), 2))
+                confidence = min(0.99, round(score / (max_score + 1.0), 2))
                 if confidence < _min_confidence:
                     continue
                 sk = all_skills[name]
@@ -233,7 +235,7 @@ class SkillRouter:
                     "filepath": sk["filepath"],
                     "project": sk.get("project", "global"),
                     "description": sk["description"],
-                    "reasons": reasons[name] if reasons[name] else ["Keyword match"]
+                    "reasons": reasons[name] if reasons[name] else ["BM25 match"]
                 })
 
         return results

@@ -125,7 +125,7 @@ class TestSearchTier1FeatureCoverage:
         vdb = search_env["vdb"]
         src = search_env["src_dir"]
 
-        (src / "bad_syntax.py").write_text("def broken( :\n    pass\n")
+        (src / "bad_syntax.py").write_text("def broken(\n    pass\n")
         vdb.sync(str(src), project="bad_proj", verbose=False)
 
         errors = vdb.check_syntax(project="bad_proj")
@@ -450,7 +450,7 @@ class TestSearchTier3Combinations:
 
         (src / "broken_annotated.py").write_text(
             "# TODO: restore syntax\n"
-            "def broken_syntax( :\n"
+            "def broken_syntax(\n"
             "    pass\n"
         )
         vdb.sync(str(src), project="hybrid_test", verbose=False)

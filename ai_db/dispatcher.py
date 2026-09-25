@@ -321,7 +321,30 @@ class ServiceDispatcher:
             category="search",
         )
 
-        # 11. todos
+        # 11. trace
+        self.register_tool(
+            name="trace",
+            description="Trace call flow from an entry point (symbol, file:line, or script) showing chronological execution order with await/spawn/callback/deferred markers.",
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "entry": {"type": "string", "description": "Entry point: symbol name, file:line, or script path"},
+                    "direction": {"type": "string", "enum": ["down", "up"], "default": "down", "description": "Trace direction: down=callees, up=callers"},
+                    "depth": {"type": "integer", "default": 20, "description": "Maximum depth to trace"},
+                    "max_nodes": {"type": "integer", "default": 200, "description": "Maximum total nodes to visit"},
+                    "include_tests": {"type": "boolean", "default": False, "description": "Include test callers when tracing up"},
+                    "format": {"type": "string", "enum": ["tree", "json", "mermaid"], "default": "tree", "description": "Output format"},
+                    "with_code": {"type": "boolean", "default": False, "description": "Include source code context at call sites"},
+                    "project": {"type": "string", "description": "Project scope"},
+                    "allow_project": {"type": "array", "items": {"type": "string"}, "description": "Allowed projects for read-only access"},
+                },
+                "required": ["entry"],
+            },
+            handler=self._handle_trace,
+            category="analysis",
+        )
+
+        # 12. todos
         self.register_tool(
             name="todos",
             description="List TODO, FIXME, HACK, and NOTE code annotations across indexed files.",
@@ -507,9 +530,10 @@ class ServiceDispatcher:
         db = self._get_db(args)
         query = args.get("query", "")
         scope = args.get("scope", ".")
+        path_prefix = args.get("path_prefix")
         k = int(args.get("k", 5))
         fmt = args.get("format")
-        hits = db.locate_targets(q=query, scope=scope, k=k)
+        hits = db.locate_targets(q=query, scope=scope, k=k, path_prefix=path_prefix)
         if fmt == "stub":
             lines = []
             for h in hits:
@@ -693,6 +717,44 @@ class ServiceDispatcher:
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
         return db.query_callers(name, relative_to=os.getcwd(), project=project, allowed_projects=allow_projects)
+
+    def _handle_trace(self, args: dict[str, Any]) -> Any:
+        from ai_db.analysis.trace import TraceEngine
+        from ai_db.analysis.trace_format import format_json, format_mermaid, format_tree
+
+        db = self._get_db(args)
+        entry = args.get("entry", "")
+        direction = args.get("direction", "down")
+        depth = int(args.get("depth", 20))
+        max_nodes = int(args.get("max_nodes", 200))
+        include_tests = bool(args.get("include_tests", False))
+        fmt = args.get("format", "tree")
+        with_code = bool(args.get("with_code", False))
+
+        project = args.get("project")
+        allow_projects = args.get("allow_project") or args.get("allowed_projects")
+        allowed_projects = [project] + allow_projects if project and allow_projects else ([project] if project else allow_projects)
+
+        trace_engine = TraceEngine(
+            db.backend,
+            allowed_projects=allowed_projects,
+            trace_wait_patterns=self.config.trace_wait_patterns if self.config else None,
+            trace_wait_patterns_extend=self.config.trace_wait_patterns_extend if self.config else None,
+        )
+        result = trace_engine.trace(
+            entry=entry,
+            depth=depth,
+            max_nodes=max_nodes,
+            direction=direction,
+            include_tests=include_tests,
+        )
+
+        if fmt == "json":
+            return format_json(result)
+        elif fmt == "mermaid":
+            return format_mermaid(result)
+        else:
+            return format_tree(result, with_code=with_code, context_lines=3)
 
     def _handle_todos(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)

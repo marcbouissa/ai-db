@@ -41,6 +41,7 @@ def build_template(
         "rerank": rr,
         "access": {"cross_project": {}},
         "auto_sync_paths": [],
+        "trace": {"wait_patterns": None, "wait_patterns_extend": None},
     }
     parse_config(data, check_env=False)
     return data

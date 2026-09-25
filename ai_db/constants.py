@@ -83,7 +83,7 @@ DIVERSITY_WINDOW = 10
 DIVERSITY_MAX_PER_FILE = 3
 
 # investigate
-SEED_K = {"locate": 12, "explain": 8, "impact": 5}
+SEED_K = {"locate": 12, "explain": 8, "impact": 5, "flow": 5}
 IMPACT_DEPTH = 3
 MAX_EXPANDED_PER_SEED = 10
 INVESTIGATE_MIN_BUDGET = 500
@@ -94,3 +94,28 @@ EXPLAIN_CALLER_SEEDS = 3
 MODULE_SEED_FACTOR = 0.3
 COMPOUND_MAX_DEFINITIONS = 2
 DELEGATE_MAX_TOKENS = 120  # seeds this small also get their callees' callees
+
+# Skill router
+SKILL_W_TRIGGER = 8.0  # weight for exact trigger phrase match in prompt
+
+# trace
+TRACE_DEPTH = 20
+TRACE_MAX_NODES = 200
+TRACE_CONTEXT_LINES = 3
+TRACE_WAIT_PATTERNS = (
+    "wait_*",
+    "*_until*",
+    "join",
+    "result",
+    "gather",
+    "wait_for",
+    "await",
+    "sleep",
+    "barrier",
+    "event",
+    "condition",
+    "semaphore",
+    "lock",
+    "acquire",
+    "release",
+)
