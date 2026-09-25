@@ -1,0 +1,146 @@
+{
+  "order_accuracy": 1.0,
+  "edge_kind_accuracy": 0.75,
+  "details": [
+    {
+      "entry": "module.launch_stage_ov",
+      "expected_path": [
+        "launch_stage_ov",
+        "open_stage",
+        "_load_async",
+        "_fetch_assets",
+        "_init_ui",
+        "wait_for_stage_load",
+        "_wait_ready",
+        "preload_prefabs"
+      ],
+      "actual_path": [
+        "launch_stage_ov",
+        "open_stage",
+        "_load_async",
+        "_fetch_assets",
+        "_init_ui",
+        "wait_for_stage_load",
+        "_wait_ready",
+        "preload_prefabs"
+      ],
+      "expected_kinds": [
+        "sync",
+        "await",
+        "sync",
+        "await",
+        "sync",
+        "await",
+        "sync",
+        "await"
+      ],
+      "actual_kinds": [
+        null,
+        "await",
+        "sync",
+        "await",
+        "sync",
+        "await",
+        "sync",
+        "await"
+      ],
+      "order_accuracy": 1.0,
+      "edge_kind_accuracy": 0.875
+    },
+    {
+      "entry": "module.open_stage",
+      "expected_path": [
+        "open_stage",
+        "_load_async",
+        "_fetch_assets",
+        "_init_ui"
+      ],
+      "actual_path": [
+        "open_stage",
+        "_load_async",
+        "_fetch_assets",
+        "_init_ui"
+      ],
+      "expected_kinds": [
+        "await",
+        "sync",
+        "await",
+        "sync"
+      ],
+      "actual_kinds": [
+        null,
+        "sync",
+        "await",
+        "sync"
+      ],
+      "order_accuracy": 1.0,
+      "edge_kind_accuracy": 0.75
+    },
+    {
+      "entry": "module.wait_for_stage_load",
+      "expected_path": [
+        "wait_for_stage_load",
+        "_wait_ready"
+      ],
+      "actual_path": [
+        "wait_for_stage_load",
+        "_wait_ready"
+      ],
+      "expected_kinds": [
+        "await",
+        "sync"
+      ],
+      "actual_kinds": [
+        null,
+        "sync"
+      ],
+      "order_accuracy": 1.0,
+      "edge_kind_accuracy": 0.5
+    },
+    {
+      "entry": "tests/fixtures/callflow/stage_manager.py:5",
+      "expected_path": [
+        "launch_stage_ov",
+        "open_stage",
+        "_load_async",
+        "_fetch_assets",
+        "_init_ui",
+        "wait_for_stage_load",
+        "_wait_ready",
+        "preload_prefabs"
+      ],
+      "actual_path": [
+        "launch_stage_ov",
+        "open_stage",
+        "_load_async",
+        "_fetch_assets",
+        "_init_ui",
+        "wait_for_stage_load",
+        "_wait_ready",
+        "preload_prefabs"
+      ],
+      "expected_kinds": [
+        "sync",
+        "await",
+        "sync",
+        "await",
+        "sync",
+        "await",
+        "sync",
+        "await"
+      ],
+      "actual_kinds": [
+        null,
+        "await",
+        "sync",
+        "await",
+        "sync",
+        "await",
+        "sync",
+        "await"
+      ],
+      "order_accuracy": 1.0,
+      "edge_kind_accuracy": 0.875
+    }
+  ]
+}
