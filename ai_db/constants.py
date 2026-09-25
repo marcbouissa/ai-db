@@ -6,6 +6,23 @@ DEFAULT_DB_FILE = os.environ.get(
     os.path.join(_xdg_data, "ai-db", "codebase_knowledge.db")
 )
 DEFAULT_CONFIG_FILE = os.path.expanduser("~/.config/ai-db/config.json")
+
+# --- compute dtype selection (see ai_db.device.resolve_dtype) ---
+# Candidate dtypes for CPU inference, best-first. float16 is deliberately
+# absent: most CPUs have no hardware fp16 accumulate and pay for subnormal
+# handling. Measured 0.11 chunks/s vs 0.50 for float32 on an i7-11800H.
+CPU_DTYPES = ("float32", "bfloat16")
+# Matmul size for the dtype probe: large enough to be compute-bound rather than
+# dominated by per-op dispatch overhead on any current CPU.
+DTYPE_PROBE_SIZE = 512
+DTYPE_PROBE_ITERS = 5
+# Best-of-N, so a scheduler hiccup on a loaded machine cannot decide the dtype
+# for the rest of the process.
+DTYPE_PROBE_REPEATS = 3
+# How much faster the model's native dtype must be before we keep it. A margin
+# above 1.0 keeps us from thrashing on measurement noise; 1.25 sits well clear
+# of the run-to-run spread seen on an otherwise idle machine.
+BF16_PROBE_MARGIN = 1.25
 _custom_skill_dirs = os.environ.get("AI_DB_SKILL_DIRS")
 if _custom_skill_dirs:
     DEFAULT_SKILL_DIRS = [os.path.expanduser(p.strip()) for p in _custom_skill_dirs.split(":") if p.strip()]

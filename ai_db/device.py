@@ -10,6 +10,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from ai_db.constants import (
+    BF16_PROBE_MARGIN,
+    DTYPE_PROBE_ITERS,
+    DTYPE_PROBE_REPEATS,
+    DTYPE_PROBE_SIZE,
+)
 from ai_db.errors import AiDbConfigError
 
 CUDA = "cuda"
@@ -40,6 +46,117 @@ def torch_version_cuda() -> str | None:
 def preferred_device() -> str:
     """Device to write into a fresh config: cuda when usable, else cpu."""
     return CUDA if cuda_available() else CPU
+
+
+_DTYPE_CACHE: dict[tuple[str, str | None], str] = {}
+
+
+def _probe_cpu_dtypes(candidates: tuple[str, ...]) -> dict[str, float]:
+    """Seconds per matmul iteration for each dtype, best of N repeats.
+
+    Deliberately a timing probe rather than an ISA-flag lookup. ``/proc/cpuinfo``
+    does not exist on macOS or Windows, flag names differ between Intel, AMD and
+    ARM, and any hardcoded table goes stale the moment a new extension ships.
+    Timing the operation we actually care about is portable by construction and
+    cannot be wrong about a CPU it has never heard of.
+    """
+    import time
+
+    import torch
+
+    timings: dict[str, float] = {}
+    n = DTYPE_PROBE_SIZE
+    for name in candidates:
+        dtype = getattr(torch, name)
+        # (n, n) matrices, NOT torch.randn(n) -- that is a 1-D vector, and
+        # vector @ vector is a dot product, which costs nothing and makes the
+        # probe measure pure dispatch overhead. Two dimensions are required.
+        a = torch.randn(n, n, dtype=dtype, device="cpu")
+        b = torch.randn(n, n, dtype=dtype, device="cpu")
+        a @ b  # warm up oneDNN kernel selection and the thread pool
+        best = float("inf")
+        for _ in range(DTYPE_PROBE_REPEATS):
+            start = time.perf_counter()
+            for _ in range(DTYPE_PROBE_ITERS):
+                a @ b
+            best = min(best, time.perf_counter() - start)
+        # best-of, not mean: one scheduler hiccup on a loaded machine should not
+        # decide the dtype for the rest of the process's life.
+        timings[name] = best
+    return timings
+
+
+def resolve_dtype(device: str, requested: str | None = None) -> str | None:
+    """Choose the torch dtype to load a transformer in, or None to keep native.
+
+    ``requested`` is the user's explicit ``embedding.dtype`` and always wins.
+
+    On an accelerator this returns ``None``, meaning "load whatever the model
+    ships in". GPU tensor cores are built for bf16/fp16, so forcing float32
+    there would waste VRAM and bandwidth for nothing. The native dtype is never
+    second-guessed on hardware designed around it.
+
+    On CPU it measures. bfloat16 is what most modern embedding models ship in,
+    but it is only fast on CPUs with ``avx512_bf16`` or AMX; without them every
+    matmul is emulated and runs *slower* than float32 -- measured 0.24 vs 0.50
+    chunks/s on an i7-11800H. So pick the fastest dtype the hardware actually
+    delivers, rather than the one in the checkpoint.
+
+    The probe is memoised: it measures a property of the machine, not of the
+    call, and re-running it per embedder would be pure waste.
+    """
+    if requested is not None:
+        return requested
+    if device != CPU:
+        return None
+
+    key = (device, requested)
+    cached = _DTYPE_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    from ai_db.constants import CPU_DTYPES
+
+    try:
+        timings = _probe_cpu_dtypes(CPU_DTYPES)
+    except Exception:  # noqa: BLE001 - a failed probe must not block startup
+        timings = {}
+    if not timings:
+        chosen = "float32"
+    else:
+        fastest = min(timings, key=lambda name: timings[name])
+        # Require the winner to be clear of the runner-up, so measurement noise
+        # on a loaded machine cannot flip the dtype between runs.
+        chosen = fastest
+        for other, seconds in timings.items():
+            if other == fastest:
+                continue
+            if seconds < timings[fastest] * BF16_PROBE_MARGIN:
+                # Too close to call: fall back to float32, the safe default that
+                # is never emulated on any CPU.
+                chosen = "float32"
+                break
+
+    _DTYPE_CACHE[key] = chosen
+    return chosen
+
+
+def dtype_report(device: str, chosen: str | None) -> dict[str, Any]:
+    """Diagnostics for ``ai-db config check``: why this dtype was chosen."""
+    out: dict[str, Any] = {"device": device,
+                           "dtype": chosen or "model default (native)"}
+    if device != CPU or chosen is None:
+        return out
+    from ai_db.constants import CPU_DTYPES
+
+    try:
+        timings = _probe_cpu_dtypes(CPU_DTYPES)
+    except Exception:  # noqa: BLE001 - diagnostics must never raise
+        return out
+    out["probe_seconds"] = {k: round(v, 6) for k, v in timings.items()}
+    out["reason"] = ("fastest measured CPU dtype; bfloat16 in a checkpoint is "
+                     "emulated here and runs slower than float32")
+    return out
 
 
 def resolve_device(requested: str | None, *, where: str) -> str:

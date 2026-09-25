@@ -68,20 +68,30 @@ def check_config(cfg: AppConfig) -> HealthReport:
 
 
 def _report_device(report: HealthReport, scope: str, configured: str | None) -> None:
-    """Print the resolved device and torch's CUDA build for a local provider."""
-    from ai_db.device import describe
+    """Print the resolved device, dtype and torch's CUDA build for a local provider."""
+    from ai_db.device import describe, resolve_dtype
 
     d = describe(scope)
     torch_cuda = d["torch_cuda"] or "n/a"
+    device = configured or d["preferred_device"]
+    dtype_note = ""
+    if d["torch_installed"]:
+        # Shows the dtype gate's decision, so a 2x indexing difference is
+        # visible without having to benchmark it.
+        try:
+            chosen = resolve_dtype(device, None)
+            dtype_note = f", dtype={chosen or 'model default'}"
+        except Exception:  # noqa: BLE001 - diagnostics must never raise
+            dtype_note = ""
     if not d["torch_installed"]:
         report.passed(
             f"{scope} device={configured or 'cpu'} (torch not installed; "
             f"torch.version.cuda={torch_cuda})")
     elif d["cuda_available"]:
         report.passed(
-            f"{scope} device={configured or d['preferred_device']} "
+            f"{scope} device={device}{dtype_note} "
             f"(cuda available, torch.version.cuda={torch_cuda})")
     else:
         report.passed(
-            f"{scope} device={configured or d['preferred_device']} "
+            f"{scope} device={device}{dtype_note} "
             f"(no CUDA device; torch.version.cuda={torch_cuda})")

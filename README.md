@@ -223,6 +223,7 @@ or `~/.config/ai-db/config.json` (first match). Sections:
 | `embedding.provider` | `none`, `sentence_transformers`, `openai_compatible`, `voyage`, or an `ai_db.embedding` plugin |
 | `embedding.device` | `cpu` or `cuda`. `ai-db init` auto-detects; `cuda` on a machine without a usable GPU is a hard error, never a silent downgrade |
 | `embedding.batch_size` | Documents per forward pass. Raise it on a GPU with VRAM to spare |
+| `embedding.dtype` | `float32`, `bfloat16` or `float16`. **Omit it** (recommended) and ai-db probes the hardware and picks. See below. |
 | `rerank.provider` | `none`, `sentence_transformers`, `voyage`, `cohere`, or an `ai_db.rerank` plugin |
 | `rerank.top_n` | How many candidates the reranker re-scores. Default `10` |
 | `access.cross_project` | `{"project": ["other-project", ...]}` read access grants |
@@ -230,6 +231,29 @@ or `~/.config/ai-db/config.json` (first match). Sections:
 Config files are versioned (`"version": 2`). `ai-db init --migrate` converts an
 unversioned or v1 file in place; a v1 file loaded without migrating is rejected
 with a message pointing at that command rather than being silently reinterpreted.
+
+> **`embedding.dtype` is chosen by measurement, and the default is a lie in a
+> checkpoint.** Most modern embedding models ship in `bfloat16`. That is correct on a
+> GPU, where tensor cores are built for it. On a CPU without `avx512_bf16` or AMX it is
+> emulated in software and runs **slower than `float32`** — measured on an i7-11800H at
+> 0.24 vs 0.50 chunks/s, so leaving it alone costs a 2× indexing slowdown on the hardware
+> most people actually run.
+>
+> So on CPU, ai-db times a matmul in each candidate dtype and uses the fastest. It is a
+> timing probe rather than a CPU-feature lookup on purpose: `/proc/cpuinfo` does not exist
+> on macOS or Windows, flag names differ across Intel, AMD and ARM, and any hardcoded table
+> goes stale as extensions are added. Timing the operation cannot be wrong about a CPU it
+> has never heard of. On an accelerator the gate does not run at all — the checkpoint's
+> native dtype is left alone.
+>
+> `ai-db config check` reports the decision, so a 2× difference is visible without
+> benchmarking:
+> ```
+> OK   embedding device=cpu, dtype=float32 (cuda available, torch.version.cuda=12.8)
+> ```
+> Set `embedding.dtype` explicitly to override. Note that changing the dtype does **not**
+> rewrite vectors already in the database; run `ai-db reindex --embeddings` if you want
+> them recomputed.
 
 > **`vec0` is not an ANN index.** sqlite-vec's `vec0` KNN is a brute-force scan, so
 > query time still grows linearly with corpus size. Measured on 100k x 1024

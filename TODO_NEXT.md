@@ -347,6 +347,29 @@ Otherwise mark every box "skipped (gate not met: <numbers>)" and move on.
       minutes per hundred chunks. That is stated in the results file rather than
       dressed up as a measurement.
 
+      **Follow-up: a 2× CPU win was sitting inside that number.** Investigating why
+      CPU was slow showed three candidate explanations, all of which measurement
+      eliminated: throughput was *flat* from batch 1 to 24, so not memory-bandwidth
+      bound; length-sorting cut padded tokens 3.31× and changed wall clock by 0.7%,
+      so not padding bound; time scaled with *chunk count* rather than tokens, so
+      not per-token compute. What was left was the dtype: the checkpoint ships in
+      bfloat16, and this CPU has no `avx512_bf16` and no AMX, so every matmul is
+      emulated. float32 is **0.51 vs 0.24 chunks/s — 2.1×** on the same hardware.
+
+      Fixed with a portable gate (`ai_db.device.resolve_dtype`, `embedding.dtype`
+      to override): on CPU it times a matmul per candidate dtype and uses the
+      fastest; on an accelerator it does not run at all, leaving the checkpoint's
+      native dtype alone. A timing probe rather than a CPU-feature lookup, because
+      `/proc/cpuinfo` does not exist on macOS or Windows, flag names differ across
+      Intel/AMD/ARM, and any hardcoded table goes stale. `ai-db config check`
+      reports the decision. See `tests/test_dtype_gate.py` (17 tests).
+
+      The first version of that probe was itself wrong and measured nothing:
+      `torch.randn(n)` builds a **1-D vector**, so `a @ b` was a 512-element dot
+      product, both dtypes looked identical, and the gate never fired. Caught by
+      asserting the probe's own arithmetic is physically plausible, which is now
+      a regression test.
+
 ---
 
 ## Phase 14 — Agent experience  (depends on: 10)

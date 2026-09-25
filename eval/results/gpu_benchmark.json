@@ -31,5 +31,13 @@
     "Single machine, single run, no repetition. The throughput ratio is large enough that run-to-run noise is not material; the query-latency ratio is smaller and would benefit from more samples.",
     "Absolute CPU numbers depend on core count and BLAS threading."
   ],
-  "reproduce": "uv run pytest tests/test_bench_gpu.py -m bench -q -s   (skips without CUDA or a cached model)"
+  "reproduce": "uv run pytest tests/test_bench_gpu.py -m bench -q -s   (skips without CUDA or a cached model)",
+  "dtype_gate": {
+    "note": "After this benchmark, ai-db gained a dtype gate (ai_db.device.resolve_dtype). On this CPU it now loads in float32, not the checkpoint's bfloat16.",
+    "cpu_chunks_per_s_before": 0.24,
+    "cpu_chunks_per_s_after": 0.51,
+    "cpu_speedup_from_gate": 2.1,
+    "cuda_unchanged": "gate does not run on accelerators; native bf16 kept",
+    "measured": "SentenceTransformersEmbedder end to end, 16 real chunks, Qwen3-Embedding-0.6B"
+  }
 }

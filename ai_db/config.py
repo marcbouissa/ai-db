@@ -32,7 +32,7 @@ EMBEDDING_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "none": (frozenset(), frozenset()),
     "sentence_transformers": (
         frozenset({"model", "device", "batch_size"}),
-        frozenset({"query_prompt", "_note"}),
+        frozenset({"query_prompt", "dtype", "_note"}),
     ),
     "openai_compatible": (
         frozenset({"model", "base_url", "api_key_env", "dimensions", "batch_size"}),
@@ -44,8 +44,11 @@ EMBEDDING_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     ),
 }
 
-RERANK_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
-    "none": (frozenset(), frozenset()),
+#: Compute dtypes a user may pin via `<provider>.dtype`. Omit the key to let
+#: ai-db probe the hardware instead (see ai_db.device.resolve_dtype).
+ALLOWED_DTYPES = frozenset({"float32", "bfloat16", "float16"})
+
+RERANK_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {    "none": (frozenset(), frozenset()),
     "sentence_transformers": (frozenset({"model", "device"}), frozenset({"_note"})),
     "voyage": (frozenset({"model", "api_key_env"}), frozenset({"base_url", "_note"})),
     "cohere": (frozenset({"model", "api_key_env"}), frozenset({"base_url", "_note"})),
@@ -179,6 +182,13 @@ def _parse_provider(
             not isinstance(options["dimensions"], int) or options["dimensions"] < 1
         ):
             raise AiDbConfigError(f"'{where}.dimensions' must be a positive integer")
+        if "dtype" in options and options["dtype"] not in ALLOWED_DTYPES:
+            raise AiDbConfigError(
+                f"'{where}.dtype' must be one of {sorted(ALLOWED_DTYPES)}, "
+                f"got {options['dtype']!r}. Omit it to let ai-db probe the "
+                f"hardware and pick (recommended: bfloat16 is emulated and "
+                f"slower than float32 on CPUs without avx512_bf16/AMX)."
+            )
     # Providers not in the registry are third-party entry points; their options are
     # validated by the plugin itself when it is constructed.
     return ProviderConfig(provider=provider, options=options)
