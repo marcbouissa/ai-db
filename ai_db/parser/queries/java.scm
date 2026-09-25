@@ -1,40 +1,43 @@
 ; Java tree-sitter queries for symbols, cross-refs, and syntax errors
 
-; Class declarations
+; Class declarations.
+; `superclass` and `interfaces` are fields; `super_interfaces` is the node type.
+; Children must be listed in SOURCE ORDER: name, superclass, interfaces, body.
 (class_declaration
   name: (identifier) @name
   superclass: (superclass
     (type_identifier) @base)?
   interfaces: (super_interfaces
-    (type_identifier) @impl)?
-  body: (class_body) @body) @def.class
+    (type_list
+      (type_identifier) @impl)*)?
+  body: (class_body) @body) @def.class @ref.inherit
 
-; Interface declarations
+; Interface declarations. `extends_interfaces` is an anonymous child here
+; (not a field), and it precedes the body in source order.
 (interface_declaration
   name: (identifier) @name
-  extends: (extends_interfaces
-    (type_identifier) @base)?
-  body: (interface_body) @body) @def.interface
+  (extends_interfaces
+    (type_list
+      (type_identifier) @base)*)?
+  body: (interface_body) @body) @def.interface @ref.inherit
 
 ; Enum declarations
 (enum_declaration
   name: (identifier) @name
-  implements: (super_interfaces
-    (type_identifier) @impl)?
-  body: (enum_body) @body) @def.type
+  body: (enum_body) @body
+  (super_interfaces
+    (type_list
+      (type_identifier) @impl)*)?) @def.type @ref.inherit
 
 ; Record declarations (Java 14+)
 (record_declaration
   name: (identifier) @name
-  implements: (super_interfaces
-    (type_identifier) @impl)?
-  body: (record_body) @body) @def.type
+  body: (class_body) @body) @def.type
 
 ; Method declarations
 (method_declaration
   name: (identifier) @name
   parameters: (formal_parameters) @params
-  return_type: (type_identifier)? @return_type
   body: (block)? @body) @def.method
 
 ; Constructor declarations
@@ -43,40 +46,22 @@
   parameters: (formal_parameters) @params
   body: (constructor_body) @body) @def.method
 
-; Field declarations
-(field_declaration
-  (variable_declarator
-    name: (identifier) @name)) @def.type
-
-; Method calls
+; Method invocations
 (method_invocation
   name: (identifier) @callee
   arguments: (argument_list) @args) @ref.call
 
-; Qualified method calls (obj.method())
-(method_invocation
-  object: (expression)
-  name: (identifier) @callee
-  arguments: (argument_list) @args) @ref.call
-
-; Constructor calls (new Class())
+; Constructor invocations: new Foo()
 (object_creation_expression
   type: (type_identifier) @callee) @ref.call
 
-; Static method calls (Class.method())
-(method_invocation
-  name: (identifier) @callee
-  object: (type_identifier) @scope) @ref.call
-
 ; Import statements
 (import_declaration
-  name: (scoped_identifier
-    path: (identifier) @mod
-    name: (identifier) @name) @ref.import)
+  (scoped_identifier) @module) @ref.import
 
 ; Package declaration
 (package_declaration
-  name: (scoped_identifier) @module) @ref.import
+  (identifier) @module) @ref.import
 
 ; Syntax errors
 (ERROR) @syntax.error

@@ -1,0 +1,15 @@
+{"query": "TaxCalculator", "kind": "impact", "expected": [{"filepath": "ts/billing/tax.ts", "symbol": "TaxCalculator"}]}
+{"query": "taxFor", "kind": "impact", "expected": [{"filepath": "ts/billing/tax.ts", "symbol": "taxFor"}]}
+{"query": "totalWithTax", "kind": "impact", "expected": [{"filepath": "ts/billing/tax.ts", "symbol": "totalWithTax"}]}
+{"query": "round2", "kind": "impact", "expected": [{"filepath": "ts/billing/tax.ts", "symbol": "round2"}]}
+{"query": "invoiceTotal", "kind": "impact", "expected": [{"filepath": "ts/billing/tax.ts", "symbol": "invoiceTotal"}]}
+{"query": "ReviewTotal", "kind": "impact", "expected": [{"filepath": "go/audit/audit.go", "symbol": "ReviewTotal"}]}
+{"query": "NewTaxCalculator", "kind": "impact", "expected": [{"filepath": "go/billing/invoice.go", "symbol": "NewTaxCalculator"}]}
+{"query": "InvoiceTotal", "kind": "impact", "expected": [{"filepath": "go/billing/invoice.go", "symbol": "InvoiceTotal"}]}
+{"query": "tax_for", "kind": "impact", "expected": [{"filepath": "rust/billing/tax.rs", "symbol": "tax_for"}]}
+{"query": "review_total", "kind": "impact", "expected": [{"filepath": "rust/audit/audit.rs", "symbol": "review_total"}]}
+{"query": "invoice_total", "kind": "impact", "expected": [{"filepath": "rust/billing/tax.rs", "symbol": "invoice_total"}]}
+{"query": "how is the tax rate applied to an amount", "kind": "explain", "expected": [{"filepath": "ts/billing/tax.ts", "symbol": "TaxCalculator"}]}
+{"query": "how is the audit total recomputed and recorded", "kind": "explain", "expected": [{"filepath": "ts/audit/audit.ts", "symbol": "reviewTotal"}]}
+{"query": "how does the go audit package call the billing calculator", "kind": "explain", "expected": [{"filepath": "go/audit/audit.go", "symbol": "ReviewTotal"}]}
+{"query": "how does the rust audit log reuse the billing tax calculator", "kind": "explain", "expected": [{"filepath": "rust/audit/audit.rs", "symbol": "review_total"}]}

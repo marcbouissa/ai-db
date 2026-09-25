@@ -317,12 +317,152 @@ def test_language_for():
     assert language_for("test.jsx") == "javascript"
     assert language_for("test.ts") == "typescript"
     assert language_for("test.tsx") == "tsx"
-    # Disabled languages return None
-    assert language_for("test.go") is None
-    assert language_for("test.rs") is None
-    assert language_for("test.cpp") is None
-    assert language_for("test.java") is None
+    assert language_for("test.go") == "go"
+    assert language_for("test.rs") == "rust"
+    assert language_for("test.c") == "c"
+    assert language_for("test.h") == "c"
+    assert language_for("test.cpp") == "cpp"
+    assert language_for("test.hpp") == "cpp"
+    assert language_for("test.java") == "java"
     assert language_for("test.unknown") is None
+
+
+# ==============================================================================
+# Go
+# ==============================================================================
+
+GO_CODE = '''package billing
+
+import "fmt"
+
+type Invoice struct {
+\tAmount float64
+}
+
+func (i *Invoice) Total() float64 {
+\treturn fmt.Sprint(i.Amount)
+}
+
+func Run() {
+\thelper()
+}
+'''
+
+def test_go_symbols():
+    symbols, _, errors = extract_graph("test.go", GO_CODE)
+    assert errors == []
+    names = {s["name"] for s in symbols}
+    assert {"Invoice", "Total", "Run"} <= names
+
+def test_go_refs():
+    _, refs, _ = extract_graph("test.go", GO_CODE)
+    assert any(r["ref_type"] == "import" and "fmt" in r["callee_name"] for r in refs)
+    calls = {r["callee_name"] for r in refs if r["ref_type"] == "call"}
+    assert "helper" in calls
+    assert "Sprint" in calls  # package-qualified call fmt.Sprint
+
+
+# ==============================================================================
+# Rust
+# ==============================================================================
+
+RUST_CODE = '''use crate::utils::calc;
+
+struct Invoice {
+    amount: f64,
+}
+
+trait Priced {
+    fn total(&self) -> f64;
+}
+
+impl Priced for Invoice {
+    fn total(&self) -> f64 {
+        calc(self.amount)
+    }
+}
+'''
+
+def test_rust_symbols():
+    symbols, _, errors = extract_graph("test.rs", RUST_CODE)
+    assert errors == []
+    names = {s["name"] for s in symbols}
+    assert {"Invoice", "Priced", "total"} <= names
+
+def test_rust_refs():
+    _, refs, _ = extract_graph("test.rs", RUST_CODE)
+    # `impl Priced for Invoice` must record the TRAIT as the base
+    inherit = {(r["callee_name"]) for r in refs if r["ref_type"] == "inherit"}
+    assert "Priced" in inherit
+    assert any("calc" in r["callee_name"] for r in refs if r["ref_type"] == "import")
+    assert any(r["callee_name"] == "calc" for r in refs if r["ref_type"] == "call")
+
+
+# ==============================================================================
+# C++
+# ==============================================================================
+
+CPP_CODE = '''#include "u.h"
+
+class Base {
+public:
+    virtual void go() = 0;
+};
+
+class Impl : public Base {
+    void go() override {
+        helper();
+    }
+};
+'''
+
+def test_cpp_symbols():
+    symbols, _, errors = extract_graph("test.cpp", CPP_CODE)
+    assert errors == []
+    names = {s["name"] for s in symbols}
+    assert {"Base", "Impl"} <= names
+
+def test_cpp_refs():
+    _, refs, _ = extract_graph("test.cpp", CPP_CODE)
+    assert any(r["ref_type"] == "import" and "u.h" in r["callee_name"] for r in refs)
+    inherit = {(r["callee_name"], r["caller_name"]) for r in refs if r["ref_type"] == "inherit"}
+    assert ("Base", "module.Impl") in inherit
+
+
+# ==============================================================================
+# Java
+# ==============================================================================
+
+JAVA_CODE = '''package p;
+
+import utils.Helper;
+
+interface Svc {
+    void go();
+}
+
+class Base {}
+
+class Impl extends Base implements Svc {
+    public void go() {
+        Helper.run();
+    }
+}
+'''
+
+def test_java_symbols():
+    symbols, _, errors = extract_graph("test.java", JAVA_CODE)
+    assert errors == []
+    names = {s["name"] for s in symbols}
+    assert {"Base", "Impl", "Svc"} <= names
+
+def test_java_refs():
+    _, refs, _ = extract_graph("test.java", JAVA_CODE)
+    assert any(r["ref_type"] == "import" and "utils.Helper" in r["callee_name"]
+               for r in refs)
+    inherit = {(r["callee_name"], r["caller_name"]) for r in refs if r["ref_type"] == "inherit"}
+    assert ("Base", "module.Impl") in inherit   # extends
+    assert ("Svc", "module.Impl") in inherit    # implements
 
 
 # ==============================================================================

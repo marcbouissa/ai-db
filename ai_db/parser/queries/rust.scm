@@ -1,20 +1,16 @@
 ; Rust tree-sitter queries for symbols, cross-refs, and syntax errors
 
-; Function definitions (includes async functions)
+; Function definitions
 (function_item
   name: (identifier) @name
   parameters: (parameters) @params
   return_type: (_)? @return_type
   body: (block) @body) @def.function
 
-; Method definitions in impl blocks (function_item inside impl_item)
-(function_item
-  name: (identifier) @name
-  parameters: (parameters) @params
-  return_type: (_)? @return_type
-  body: (block) @body) @def.method
+; Free functions and methods share the function_item node; the chunker's
+; qualified-name rules decide the prefix, so both are @def.function here.
 
-; Struct definitions
+; Struct definitions (named-field body)
 (struct_item
   name: (type_identifier) @name
   body: (field_declaration_list) @body) @def.struct
@@ -24,7 +20,7 @@
   name: (type_identifier) @name
   body: (ordered_field_declaration_list) @body) @def.struct
 
-; Unit struct definitions (no body)
+; Unit struct definitions (name only)
 (struct_item
   name: (type_identifier) @name) @def.struct
 
@@ -38,46 +34,45 @@
   name: (type_identifier) @name
   body: (declaration_list) @body) @def.interface
 
-; Impl blocks (for trait implementations) - first type_identifier is the trait
+; `impl Trait for Type` - grammar fields are `trait:` (the trait) and
+; `type:` (the self type), in that source order.
 (impl_item
-  (type_identifier) @base) @ref.inherit
+  trait: (type_identifier) @base
+  type: (type_identifier)? @impl) @ref.inherit
 
 ; Type aliases
 (type_item
   name: (type_identifier) @name) @def.type
 
-; Function calls - simple identifier
+; Trait method signatures
+(function_signature_item
+  name: (identifier) @name
+  parameters: (parameters) @params) @def.method
+
+; Calls: plain function
 (call_expression
   function: (identifier) @callee) @ref.call
 
-; Function calls - scoped identifier (mod::func)
+; Calls: path::function (the last identifier is the function)
 (call_expression
   function: (scoped_identifier
-    path: (identifier) @mod
+    path: (_) @mod
     name: (identifier) @callee)) @ref.call
 
-; Method calls - field_expression
+; Method calls: receiver.method()
 (call_expression
   function: (field_expression
     field: (field_identifier) @callee)) @ref.call
 
-; Method calls (standalone field_expression)
-(field_expression
-  field: (field_identifier) @callee) @ref.call
-
-; Macro calls
+; Macro invocation
 (macro_invocation
   macro: (identifier) @callee) @ref.call
 
 ; Use statements (imports)
 (use_declaration
-  (scoped_identifier
-    path: (identifier) @mod
-    name: (identifier) @name) @ref.import)
-
-; External crate declarations
-(extern_crate_declaration
-  name: (identifier) @name) @ref.import
+  argument: (scoped_identifier
+    path: (_) @mod
+    name: (identifier) @name)) @ref.import
 
 ; Syntax errors
 (ERROR) @syntax.error

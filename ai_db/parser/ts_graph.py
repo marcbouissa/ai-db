@@ -21,14 +21,14 @@ SUPPORTED_LANGUAGES = {
     ".cjs": "javascript",
     ".ts": "typescript",
     ".tsx": "tsx",
-    # ".go": "go",      # disabled: tree-sitter query issues
-    # ".rs": "rust",    # disabled: tree-sitter query issues
+    ".go": "go",
+    ".rs": "rust",
     ".c": "c",
     ".h": "c",
-    # ".cpp": "cpp",    # disabled: tree-sitter query issues
-    # ".hpp": "cpp",    # disabled: tree-sitter query issues
-    # ".cc": "cpp",     # disabled: tree-sitter query issues
-    # ".java": "java",  # disabled: tree-sitter query issues
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cc": "cpp",
+    ".java": "java",
 }
 
 

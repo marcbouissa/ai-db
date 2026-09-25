@@ -9,11 +9,11 @@
 {"query": "query symbol exact resolution", "expected": [{"filepath": "ai_db/search/query.py", "symbol": "query_symbol"}], "kind": "locate"}
 {"query": "chunk markdown by headers", "expected": [{"filepath": "ai_db/parser/chunker.py", "symbol": "chunk_file"}], "kind": "locate"}
 {"query": "split python file into classes and functions chunks", "expected": [{"filepath": "ai_db/parser/chunker.py", "symbol": "chunk_file"}], "kind": "locate"}
-{"query": "extract symbols from python ast", "expected": [{"filepath": "ai_db/parser/ast_visitor.py", "symbol": "extract_symbols"}], "kind": "locate"}
+{"query": "extract symbols from python ast", "expected": [{"filepath": "ai_db/parser/ts_graph.py", "symbol": "extract_graph"}], "kind": "locate"}
 {"query": "file outline skeleton", "expected": [{"filepath": "ai_db/parser/ast_visitor.py", "symbol": "extract_file_outline"}], "kind": "locate"}
-{"query": "extract call import inheritance references", "expected": [{"filepath": "ai_db/parser/cross_refs.py", "symbol": "extract_cross_refs"}], "kind": "locate"}
+{"query": "extract call import inheritance references", "expected": [{"filepath": "ai_db/parser/ts_graph.py", "symbol": "extract_graph"}], "kind": "locate"}
 {"query": "todo fixme hack annotations extraction", "expected": [{"filepath": "ai_db/parser/annotations.py", "symbol": "extract_annotations"}], "kind": "locate"}
-{"query": "validate python syntax errors", "expected": [{"filepath": "ai_db/parser/syntax.py", "symbol": "validate_python_syntax"}], "kind": "locate"}
+{"query": "validate python syntax errors", "expected": [{"filepath": "ai_db/parser/linters.py", "symbol": "validate_python_syntax"}], "kind": "locate"}
 {"query": "external linter validation for javascript shell yaml", "expected": [{"filepath": "ai_db/parser/linters.py", "symbol": "ExternalLinter"}], "kind": "locate"}
 {"query": "sync directory skip unchanged files by sha256 hash", "expected": [{"filepath": "ai_db/search/indexer.py", "symbol": "sync"}], "kind": "locate"}
 {"query": "scan directory walk ignore rules", "expected": [{"filepath": "ai_db/search/indexer.py", "symbol": "scan_directory"}], "kind": "locate"}

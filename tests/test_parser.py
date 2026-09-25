@@ -477,12 +477,11 @@ class TestParserTier4Workflows:
         assert language_for("test.jsx") == "javascript"
         assert language_for("test.ts") == "typescript"
         assert language_for("test.tsx") == "tsx"
-        # Disabled languages return None (tree-sitter queries need fixes)
-        assert language_for("test.go") is None
-        assert language_for("test.rs") is None
+        assert language_for("test.go") == "go"
+        assert language_for("test.rs") == "rust"
         assert language_for("test.c") == "c"
         assert language_for("test.h") == "c"
-        assert language_for("test.cpp") is None
-        assert language_for("test.hpp") is None
-        assert language_for("test.java") is None
+        assert language_for("test.cpp") == "cpp"
+        assert language_for("test.hpp") == "cpp"
+        assert language_for("test.java") == "java"
         assert language_for("test.unknown") is None

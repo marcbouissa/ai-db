@@ -1,0 +1,8 @@
+{
+  "queries": 15,
+  "budget_tokens": 8000,
+  "pack_recall": 1.0,
+  "tokens_mean": 1778.9,
+  "latency_ms_p50": 16.36,
+  "latency_ms_p95": 19.94
+}

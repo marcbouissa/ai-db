@@ -98,7 +98,9 @@ class ExternalLinter:
                 msg = msg[:200]
                 return (line, col, msg)
         except subprocess.TimeoutExpired:
-            return None  # linter too slow: file is reported as clean, not as an error
+            # A linter that never answers is not a clean file: report it as an
+            # error so the gap is visible instead of silently passing.
+            return (1, 1, "linter timeout")
         finally:
             os.unlink(tmp_path)
 

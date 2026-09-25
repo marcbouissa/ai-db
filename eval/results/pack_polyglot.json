@@ -1,0 +1,100 @@
+{
+  "queries": 15,
+  "budget_tokens": 8000,
+  "pack_recall": 1.0,
+  "tokens_mean": 1778.9,
+  "latency_ms_p50": 16.36,
+  "latency_ms_p95": 19.94,
+  "per_query": [
+    {
+      "query": "TaxCalculator",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 1614
+    },
+    {
+      "query": "taxFor",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 1890
+    },
+    {
+      "query": "totalWithTax",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 2440
+    },
+    {
+      "query": "round2",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 1463
+    },
+    {
+      "query": "invoiceTotal",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 1228
+    },
+    {
+      "query": "ReviewTotal",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 1813
+    },
+    {
+      "query": "NewTaxCalculator",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 1805
+    },
+    {
+      "query": "InvoiceTotal",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 1228
+    },
+    {
+      "query": "tax_for",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 1890
+    },
+    {
+      "query": "review_total",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 1813
+    },
+    {
+      "query": "invoice_total",
+      "mode": "impact",
+      "pack_recall": 1.0,
+      "tokens": 1228
+    },
+    {
+      "query": "how is the tax rate applied to an amount",
+      "mode": "explain",
+      "pack_recall": 1.0,
+      "tokens": 1923
+    },
+    {
+      "query": "how is the audit total recomputed and recorded",
+      "mode": "explain",
+      "pack_recall": 1.0,
+      "tokens": 2181
+    },
+    {
+      "query": "how does the go audit package call the billing calculator",
+      "mode": "explain",
+      "pack_recall": 1.0,
+      "tokens": 1981
+    },
+    {
+      "query": "how does the rust audit log reuse the billing tax calculator",
+      "mode": "explain",
+      "pack_recall": 1.0,
+      "tokens": 2187
+    }
+  ]
+}

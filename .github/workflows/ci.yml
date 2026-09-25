@@ -25,18 +25,19 @@ jobs:
         run: |
           cat > ci.json << 'EOF'
           {
-            "version": 1,
-            "storage": {"provider": "sqlite", "options": {"path": null}},
+            "version": 2,
+            "storage": {"provider": "sqlite", "options": {"path": null, "vector_index": "exact"}},
             "retrieval": {"mode": "lexical"},
             "embedding": {"provider": "none"},
             "rerank": {"provider": "none"},
             "access": {"cross_project": {}},
-            "auto_sync_paths": []
+            "auto_sync_paths": [],
+            "trace": {"wait_patterns": null, "wait_patterns_extend": null}
           }
           EOF
 
       - name: Initialize database
-        run: ai-db --config ci.json init
+        run: ai-db --config ci.json init --force
 
       - name: Run tests
         run: pytest -q
@@ -58,3 +59,10 @@ jobs:
           AI_DB_PATH: ${{ runner.temp }}/p.db
         run: |
           ai-db --config ci.json eval --pack --golden eval/golden/ai_db_pack.jsonl --root . --baseline eval/baseline_pack.json
+
+      - name: Eval polyglot pack baseline
+        env:
+          AI_DB_PATH: ${{ runner.temp }}/pg.db
+        run: |
+          ai-db --config ci.json eval --pack --golden eval/golden/polyglot_pack.jsonl \
+            --root tests/fixtures/polyglot --all-files --baseline eval/baseline_pack_polyglot.json
