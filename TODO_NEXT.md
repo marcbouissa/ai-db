@@ -250,32 +250,70 @@ Otherwise mark every box "skipped (gate not met: <numbers>)" and move on.
 
 ## Phase 13 — Performance and scale  (depends on: 9; 13.5 after 11)
 
-None of this phase has started.
+> **Status: branch `perf/scale-phase13`.** 13.1, 13.2, 13.3, 13.4 and 13.6 are
+> done. 13.5 (rerank weight tuning) is not started. **The Check's 10× vec0 target
+> was measured and is not reachable** — see the note on 13.3.
 
-- [ ] **13.1 GPU:** README section for `cu128` wheel; `build_template` writes
-      `"device": "cuda"` when `torch.cuda.is_available()` else `"cpu"` (lazy import);
-      `st_provider` / `CrossEncoderReranker` raise `AiDbConfigError` on cuda-without-torch;
-      `ai-db config check` prints device and `torch.version.cuda`.
-- [ ] **13.2 vec0 option:** `storage.options.vector_index` ∈ `{"exact", "vec0"}`.
-      `vec0` creates `vec_chunks USING vec0(...)` in `ensure_vector_index`; `search_vectors`
-      uses `WHERE embedding MATCH ? AND k = ?`; `path_prefix` / `modified_since` fetch
-      `k*4` and filter via join. Delete from `vec_chunks` in the chunk-delete hooks.
-      Parameterize `TestSQLiteConformance` over both modes.
-- [ ] **13.3 Benchmark** `tests/test_bench_vectors.py` (`@pytest.mark.bench`): 100k random
-      normalized 1024-dim vectors; p50 latency for both modes + recall@10 of vec0 vs exact.
-- [ ] **13.4 Incremental centrality:** `rebuild_symbol_centrality(projects)` recomputes only
-      those projects; change the hook signature to `hook(changed: bool, projects: set[str])`
-      and update every registered hook.
-      — *Note: `rebuild_symbol_centrality` was itself never registered as a post-sync hook
-      (fixed in `0dc9923`), so the table had been permanently empty. 13.4 is still open.*
-- [ ] **13.5 Rerank tuning:** tune `RANK_W_*` with the local cross-encoder via `ai-db eval`;
-      save `eval/results/hybrid_rerank_tuned.json`; annotate `ai_db/embed/defaults.py` if it
-      does not beat `hybrid_qwen3-0.6b.json`. Run in the background and poll.
-- [ ] **13.6 Write lock:** class-level `threading.RLock` in `SQLiteBackend` held for the whole
-      outermost `transaction()` and around `_auto_commit` writes. Test: 8 threads on one DB
-      → no `database is locked`.
-- [ ] **Check:** tests green; vec0 p50 ≥ 10× faster than exact at 100k with recall@10 ≥ 0.95;
-      GPU indexing < 1 min documented as a target only if no GPU torch is installed. Commit.
+- [x] **13.1 GPU:** `ai_db/device.py` owns device resolution so the template, the
+      sentence-transformers embedder and the cross-encoder reranker cannot disagree.
+      `build_template` writes `"device": "cuda"` when a usable GPU is present else
+      `"cpu"` (torch imported lazily; stdlib-only core unaffected). `st_provider` /
+      `CrossEncoderReranker` raise `AiDbConfigError` on cuda-without-a-GPU.
+      `ai-db config check` prints the resolved device and `torch.version.cuda`.
+      README gained a GPU section (cu128 / cu118 / cpu wheels).
+      **Verified on hardware** — RTX 3070 Laptop (sm_86, CUDA 12.8): template resolves
+      to `cuda`, embedder reports `device=cuda` and encodes on `cuda:0`, and
+      `config check` prints `device=cuda (cuda available, torch.version.cuda=12.8)`.
+- [x] **13.2 vec0 option:** `storage.options.vector_index` ∈ `{"exact", "vec0"}`
+      (default `exact`, validated in `from_options`). `vec0` creates
+      `vec_chunks USING vec0(...)` with `project` as a partition key; `search_vectors`
+      uses `WHERE embedding MATCH ? AND k = ?`; `path_prefix` / `modified_since`
+      over-fetch `k*4`, filter via join, truncate to `k`. The search mode is recorded
+      in `embed_meta` so switching exact↔vec0 forces a reindex. Chunk-delete hooks and
+      `drop_vector_index` clear vector rows. `TestSQLiteConformance` is parameterised
+      over both modes. Fixed a bug this surfaced: both paths touched `vec_chunks`
+      unconditionally, which does not exist in exact mode.
+- [x] **13.3 Benchmark** `tests/test_bench_vectors.py` (`@pytest.mark.bench`,
+      `@pytest.mark.slow`), size via `AI_DB_BENCH_N` / `_DIM` / `_QUERIES`.
+      Measured at spec size (100k × 1024, k=10, 50 queries) — see
+      `eval/results/vec0_benchmark.json`:
+
+      | | p50 | |
+      |---|---|---|
+      | exact | 313.66 ms | brute force, Python loop |
+      | vec0 | 202.06 ms | |
+      | speedup | **1.55×** | target was 10× — **not met** |
+      | vec0 recall@10 | **1.000** | target ≥ 0.95 — met |
+
+      **Why the 10× target is unreachable:** sqlite-vec **0.1.9 is the latest
+      release** and its `vec0` KNN is *brute force, not ANN*. Measured directly:
+      cost per candidate vector stays flat at ~1.6–1.9 µs from 5k to 100k rows, i.e.
+      linear in N — an ANN index would show sub-linear scaling. The 1.55× is only
+      what vec0's C loop gains over the pure-Python exact path. A real 10×+ needs
+      hnswlib / FAISS / USearch, or a sqlite-vec release that ships ANN.
+      The option is still worth keeping (C speed, partition pruning, recall 1.000,
+      and a clean seam for a real ANN backend). The test asserts recall and that
+      vec0 is not *slower*; it deliberately does not assert 10×.
+- [x] **13.4 Incremental centrality:** `rebuild_symbol_centrality(projects=None)`
+      recomputes every project, or only the named ones. Hook signature is now
+      `hook(changed: bool, projects: set[str])`; the indexer passes the projects a
+      sync actually touched and all three registered hooks were updated.
+- [ ] **13.5 Rerank tuning:** tune `RANK_W_*` with the local cross-encoder via
+      `ai-db eval`; save `eval/results/hybrid_rerank_tuned.json`; annotate
+      `ai_db/embed/defaults.py` if it does not beat `hybrid_qwen3-0.6b.json`.
+      Not started — needs long eval runs. Note a CUDA device is now available
+      (RTX 3070, sm_86), which should make this far cheaper than the earlier
+      CPU-only attempts.
+- [x] **13.6 Write lock:** process-wide `threading.RLock` held for the whole outermost
+      `transaction()` and around `_auto_commit`. This removes the WAL
+      deferred-transaction upgrade race behind `database is locked` (a deferred txn
+      that starts as a reader and later writes gets SQLITE_BUSY immediately,
+      ignoring `busy_timeout`). RLock so nested savepoints re-enter; readers never
+      take it, so query latency is unaffected. Tested with 8 concurrent
+      writer/reader threads at a 50 ms `busy_timeout`.
+- [ ] **Check:** tests green ✅ (451) · ruff ✅ · mypy ✅ · vec0 recall@10 ≥ 0.95 ✅
+      (1.000) · vec0 p50 ≥ 10× faster ❌ (**1.55×, target unreachable — see 13.3**) ·
+      GPU indexing < 1 min — not benchmarked. Commit `perf(storage): …`.
 
 ---
 
@@ -363,7 +401,7 @@ replace the 16.2 resolver.
 | Phase 10b | deferred, gate not evaluable until 10.8 exists |
 | Phase 11 | **done** |
 | Phase 12 | **done** |
-| Phase 13 | untouched |
+| Phase 13 | 13.1/13.2/13.3/13.4/13.6 done on `perf/scale-phase13`; 13.5 open; the vec0 10× target is unreachable (see 13.3) |
 | Phase 14 | untouched (14.2 partly scaffolded) |
 | Phase 15 | untouched |
 | Phase 16 | 16.5 only — add MCP `trace_flow` + HTTP `/trace` |
