@@ -7,8 +7,8 @@ The `ai-db` test suite provides automated, requirement-driven verification of al
 1. **Opaque-Box & Requirement-Driven**: Tests exercise public CLI commands (`ai-db`, `vectordb`), standard transports (stdio MCP, HTTP REST), and public interface contracts (`StorageBackend`, `ServiceDispatcher`, `TelemetryTracker`) without depending on private internal functions or implementation details.
 2. **Complete Feature Coverage**: Every feature across Milestones 1 through 5 (Features 1–23 in `PROJECT.md`) is systematically tested across 4 progressive tiers.
 3. **Hermetic Test Isolation**: Tests execute in completely isolated temporary sandboxes (`isolated_env`, `temp_workspace`, `temp_db`). Tests never touch live user databases, `$HOME/.gemini`, or personal configurations.
-4. **Progressive Testability**: Tests run cleanly and give clear pass/fail signals. Optional components (such as the MySQL driver `pymysql`) or uncompleted milestone dependencies gracefully skip when dependencies are not present, while fully verifying satisfied features.
-5. **Zero External Dependencies for Core Verification**: Core test execution requires only Python standard library capabilities and `pytest`.
+4. **Progressive Testability**: Tests run cleanly and give clear pass/fail signals. Optional components (such as the `torch` / `sentence-transformers` stack behind the `[local-embed]` extra, or a GPU for the device-resolution paths) gracefully skip when dependencies are not present, while fully verifying satisfied features.
+5. **No Heavy ML for Core Verification**: Core test execution requires the declared runtime dependencies (tree-sitter, sqlite-vec, tiktoken, numpy) plus `pytest`. Torch and sentence-transformers are never needed to run the suite; the tests that touch them skip.
 
 ---
 
@@ -33,22 +33,41 @@ ai-db/
 ├── TEST_READY.md                  # Test suite readiness certification & coverage report
 ├── tests/
 │   ├── __init__.py
-│   ├── conftest.py                # Hermetic isolation fixtures, CLI runner, mock drivers
+│   ├── conftest.py                # Hermetic isolation fixtures and CLI runner
+│   ├── fake_providers.py          # Deterministic stand-ins for embedding/rerank providers
 │   ├── test_packaging.py          # Features 1–5: pyproject.toml, CLI scripts, requirements, gitignore
 │   ├── test_sanitization.py       # Features 5 & 21: zero /path/to/user, credentials, tracked binaries
-│   ├── test_storage.py            # Features 6–11: StorageBackend ABC, DTOs, SQLite WAL, Factory, MySQL
+│   ├── test_storage.py            # StorageBackend ABC, DTOs, SQLite WAL, Factory, transactions
 │   ├── test_search.py             # QueryEngine, BM25 ranking, project boundary filtering, symbols
-│   ├── test_parser.py             # AST parsing, outline generation, syntax validation, chunking
+│   ├── test_parser.py             # Parsing, outline generation, syntax validation, chunking
+│   ├── test_ts_graph.py           # Tree-sitter symbol/cross-ref queries for all 9 languages
+│   ├── test_chunker_ts.py         # Tree-sitter-backed chunking
+│   ├── test_storage_conformance.py # Backend-agnostic StorageBackend contract suite
+│   ├── test_storage_adversarial_m2.py # Adversarial storage cases
+│   ├── test_investigate.py         # Investigation packs, modes, budgets
+│   ├── test_config.py              # Config v2 validation and migration
+│   ├── test_embeddings.py          # Embedding providers and vector search
+│   ├── test_rerank.py              # Rerank providers
+│   ├── test_lexical.py             # Lexical-only retrieval paths
+│   ├── test_observability.py       # Health, telemetry surfaces
+│   ├── test_cache_watch.py         # Query cache and file watcher
+│   ├── test_eval_metrics.py        # Eval harness and baseline comparison
+│   ├── test_phase11.py             # Phase 11: config migration, skills, context vectors
+│   ├── test_phase13.py             # Phase 13: device resolution, write lock, incremental centrality
+│   ├── test_phase14.py             # Phase 14: MCP progress, diff mode, cache isolation
+│   ├── test_bench_index.py         # Indexer benchmark (marked `bench`)
+│   ├── test_bench_vectors.py       # exact vs vec0 vector benchmark (marked `bench`)
+│   └── test_bench_gpu.py           # CPU vs CUDA embedding benchmark (marked `bench`)
 │   ├── test_transports.py         # Features 12–15: ServiceDispatcher, CLI, stdio MCP, HTTP server
 │   └── test_telemetry.py          # Features 16–20: Latency, 4-format token savings, cache hit metrics
 ```
 
 ### Module Responsibilities
 
-- **`tests/conftest.py`**: Declares shared pytest fixtures ensuring strict environment isolation, virtualized environment variables, temporary database generation, sample project workspaces, in-process/subprocess CLI execution runners, and mock MySQL database drivers.
-- **`tests/test_packaging.py`**: Verifies PEP 517/518/621 packaging standards, dual console script entry points (`ai-db` and `vectordb`), zero-dependency core `requirements.txt`, modular dependency extras (`[mysql]`, `[dev]`, `[all]`), and `.gitignore` hygiene.
+- **`tests/conftest.py`**: Declares shared pytest fixtures ensuring strict environment isolation, virtualized environment variables, temporary database generation, sample project workspaces, and in-process/subprocess CLI execution runners. Defined fixtures: `isolated_env`, `temp_db`, `temp_db_path`, `temp_workspace`, `sample_code_dir`, `cli_runner`, `sqlite_backend`, `memory_sqlite_backend`, `sample_records`.
+- **`tests/test_packaging.py`**: Verifies PEP 517/518/621 packaging standards, dual console script entry points (`ai-db` and `vectordb`), that the core runtime dependency set is the parsing/index stack and excludes heavy ML, modular dependency extras (`[local-embed]`, `[dev]`, `[all]`), `.scm` package-data inclusion, and `.gitignore` hygiene.
 - **`tests/test_sanitization.py`**: Verifies 100% absence of personal paths (`/path/to/user`), personal usernames, credentials (AWS, GitHub, OpenAI), private keys, tracked database binaries, and compiled `.pyc` files across git-tracked files.
-- **`tests/test_storage.py`**: Verifies the `StorageBackend` abstract base class, domain DTOs (`FileRecord`, `ChunkRecord`, `SymbolRecord`, `ContextRecord`, `SearchResult`), high-performance SQLite backend (WAL mode, FTS5 BM25, zlib level 9 compression, transaction rollback), `StorageBackendFactory`, MySQL 8.0+ adapter interface, and SQL call decoupling.
+- **`tests/test_storage.py`**: Verifies the `StorageBackend` abstract base class, domain DTOs (`FileRecord`, `ChunkRecord`, `SymbolRecord`, `ContextRecord`, `SearchResult`), the SQLite backend (WAL mode, FTS5 BM25, zlib compression, transaction rollback), `StorageBackendFactory`, and SQL call decoupling.
 - **`tests/test_search.py` & `tests/test_parser.py`**: Verifies AST symbol extraction, outline analysis, syntax checking, and BM25 full-text indexing.
 - **`tests/test_transports.py`**: Verifies unified `ServiceDispatcher`, CLI command execution, stdio JSON-RPC 2.0 MCP server, and `ThreadingHTTPServer` REST endpoints.
 - **`tests/test_telemetry.py`**: Verifies latency tracking (p50/p95/p99), token compression savings across 4 formats (Stub vs S-Exp vs JSON vs Raw), semantic cache hit rates, and codebase weak points diagnostics.
@@ -67,7 +86,6 @@ ai-db/
 | `cli_runner` | `function` | Helper object offering `run(*args, use_subprocess=False)` to execute CLI commands in-process with captured `stdout`/`stderr` or out-of-process via `subprocess`. |
 | `sqlite_backend` | `function` | Instantiates and initializes a concrete `SQLiteBackend` targeting a temporary database; guarantees `.close()` on test completion. |
 | `memory_sqlite_backend` | `function` | Instantiates an in-memory `SQLiteBackend("sqlite:///:memory:")` with schema initialized; guarantees `.close()` on teardown. |
-| `mock_mysql_connection` | `function` | Mocks `pymysql.connect` and cursor execution using `monkeypatch`, enabling MySQL adapter testing without requiring a live MySQL server. |
 | `sample_records` | `function` | Factory producing standardized domain DTOs (`FileRecord`, `ChunkRecord`, `SymbolRecord`, `ContextRecord`, `SearchResult`). |
 
 ---
@@ -128,5 +146,5 @@ ai-db check .
 1. **Host Isolation**: `isolated_env` intercepts all database paths and configuration lookups. Even if commands are executed with default arguments, operations target temporary directory locations.
 2. **No Git Workspace Mutation**: Tests that generate build artifacts, temporary databases, or bytecode write exclusively to pytest `tmp_path`. No untracked files are left in the git working tree.
 3. **Graceful Degradation for Optional Extras**:
-   - Optional MySQL tests gracefully skip if `pymysql` is not installed, while mock-based adapter query generation tests execute everywhere.
-   - Milestone dependencies that are planned for future iterations cleanly skip with informative pytest messages until implemented.
+   - Tests needing the `[local-embed]` stack (torch, sentence-transformers) skip with an informative message when it is absent, so the core suite runs on a bare install.
+   - GPU-dependent device tests and the `bench`-marked benchmarks skip when no CUDA device is present.

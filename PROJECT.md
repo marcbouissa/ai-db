@@ -6,7 +6,7 @@ ai-db is an extensible, high-performance local code intelligence and vector inde
 
 The system is decoupled into four primary layers:
 1. **Domain & Core Engine Layer**: AST code parsing, symbol extraction, chunking, and semantic/lexical search algorithms.
-2. **Pluggable Storage Layer**: `StorageBackend` abstract protocol separating data persistence from core logic. SQLite with WAL mode, FTS5 BM25, and zlib compression as default; pluggable factory supporting external backends (MySQL 8.0+ adapter interface).
+2. **Pluggable Storage Layer**: `StorageBackend` abstract protocol separating data persistence from core logic. SQLite with WAL mode, FTS5 BM25, and zlib compression as the only shipped backend; a pluggable factory resolves a backend by connection string, so a second backend can be added without touching core search, analysis or parser logic. **SQLite is the only implemented backend** — the MySQL adapter described in the original request was scoped out and does not exist.
 3. **Transport & Dispatch Layer**: Unified `ServiceDispatcher` registering tools with JSON Schema and callable handlers. Transport adapters for CLI (`ai-db`, `vectordb`), Model Context Protocol (stdio JSON-RPC), and HTTP REST API (`ThreadingHTTPServer`).
 4. **Telemetry Subsystem**: Cross-cutting performance and token telemetry measuring query latency, token compression efficiency across 4 serialization formats (Stub vs S-Exp vs JSON vs Raw), semantic cache hit rates, and codebase weak points diagnostics.
 
@@ -40,8 +40,8 @@ The system is decoupled into four primary layers:
                      └──────────────┬──────────────────┬────────┘
                                     │                  │
                             ┌───────▼────────┐  ┌──────▼───────┐
-                            │ SQLiteBackend  │  │ MySQLBackend │
-                            │ (WAL, FTS5)    │  │  (Adapter)   │
+                            │ SQLiteBackend  │  │  (not yet     │
+                            │ (WAL, FTS5)    │  │   built)      │
                             └────────────────┘  └──────────────┘
 ```
 
@@ -50,14 +50,14 @@ The system is decoupled into four primary layers:
 |---|---------|-------------|-----------|--------|
 | 1 | Standard Packaging | `pyproject.toml` with setuptools build-backend and editable install support | M1 | R1, spec_miner |
 | 2 | Dual CLI Console Scripts | Console script entry points for both `ai-db` and `vectordb` executing `ai_db.cli:main` | M1 | R1, spec_miner |
-| 3 | Requirements Specifications | `requirements.txt` (core stdlib) and `requirements-dev.txt` (pytest, ruff, mypy) | M1 | R1, spec_miner |
-| 4 | Modular Dependency Extras | Extras `ai-db[mysql]`, `ai-db[dev]`, and `ai-db[all]` in `pyproject.toml` | M1 | R1, spec_miner |
+| 3 | Requirements Specifications | `requirements.txt` (core runtime) and `requirements-dev.txt` (pytest, ruff, mypy) | M1 | R1, spec_miner |
+| 4 | Modular Dependency Extras | Extras `ai-db[local-embed]`, `ai-db[dev]`, and `ai-db[all]` in `pyproject.toml` | M1 | R1, spec_miner |
 | 5 | Clean Environment & Gitignore | Standard `.gitignore` excluding `.venv`, `__pycache__`, `.pytest_cache`, `.db` files; untrack git binaries | M1 | R1, spec_miner |
 | 6 | StorageBackend Abstraction | Protocol / Abstract Base Class defining contracts for files, chunks, symbols, skills, contexts, state, search | M2 | R2, survey_1 |
 | 7 | Storage Domain DTOs | Typed domain data objects in `ai_db/storage/models.py` separating storage records from sqlite3.Row | M2 | R2, survey_1 |
 | 8 | High-Performance SQLite Backend | SQLite implementation with WAL mode (`PRAGMA journal_mode=WAL`), FTS5, BM25 ranking, zlib level 9 compression | M2 | R2, survey_1 |
-| 9 | StorageBackend Factory | Pluggable factory resolving backend by connection string (`sqlite:///`, `mysql://`) or environment configuration | M2 | R2, survey_1 |
-| 10 | MySQL 8.0+ Adapter Interface | Modular relational MySQL backend implementing `StorageBackend` interface with InnoDB full-text matching | M2 | R2, survey_1 |
+| 9 | StorageBackend Factory | Pluggable factory resolving a backend by connection string (`sqlite://`) or environment configuration | M2 | R2, survey_1 |
+| 10 | Backend Conformance Suite | `ai_db/storage/conformance.py` — a backend-agnostic contract suite every `StorageBackend` must pass, so a second backend can be validated when one is written | M2 | R2, survey_1 |
 | 11 | Decouple Leaked SQL Calls | Refactor direct SQL queries in indexer, query, skills, context, engine to use `StorageBackend` methods | M2 | R2, survey_1 |
 | 12 | Unified ServiceDispatcher | Centralized tool registry with JSON Schema and callable handlers for uniform cross-transport dispatch | M3 | R3, survey_2 |
 | 13 | Agnostic CLI Dispatch | CLI command suite executing via `ServiceDispatcher` with uniform error handling and JSON/text formatting | M3 | R3, survey_2 |
@@ -78,7 +78,7 @@ The system is decoupled into four primary layers:
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
 | 1 | M1: Packaging & Environment | `pyproject.toml`, `requirements.txt`, `.gitignore`, untrack `.pyc`/`.db`, setup `.venv` | none | DONE |
-| 2 | M2: Pluggable Storage Layer | `StorageBackend` ABC, DTOs, SQLite WAL refactor, Factory, MySQL adapter, decouple SQL calls | M1 | DONE |
+| 2 | M2: Pluggable Storage Layer | `StorageBackend` ABC, DTOs, SQLite WAL refactor, Factory, conformance suite, decouple SQL calls. (MySQL adapter was scoped out — see item 10.) | M1 | DONE |
 | 3 | M3: Pluggable Transports | `ServiceDispatcher`, CLI dispatch, dynamic stdio MCP server, Threaded HTTP Server | M2 | DONE |
 | 4 | M4: Performance & Telemetry | Telemetry subsystem (latency, 4-format token savings, cache hit rate, weak points), CLI/MCP/HTTP integration | M2, M3 | IN_PROGRESS (conv: bd8c6eb1-b5e8-4f12-9bc0-4712a6e53664) |
 | 5 | M5: Sanitization & Documentation | Purge `/path/to/user` across repo, write `ARCHITECTURE.md`, update `README.md`, add `LICENSE` | M1 | IN_PROGRESS (conv: 770b9db7-07a5-4a4a-a1b7-5cd7858bf6e0) |
@@ -164,8 +164,8 @@ ai-db/
 │   │   ├── backend.py          # StorageBackend ABC & protocol
 │   │   ├── models.py           # Domain DTOs
 │   │   ├── factory.py          # StorageBackendFactory
+│   │   ├── conformance.py      # backend-agnostic contract suite
 │   │   ├── sqlite_backend.py   # SQLite backend (WAL, FTS5, BM25, zlib)
-│   │   └── mysql_backend.py    # MySQL 8.0+ adapter interface
 │   ├── server/
 │   │   ├── __init__.py
 │   │   └── http_server.py      # ThreadingHTTPServer REST/JSON server

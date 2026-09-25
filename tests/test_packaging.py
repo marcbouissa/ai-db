@@ -1,7 +1,8 @@
 """Packaging and environment E2E test suite (Features 1-5).
 
 Verifies PEP 517/518/621 packaging specifications, console script entry points,
-zero-dependency core runtime, modular dependency extras, and .gitignore hygiene.
+that the core runtime dependency set is the parsing/index stack (heavy ML stays in
+the optional extra), modular dependency extras, and .gitignore hygiene.
 """
 
 import os
@@ -72,8 +73,13 @@ class TestPackagingTier1:
         )
         assert project.get("description"), "project.description must be non-empty"
 
-    def test_core_zero_runtime_dependencies(self):
-        """TC-PKG-T1-04: Core runtime deps are the parsing/index stack; ML stays optional."""
+    def test_core_runtime_dependencies_exclude_heavy_ml(self):
+        """TC-PKG-T1-04: Core runtime deps are the parsing/index stack; ML stays optional.
+
+        The core is NOT zero-dependency -- it requires tree-sitter, sqlite-vec,
+        tiktoken, watchfiles and numpy. What is asserted here is the constraint that
+        actually matters: torch and sentence-transformers must stay in the optional
+        local-embed extra, so a bare install and the test suite stay small."""
         pyproject = load_pyproject()
         dependencies = pyproject.get("project", {}).get("dependencies", None)
         names = {re.split(r"[<>=~!\[ ]", d, maxsplit=1)[0].lower() for d in dependencies}

@@ -8,7 +8,7 @@
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type%20checked-mypy-informational.svg)](http://mypy-lang.org/)
 
-A high-speed, zero-dependency local code intelligence engine, vector database, and AST analyzer designed specifically for AI coding assistants (such as Claude Desktop, Cursor, Google Antigravity, and autonomous coding agents) to **instantly recall codebase architecture, symbols, files, and session memories with 80%–95% token savings without repetitive codebase re-analysis on every chat**.
+A high-speed, self-contained local code intelligence engine, vector database, and AST analyzer designed specifically for AI coding assistants (such as Claude Desktop, Cursor, Google Antigravity, and autonomous coding agents) to **instantly recall codebase architecture, symbols, files, and session memories with 80%–95% token savings without repetitive codebase re-analysis on every chat**.
 
 ---
 
@@ -18,6 +18,10 @@ A high-speed, zero-dependency local code intelligence engine, vector database, a
 - [Key Features](#key-features)
 - [Architecture at a Glance](#architecture-at-a-glance)
 - [Installation & Quickstart](#installation--quickstart)
+  - [GPU acceleration (optional)](#gpu-acceleration-optional)
+  - [Configuration (required)](#configuration-required)
+  - [One-call analysis for agents (`ai-db investigate`)](#one-call-analysis-for-agents-ai-db-investigate)
+  - [Measuring retrieval quality](#measuring-retrieval-quality)
 - [CLI Commands Reference](#cli-commands-reference)
   - [1. Code Health & Syntax Pre-Flight (`check`)](#1-code-health--syntax-pre-flight-ai-db-check)
   - [2. Exact Symbol Definition Resolution (`symbol`)](#2-exact-symbol-definition-resolution-ai-db-symbol)
@@ -38,6 +42,7 @@ A high-speed, zero-dependency local code intelligence engine, vector database, a
   - [Cursor IDE Configuration](#cursor-ide-configuration)
   - [Google Antigravity Configuration](#google-antigravity-configuration)
   - [MCP Tools Reference](#mcp-tools-reference)
+    - [Progress notifications](#progress-notifications)
 - [HTTP REST API Reference](#http-rest-api-reference)
 - [Token Optimization Benchmarks](#token-optimization-benchmarks)
 - [Project Scoping & Multi-Repo Access](#project-scoping--multi-repo-access)
@@ -211,10 +216,29 @@ or `~/.config/ai-db/config.json` (first match). Sections:
 | Section | Values |
 |---|---|
 | `storage.provider` | `sqlite` (built in) or any installed `ai_db.storage` plugin; `storage.options` go to the plugin |
+| `storage.options.path` | SQLite file path; `null` uses the platform default location |
+| `storage.options.vector_index` | `exact` (default) or `vec0`. `vec0` runs the KNN in sqlite-vec's C loop instead of a Python loop — **not** an ANN index, so it is a constant-factor win, not an asymptotic one. See the caveat below before expecting a large speedup. |
 | `retrieval.mode` | `lexical` or `hybrid` (hybrid requires an embedding provider and a `vector`-capable backend) |
+| `retrieval.doc_weight` | `0.0`–`1.0`. Weight of file-level documentation chunks (module headers, markdown sections) against code chunks. `0.5` by default |
+| `index.ignore` | Glob patterns excluded from indexing. Defaults to `[".agents/**"]` |
+| `index.doc_weight` | Per-index counterpart of `retrieval.doc_weight` |
 | `embedding.provider` | `none`, `sentence_transformers`, `openai_compatible`, `voyage`, or an `ai_db.embedding` plugin |
+| `embedding.device` | `cpu` or `cuda`. `ai-db init` auto-detects; `cuda` on a machine without a usable GPU is a hard error, never a silent downgrade |
+| `embedding.batch_size` | Documents per forward pass. Raise it on a GPU with VRAM to spare |
 | `rerank.provider` | `none`, `sentence_transformers`, `voyage`, `cohere`, or an `ai_db.rerank` plugin |
+| `rerank.top_n` | How many candidates the reranker re-scores. Default `10` |
 | `access.cross_project` | `{"project": ["other-project", ...]}` read access grants |
+
+Config files are versioned (`"version": 2`). `ai-db init --migrate` converts an
+unversioned or v1 file in place; a v1 file loaded without migrating is rejected
+with a message pointing at that command rather than being silently reinterpreted.
+
+> **`vec0` is not an ANN index.** sqlite-vec's `vec0` KNN is a brute-force scan, so
+> query time still grows linearly with corpus size. Measured on 100k x 1024
+> normalized vectors, `vec0` is ~1.5x faster than the exact path with recall@10 of
+> exactly 1.000. Choose it for the constant factor and for metadata pruning; do not
+> expect order-of-magnitude gains. Reproduce with
+> `uv run pytest tests/test_bench_vectors.py -m bench -q -s`.
 
 Model names are only ever read from the config. `ai-db init` writes suggested models
 (see `ai_db/embed/defaults.py`) with a `_note` to verify them on MTEB-Code/CoIR.
@@ -223,24 +247,73 @@ read their API key from the environment variable named in `api_key_env`.
 
 ### One-call analysis for agents (`ai-db investigate`)
 
+| Mode | Question it answers | What it adds |
+|---|---|---|
+| `locate` | "where is X?" | the best matching chunks and nothing else |
+| `explain` | "how does X work?" | callees, owning class, covering tests, and the direct callers that show how the code is entered |
+| `impact` | "what breaks if X changes?" | transitive callers up to the configured depth, plus the tests that would catch it |
+| `flow` | "what order does this run in?" | the call-flow trace from the most entry-like seed |
+| `diff` | "what does this change touch?" | seeds from `git diff <since>`, plus the callers of every changed symbol — the review surface of a change |
+
 ```bash
 ai-db investigate "how are search results ranked"            # mode: explain
 ai-db investigate "search_chunks" --mode impact --budget 6000
 ai-db investigate "where is the config validated" --mode locate
+ai-db investigate --mode diff --since HEAD~1                 # review the working tree vs a ref
+ai-db investigate --mode diff --since main...feature/x      # a range works too
 ```
+
+`diff` mode reads `git diff --unified=0`, so the seeds are the symbols whose line
+spans the diff actually touches. The pack adds a `changes` array with the changed
+spans themselves. It raises a clear error rather than returning an empty pack if
+`--since` is missing or the path is not a git repository — an empty pack would read
+as "nothing to review" instead of "I could not look". Note that `git diff <ref>`
+also spans *uncommitted* work; pass a range (`<a>..<b>`) to review committed history
+only.
 
 Returns a JSON evidence pack under the token budget: entry points with reasons, full
 bodies of the best matches, stubs + `ref:` handles (`ai-db expand`) for classes, callees,
 callers and covering tests, the call graph, recent commits and unresolved names. Also
 available as the `investigate` MCP tool and `POST /investigate`.
 
+Over MCP, a `tools/call` that carries `params._meta.progressToken` streams
+`notifications/progress` frames while a long `sync` runs, so indexing a large
+repository does not look like a hang. Clients that do not ask for progress get
+nothing extra.
+
 ### Measuring retrieval quality
 
 ```bash
-ai-db eval --golden eval/golden/ai_db.jsonl --root . --baseline eval/results/lexical.json
-ai-db eval --pack --golden eval/golden/ai_db_pack.jsonl --root .
+# Retrieval quality: recall@k, MRR, nDCG against a golden query set
+ai-db eval --golden eval/golden/ai_db.jsonl --root . --baseline eval/baseline.json
+
+# Investigation packs: does the pack actually contain the expected symbol?
+ai-db eval --pack --golden eval/golden/ai_db_pack.jsonl --root . \
+  --baseline eval/baseline_pack.json
+
+# Polyglot coverage (TypeScript, Go, Rust) -- needs --all-files
+ai-db eval --pack --golden eval/golden/polyglot_pack.jsonl \
+  --root tests/fixtures/polyglot --all-files --baseline eval/baseline_pack_polyglot.json
+
+# Diff-mode packs. Pins commit ranges, so it needs the full history and is
+# deliberately not a CI gate; run it locally after a change to ranking.
+ai-db eval --pack --golden eval/golden/ai_db_diff.jsonl --root . --all-files
+
+# Skill routing: top-1 accuracy over a prompt -> skill golden set.
+# NOTE: skills must already be indexed, or this reports skills_indexed: 0 and
+# top1_accuracy: 0.0 without explaining why. Sync the skill dirs first.
+AI_DB_SKILL_DIRS=tests/fixtures/skills ai-db sync tests/fixtures/skills
+AI_DB_SKILL_DIRS=tests/fixtures/skills ai-db eval --skills --golden eval/golden/skills.jsonl
+# -> {"queries": 20, "skills_indexed": 5, "top1_accuracy": 1.0}
+
 ai-db log --slow 500        # slow queries with per-stage latency
 ```
+
+Passing `--baseline` makes the command a regression gate: it exits non-zero if the
+measured recall drops more than the tolerance in the baseline file, so CI fails on
+a quality regression rather than only on a crash. Recorded results live in
+`eval/results/`, and the numbers each baseline was measured at are in the
+`_note` field alongside it.
 
 ---
 
@@ -410,7 +483,7 @@ Codebase Weak Points: 0 syntax errors, 2 complexity hotspots
 ---
 
 ### 10. HTTP REST API Server (`ai-db serve`)
-Launches the zero-dependency built-in HTTP server:
+Launches the built-in HTTP server (standard library only, no web framework to install):
 
 ```bash
 ai-db serve --port 8765 --host 127.0.0.1
@@ -589,18 +662,44 @@ Add `ai-db` to `~/.gemini/antigravity/mcp_config.json` or project MCP settings:
 ```
 
 ### MCP Tools Reference
- 
+
+Every tool below is also reachable from the CLI and over HTTP, so an agent can use
+whichever transport it already has.
+
 | MCP Tool | Description | Key Arguments |
 |---|---|---|
-| `analyze` | Multi-depth AST analysis with token budgeting | `targets`, `depth`, `q`, `focus`, `span`, `format` |
-| `expand` | Progressive disclosure of `ref:hash` handles | `ref`, `depth`, `span` |
-| `locate` | Natural language concept and symbol search | `query`, `scope`, `k`, `format` |
-| `context_save` | Save chat state, active files, and tasks | `session_id`, `summary`, `title`, `active_files`, `open_tasks` |
-| `context_recall` | Recall chat checkpoint or search past memories | `session_id`, `query` |
-| `optimize` | Compact FTS5 index, vacuum DB, set default format | `prune_missing`, `default_format` |
-| `telemetry` | Retrieve performance and token efficiency metrics | `json` |
-| `trace` | Chronological call flow from entry point (symbol, file:line, script) | `entry`, `direction`, `depth`, `max_nodes`, `format`, `with_code`, `include_tests` |
- 
+| `investigate` | **Start here.** One ranked evidence pack for a question, instead of many grep/read calls. `mode` selects `locate` / `explain` / `impact` / `flow` / `diff` | `query`, `mode`, `since`, `root`, `budget_tokens`, `project`, `allow_project`, `languages`, `chunk_types`, `modified_since` |
+| `query` | Ranked chunk search (BM25, or hybrid with vectors) | `query`, `top`, `project`, `allow_project`, `languages`, `chunk_types`, `modified_since` |
+| `locate` | Natural language concept and symbol search with snippet spans | `query`, `scope`, `k`, `format` |
+| `symbol` | Exact symbol lookup (classes, functions, methods) with file and line | `name`, `project`, `allow_project` |
+| `outline` | Top-level class and function signatures of one file | `path` |
+| `analyze` | Token-optimized AST inspection with progressive depth control | `targets`, `depth`, `q`, `focus`, `span`, `ctx_lines`, `since`, `max_out`, `cursor`, `format`, `no_cache` |
+| `expand` | Progressive disclosure of a `ref:hash` handle | `ref`, `depth`, `span` |
+| `callers` | All call sites and references to a symbol | `name`, `project`, `allow_project` |
+| `trace` | Chronological call flow from an entry point | `entry`, `direction`, `depth`, `max_nodes`, `include_tests`, `format`, `with_code`, `project`, `allow_project` |
+| `check` | Syntax pre-flight with line/column on failure | `path`, `project`, `allow_project` |
+| `diff` | Changed line spans in a file since the last snapshot or a git ref | `path`, `since` |
+| `todos` | TODO, FIXME, HACK and NOTE annotations across indexed files | `kind`, `filepath`, `project` |
+| `sync` | Scan a directory or file; update symbols, chunks and the FTS5 index | `path`, `project`, `verbose` |
+| `sync_skills` | Scan and index `SKILL.md` definitions from directories | `skill_dirs`, `project` |
+| `route_skill` | Route a user prompt to matching skills (lexical + vector) | `prompt`, `top`, `min_confidence`, `project` |
+| `context_save` | Persist conversation memory, active files, tasks, architecture notes | `session_id`, `summary`, `title`, `active_files`, `open_tasks`, `notes`, `project` |
+| `context_recall` | Recall session context and decisions across past conversations | `session_id`, `query`, `project` |
+| `status` | Database health metrics and entity counts | — |
+| `optimize` | Defragment the DB, merge FTS5 B-trees, update the query cache | `prune_missing`, `default_format` |
+| `prune` | Drop records for deleted or missing files | — |
+| `telemetry` | Latency percentiles and token-compression efficiency | `reset`, `detail` |
+
+#### Progress notifications
+
+A `tools/call` that carries `params._meta.progressToken` gets
+`notifications/progress` frames streamed on stdout while the tool runs — most
+usefully for `sync` on a large repository, which otherwise looks like a hang.
+Updates are emitted at the first file, every 50th, and the last, each with
+`progress`, `total` and a `message` naming the file. A client that does not send a
+`progressToken` receives nothing extra, and progress is scoped to the call: it is
+detached afterwards, so a later call cannot report through it.
+
 ---
 
 ## HTTP REST API Reference

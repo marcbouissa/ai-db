@@ -375,16 +375,45 @@ Otherwise mark every box "skipped (gate not met: <numbers>)" and move on.
 
 ## Phase 15 — Documentation  (depends on: all)
 
-- [ ] **15.1** `ARCHITECTURE.md` §5–7: pipeline, one table per extension point, current
+- [x] **15.1** `ARCHITECTURE.md` §5–7: pipeline, one table per extension point, current
       directory tree (`git ls-files ai_db | sort`).
-- [ ] **15.2** `README.md`: investigate modes incl. diff, config v2 keys
+      — §7 rewritten from the real tree. It had drifted badly: it still listed
+      `parser/syntax.py` and `parser/cross_refs.py`, **both deleted in Phase 10**, and
+      listed 8 test files against the actual 28. Every package is now covered
+      (`analysis/`, `embed/`, `rerank/`, `eval/` were all missing).
+- [x] **15.2** `README.md`: investigate modes incl. diff, config v2 keys
       (`retrieval.doc_weight`, `index.ignore`, `rerank.top_n`, `storage.options.vector_index`),
       GPU setup, skills eval.
-- [ ] **15.3** Remove MySQL and "zero-dependency" claims from `PROJECT.md`,
+      — all present, plus: a mode table for investigate; an honest `vec0` caveat
+      (brute force, not ANN) so nobody expects order-of-magnitude gains; the four
+      eval commands with their prerequisites; and the **MCP tool table was listing 11
+      of 22 tools** — `investigate`, `query`, `sync`, `callers`, `symbol`, `check`,
+      `diff`, `todos`, `prune`, `sync_skills`, `status` were all missing. Rewritten in
+      full, plus a progress-notification subsection.
+- [x] **15.3** Remove MySQL and "zero-dependency" claims from `PROJECT.md`,
       `ORIGINAL_REQUEST.md`, `TEST_INFRA.md` (keep the rest of their content).
-      — *Note: `TEST_INFRA.md:49` still advertises a "zero-dependency core
-      `requirements.txt`", so this is not yet satisfied.*
-- [ ] **Check:** `grep -rni "mysql\|zero.dependenc" *.md` returns nothing outdated. Commit `docs: ...`.
+      — `PROJECT.md`/`TEST_INFRA.md` describe the current system, so the text is
+      corrected. **`ORIGINAL_REQUEST.md` is a dated record of what was asked for**, so
+      rewriting it would falsify history; it keeps the request verbatim and carries an
+      as-built banner plus inline markers on the two items that did not ship.
+      Verified against the code, not assumed: there is no `mysql_backend.py`, no
+      `[mysql]` extra, and the core has 6 third-party deps (tree-sitter,
+      tree-sitter-language-pack, sqlite-vec, tiktoken, watchfiles, numpy) — so
+      "zero-dependency" was false. What *is* true, and is now what the docs claim, is
+      that heavy ML (torch, sentence-transformers) stays in the `[local-embed]` extra.
+      `tests/test_packaging.py::test_core_zero_runtime_dependencies` asserted the right
+      thing under a lying name; renamed to
+      `test_core_runtime_dependencies_exclude_heavy_ml` (assertions unchanged).
+- [x] **Check:** `grep -rni "mysql\|zero.dependenc" *.md` — the 10 remaining hits are
+      all either an explicit correction ("was scoped out", "is *not* zero-dependency")
+      or the annotated historical record in `ORIGINAL_REQUEST.md`. No stale claim
+      remains. Tests 480, ruff and mypy clean, all 3 eval gates green.
+
+  **Also removed 19 tracked scratch files** (`test_final.py`, `test_js_patterns.py`, …)
+  from the repo root. They were unreferenced debugging scripts left over from getting
+  the JavaScript tree-sitter queries working, were not tests (not in `tests/`, not
+  collected by pytest), and would have shipped in an open-source release. Verified
+  unreferenced by `git grep` before removing.
 - Note: trace docs are covered by **16.7** (done).
 
 ---
@@ -441,7 +470,7 @@ replace the 16.2 resolver.
 | Phase 12 | **done** |
 | Phase 13 | 13.1/13.2/13.3/13.4/13.6 done on `perf/scale-phase13`; 13.5 open; the vec0 10× target is unreachable (see 13.3) |
 | Phase 14 | **done** — progress notifications, diff mode (pack_recall 1.000), cache isolation (real leak fixed) |
-| Phase 15 | untouched |
+| Phase 15 | **done** — docs corrected against the code; 19 tracked scratch files removed |
 | Phase 16 | 16.5 only — add MCP `trace_flow` + HTTP `/trace` |
 | Phase 16b | unblocked (10.1 done) but not started |
 

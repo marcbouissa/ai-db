@@ -159,7 +159,7 @@ class StorageBackend(ABC):
 ```
 
 ### 3.3 Default SQLite Backend (`SQLiteBackend`)
-The default engine (`ai_db/storage/sqlite_backend.py`) provides zero-dependency persistence:
+The default engine (`ai_db/storage/sqlite_backend.py`) provides embedded persistence with no server to run:
 - **Write-Ahead Logging (WAL)**: `PRAGMA journal_mode=WAL` enables concurrent readers alongside writers without mutual locking.
 - **FTS5 Full-Text Indexing**: Fast BM25 keyword matching across code tokens and skill documentation.
 - **zlib Level 9 Compression**: Code chunks are compressed into binary blobs (`zcontent`) upon insertion and decompressed transparently on retrieval, saving 60–80% disk space.
@@ -438,9 +438,10 @@ The telemetry subsystem (`ai_db/telemetry/`) provides non-intrusive, zero-overhe
 ## 7. Repository Directory Breakdown
 
 ```
+```
 ai-db/
 ├── pyproject.toml              # PEP 517/518 build config, metadata, console scripts, extras
-├── requirements.txt            # Zero third-party runtime dependencies (-e .)
+├── requirements.txt            # Core runtime install (-e .)
 ├── requirements-dev.txt        # Development dependencies (-e .[dev])
 ├── LICENSE                     # MIT Open-Source License
 ├── README.md                   # Public user guide, quickstart, MCP setup, CLI reference
@@ -450,13 +451,19 @@ ai-db/
 ├── watch_sync.sh               # Portable filesystem auto-sync script
 │
 ├── ai_db/                      # Core package
-│   ├── __init__.py             # Package version, constants, and VectorDB facade
+│   ├── __init__.py             # VectorDB facade: the object the transports hold
 │   ├── cli.py                  # CLI argument parsing, subcommands, output formatting
 │   ├── dispatcher.py           # Unified ServiceDispatcher tool registry
-│   ├── constants.py            # Environment-aware paths, defaults, ignore patterns
-│   ├── utils.py                # Hashing, tokenization, project detection utilities
-│   ├── logger.py               # Standardized logging utilities
+│   ├── config.py               # AppConfig loading and validation (CONFIG_VERSION = 2)
+│   ├── config_template.py      # Fresh-config builder and v1 -> v2 migration
+│   ├── constants.py            # All tunable numbers, per TODO rule 5
+│   ├── device.py               # torch device resolution for embed/rerank
+│   ├── errors.py               # The project's exception types
+│   ├── health.py               # Health and readiness reporting
+│   ├── http_client.py          # HTTP transport client
 │   ├── ignorer.py              # Gitignore and path exclusion rules
+│   ├── logger.py               # Standardized logging utilities
+│   ├── utils.py                # Hashing, tokenization, project detection utilities
 │   ├── watcher.py              # File change polling and watch daemon
 │   │
 │   ├── storage/                # Pluggable storage layer
@@ -464,25 +471,57 @@ ai-db/
 │   │   ├── backend.py          # StorageBackend ABC contract
 │   │   ├── models.py           # Strongly typed slots=True domain DTOs
 │   │   ├── factory.py          # StorageBackendFactory (URI & connection resolution)
-│   │   ├── sqlite_backend.py   # SQLite backend (WAL mode, FTS5, BM25, zlib compression)
-│   │   ├── conformance.py      # Contract tests for third-party backends
+│   │   ├── sqlite_backend.py   # SQLite backend (WAL, FTS5, BM25, zlib, vec0)
+│   │   ├── conformance.py      # Backend-agnostic contract suite
 │   │   ├── database.py         # Backward-compatible Database wrapper
 │   │   └── state.py            # Session state persistence helpers
 │   │
-│   ├── parser/                 # Pure AST traversal & syntax analysis
+│   ├── parser/                 # Tree-sitter parsing, symbols and chunking
 │   │   ├── __init__.py         # Parser exports
-│   │   ├── syntax.py           # Syntax validator via ast.parse
-│   │   ├── ast_visitor.py      # Symbol extraction and outline extraction
-│   │   ├── chunker.py          # AST-based code block chunker
+│   │   ├── ts_graph.py         # extract_graph: symbols, cross-refs, syntax errors
+│   │   ├── queries/            # One .scm per language (9 languages)
+│   │   ├── ast_visitor.py      # Non-tree-sitter outline extraction
+│   │   ├── chunker.py          # Tree-sitter-backed code block chunker
 │   │   ├── annotations.py      # Inline annotation scanner (TODO, FIXME, HACK)
-│   │   ├── cross_refs.py       # Function caller and import reference extraction
 │   │   └── linters.py          # Multi-language external linter runners
 │   │
 │   ├── search/                 # Search orchestration & ranking
 │   │   ├── __init__.py         # Search exports
-│   │   ├── indexer.py          # File discovery, SHA-256 change detection, pruning
-│   │   ├── query.py            # BM25 chunk search and exact symbol resolution
-│   │   └── skills.py           # Assistant skill routing and BM25 matcher
+│   │   ├── indexer.py          # Incremental indexer, post-sync hooks, progress
+│   │   ├── retriever.py        # Retrieval stages and snippet generation
+│   │   ├── query.py            # QueryEngine: lexical / hybrid / vector
+│   │   ├── query_builder.py    # SQL construction for the FTS and vector paths
+│   │   ├── ranking.py          # Score fusion, RRF, exact-symbol boost
+│   │   ├── cache.py            # Query cache keys and generation invalidation
+│   │   └── skills.py           # SKILL.md parsing and skill routing
+│   │
+│   ├── analysis/               # Investigation packs and call-flow tracing
+│   │   ├── __init__.py         # Analysis exports
+│   │   ├── investigate.py      # Investigator: locate/explain/impact/flow/diff packs
+│   │   ├── pack.py             # InvestigationPack / EntryPoint / Evidence DTOs
+│   │   ├── resolve.py          # Qualified-name resolver
+│   │   ├── trace.py            # TraceEngine: call-flow execution order
+│   │   └── trace_format.py     # text / json / mermaid trace renderers
+│   │
+│   ├── embed/                  # Embedding providers
+│   │   ├── __init__.py         # Embed exports
+│   │   ├── base.py             # EmbeddingProvider protocol
+│   │   ├── registry.py         # Provider resolution
+│   │   ├── st_provider.py      # sentence-transformers (the [local-embed] extra)
+│   │   ├── hosted.py           # Hosted embedding API providers
+│   │   ├── indexing.py         # Bulk vector backfill
+│   │   └── defaults.py         # Suggested model / weight defaults
+│   │
+│   ├── rerank/                 # Reranking providers
+│   │   ├── __init__.py         # Rerank exports
+│   │   ├── base.py             # RerankProvider protocol
+│   │   ├── registry.py         # Provider resolution
+│   │   └── providers.py        # Cross-encoder rerankers
+│   │
+│   ├── eval/                   # Offline evaluation harness
+│   │   ├── __init__.py         # Eval exports
+│   │   ├── harness.py          # Golden-set runners (retrieval, pack, skills)
+│   │   └── metrics.py          # recall@k, MRR, nDCG, RRF, LCS order accuracy
 │   │
 │   ├── analyzer/               # Token-optimized progressive disclosure
 │   │   ├── __init__.py         # Analyzer exports
@@ -500,20 +539,46 @@ ai-db/
 │   │
 │   └── telemetry/              # Performance & token telemetry
 │       ├── __init__.py         # Telemetry exports
-│       ├── tracker.py          # TelemetryTracker collection coordinator
-│       ├── metrics.py          # Latency percentiles & token savings aggregators
-│       └── diagnostics.py      # Codebase weak points diagnostic analyzer
+│       ├── stages.py           # Per-stage timing attribution
+│       └── tracker.py          # TelemetryTracker collection coordinator
 │
-└── tests/                      # 4-Tier automated test suite
-    ├── conftest.py             # Shared fixtures (isolated DBs, temp workspaces)
-    ├── test_packaging.py       # Features 1-5: Packaging, entry points, extras, gitignore
-    ├── test_storage.py         # Features 6-11: StorageBackend, SQLite, Factory, DTOs
-    ├── test_transports.py      # Features 12-15: CLI, MCP, HTTP REST, ServiceDispatcher
-    ├── test_telemetry.py       # Features 16-20: Latency, token compression, cache, weak points
-    ├── test_parser.py          # AST parser, chunker, outlines, syntax diagnostics
-    ├── test_search.py          # Incremental indexing, BM25 ranking, skill routing
-    └── test_sanitization.py    # Features 5, 21: Zero personal paths, hygiene audit
+├── tests/                      # Automated test suite
+│   ├── conftest.py             # Hermetic isolation fixtures and CLI runner
+│   ├── fake_providers.py       # Deterministic embedding/rerank stand-ins
+│   ├── test_packaging.py       # Packaging, entry points, extras, gitignore
+│   ├── test_storage.py         # StorageBackend, SQLite, Factory, DTOs
+│   ├── test_storage_conformance.py  # Backend-agnostic contract suite
+│   ├── test_storage_adversarial_m2.py # Adversarial storage cases
+│   ├── test_transports.py      # CLI, MCP, HTTP REST, ServiceDispatcher
+│   ├── test_telemetry.py       # Latency, token compression, cache, weak points
+│   ├── test_parser.py          # Parsing, outlines, syntax diagnostics, chunking
+│   ├── test_ts_graph.py        # Tree-sitter queries for all 9 languages
+│   ├── test_chunker_ts.py      # Tree-sitter-backed chunking
+│   ├── test_search.py          # Incremental indexing, BM25 ranking, skill routing
+│   ├── test_lexical.py         # Lexical-only retrieval paths
+│   ├── test_investigate.py     # Investigation packs, modes, budgets
+│   ├── test_config.py          # Config v2 validation and migration
+│   ├── test_embeddings.py      # Embedding providers and vector search
+│   ├── test_rerank.py          # Rerank providers
+│   ├── test_cache_watch.py     # Query cache and file watcher
+│   ├── test_observability.py   # Health and telemetry surfaces
+│   ├── test_eval_metrics.py    # Eval harness and baseline comparison
+│   ├── test_sanitization.py    # Zero personal paths, hygiene audit
+│   ├── test_phase11.py         # Config migration, skills, context vectors
+│   ├── test_phase13.py         # Device resolution, write lock, incremental centrality
+│   ├── test_phase14.py         # MCP progress, diff mode, cache isolation
+│   ├── test_bench_index.py     # Indexer benchmark (marked `bench`)
+│   ├── test_bench_vectors.py   # exact vs vec0 vector benchmark (marked `bench`)
+│   └── test_bench_gpu.py       # CPU vs CUDA embedding benchmark (marked `bench`)
+│
+├── eval/                       # Golden sets, baselines and recorded results
+│   ├── golden/                 # Query sets per eval kind
+│   ├── baseline*.json          # CI regression gates
+│   └── results/                # Recorded measurements
+│
+└── .github/workflows/ci.yml    # pytest, ruff, mypy and the eval gates
 ```
+
 
 ---
 
@@ -551,28 +616,41 @@ vectordb --help
   ```bash
   mypy ai_db
   ```
-- **Zero-Dependency Constraint**: No third-party packages may be added to `project.dependencies` in `pyproject.toml`. Core capabilities must remain pure standard library. Optional dependencies must belong to `[project.optional-dependencies]`.
+- **Heavy-ML Dependency Constraint**: The core may depend on the parsing and index
+  stack (`tree-sitter`, `tree-sitter-language-pack`, `sqlite-vec`, `tiktoken`,
+  `watchfiles`, `numpy`) — the core is *not* zero-dependency. What is forbidden in
+  `project.dependencies` is heavy ML (`torch`, `sentence-transformers`): those belong in
+  `[project.optional-dependencies].local-embed`, so a bare install stays small and the
+  whole test suite runs without torch. Enforced by
+  `tests/test_packaging.py::test_core_runtime_dependencies_exclude_heavy_ml`.
 
 ### 8.4 Running the Test Suite
-The automated test suite uses `pytest` and is organized into 4 tiers:
+The suite uses `pytest` and runs without torch installed; tests needing the
+`[local-embed]` stack or a CUDA device skip with an explanatory reason.
 ```bash
-# Run entire test suite
-pytest
+# Entire test suite
+uv run pytest
 
-# Run specific subsystem tests
-pytest tests/test_packaging.py
-pytest tests/test_storage.py
-pytest tests/test_transports.py
-pytest tests/test_telemetry.py
-pytest tests/test_sanitization.py
+# Specific subsystem
+uv run pytest tests/test_storage.py
+uv run pytest tests/test_transports.py
+uv run pytest tests/test_ts_graph.py
 
-# Run with test coverage
-pytest --cov=ai_db --cov-report=term-missing
+# Benchmarks are marked `bench` and deselected by default
+uv run pytest tests/test_bench_vectors.py -m bench -q -s
+uv run pytest tests/test_bench_gpu.py -m bench -q -s
+
+# Lint and type-check exactly as CI runs them
+uv run ruff check ai_db tests --exclude token_benchmark.py
+uv run mypy ai_db mcp_server.py
+
+# Coverage
+uv run pytest --cov=ai_db --cov-report=term-missing
 ```
 
 ### 8.5 Pull Request & Hygiene Checklist
 Before opening a pull request:
-1. Ensure all tests pass (`pytest`).
+1. Ensure all tests pass (`uv run pytest`), plus `ruff check` and `mypy` — CI gates on all three.
 2. Run the sanitization audit to confirm zero leaked machine paths:
    ```bash
    pytest tests/test_sanitization.py
