@@ -368,8 +368,10 @@ hybrid on CPU/GPU vs vec0 vs rerank), the output-mode cost table, the
 per-feature cold/warm latency table and the token-cost comparison live in
 [`eval/results/`](eval/results/) — see
 [BENCHMARKS.md](eval/results/BENCHMARKS.md),
-[FEATURE_BENCHMARK.md](eval/results/FEATURE_BENCHMARK.md) and
-[TOKEN_BUDGET.md](eval/results/TOKEN_BUDGET.md).
+[FEATURE_BENCHMARK.md](eval/results/FEATURE_BENCHMARK.md),
+[TOKEN_BUDGET.md](eval/results/TOKEN_BUDGET.md) and
+[MODES.md](docs/MODES.md) — the last being a generated reference to every mode
+ai-db exposes, kept honest by `tests/test_modes_table.py`.
 
 ### What it costs, and what it saves
 
