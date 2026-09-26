@@ -34,7 +34,7 @@ A high-speed, self-contained local code intelligence engine, vector database, an
   - [9. Performance & Token Telemetry (`telemetry`)](#9-performance--token-telemetry-ai-db-telemetry)
   - [10. Codebase Synchronization (`sync`, `sync-all`, `watch`)](#10-codebase-synchronization-ai-db-sync-sync-all-watch)
   - [11. Smart Skill Routing (`route-skill`)](#11-smart-skill-routing-ai-db-route-skill)
-  - [12. Code Insights (`callers`, `diff`, `todos`)](#12-code-insights-ai-db-callers-diff-todos)
+  - [12. Code Insights (`callers`, `diff`, `todos`, `trace`)](#12-code-insights-ai-db-callers-diff-todos-trace)
   - [13. Database Maintenance (`optimize`, `status`, `prune`)](#13-database-maintenance-ai-db-optimize-status-prune)
 - [Model Context Protocol (MCP) Server](#model-context-protocol-mcp-server)
   - [Claude Desktop Configuration](#claude-desktop-configuration)
@@ -226,11 +226,26 @@ or `~/.config/ai-db/config.json` (first match). Sections:
 | `embedding.dtype` | `float32`, `bfloat16` or `float16`. **Omit it** (recommended) and ai-db probes the hardware and picks. See below. |
 | `rerank.provider` | `none`, `sentence_transformers`, `voyage`, `cohere`, or an `ai_db.rerank` plugin |
 | `rerank.top_n` | How many candidates the reranker re-scores. Default `10` |
+| `rerank.model`, `rerank.device` | Required for `rerank.provider: sentence_transformers`. **Siblings of `provider`, not nested under `options`** — same shape as `embedding` |
 | `access.cross_project` | `{"project": ["other-project", ...]}` read access grants |
+| `auto_sync_paths` | Directories synced on startup. `[]` by default |
+| `trace.wait_patterns` | Extra call-flow trace wait patterns, replacing the defaults |
+| `trace.wait_patterns_extend` | Extra wait patterns, *added* to the defaults. Usually what you want |
+| `version` | `2`. Written by `ai-db init`; a v1 file is rejected with a pointer to `ai-db init --migrate` |
 
 Config files are versioned (`"version": 2`). `ai-db init --migrate` converts an
 unversioned or v1 file in place; a v1 file loaded without migrating is rejected
 with a message pointing at that command rather than being silently reinterpreted.
+
+Provider options are always **siblings of `provider`**, in both the `embedding`
+and `rerank` sections — never nested under an `options` key:
+
+```jsonc
+{ "embedding": { "provider": "sentence_transformers",
+                 "model": "...", "device": "cpu", "batch_size": 8 } }
+{ "rerank":    { "provider": "sentence_transformers", "top_n": 10,
+                 "model": "...", "device": "cpu" } }
+```
 
 > **`embedding.dtype` is chosen by measurement, and the default is a lie in a
 > checkpoint.** Most modern embedding models ship in `bfloat16`. That is correct on a
@@ -293,10 +308,22 @@ as "nothing to review" instead of "I could not look". Note that `git diff <ref>`
 also spans *uncommitted* work; pass a range (`<a>..<b>`) to review committed history
 only.
 
-Returns a JSON evidence pack under the token budget: entry points with reasons, full
+Returns an evidence pack under the token budget: entry points with reasons, full
 bodies of the best matches, stubs + `ref:` handles (`ai-db expand`) for classes, callees,
-callers and covering tests, the call graph, recent commits and unresolved names. Also
-available as the `investigate` MCP tool and `POST /investigate`.
+callers and covering tests, the call graph, recent changes and unresolved names. The
+pack decides per item whether the budget affords a body or a stub, and reports the rest
+as omitted. Also available as the `investigate` MCP tool.
+
+`--format` picks the output style. `json` (indented) is the default so existing
+tooling keeps working; the others are what you want when an agent is going to *read*
+the pack rather than parse it:
+
+| `--format` | Size vs json | Use it for |
+|---|---|---|
+| `json` | 1.00× | programs parsing the result |
+| `compact` | 0.82× | the same data on one line; also stops the pack overrunning its own budget |
+| `stub` | **0.11×** | an agent: the ranked answer, its `why` provenance, and the graph edges, with bodies one `ai-db expand <ref>` away |
+| `sexp` | 0.09× | navigating the structure without JSON's key noise |
 
 Over MCP, a `tools/call` that carries `params._meta.progressToken` streams
 `notifications/progress` frames while a long `sync` runs, so indexing a large
@@ -419,10 +446,7 @@ ai-db query "sqlite fts5 bm25 ranking" --top 5
 Multi-depth AST code inspection designed for minimal token overhead:
 
 ```bash
-# Outline signatures only (<= 10% of raw file tokens)
-ai-db analyze src/services/auth.py --depth summary
-
-# AST structure with class methods and types
+# AST structure with class methods and types (the default)
 ai-db analyze src/services/auth.py --depth structure
 
 # Targeted: extract bodies only matching a question or concept filter
@@ -431,9 +455,24 @@ ai-db analyze src/services/auth.py -q "token expiration check" --depth targeted
 # Range target: lines 50 to 90 with 5 lines surrounding context
 ai-db analyze src/services/auth.py --span 50:90 --ctx 5
 
-# Select serialization format: stub (code skeleton), sexp (S-expression), or json
-ai-db analyze src/services/auth.py --depth summary --fmt stub
+# Serialization: stub, sexp, outline, prose, json
+ai-db analyze src/services/auth.py --fmt stub
 ```
+
+> `--depth summary` exists but is **not** a cheaper mode: measured across files it
+> produces byte-identical output to `--depth structure` (0–21 characters of difference
+> on a header line). Use `--fmt outline` if you want signatures only — that is a real
+> 27% reduction against `stub`. See
+> [the token benchmark](eval/results/CONTEXT_BENCHMARK.md).
+
+`--format json` reports two token numbers, and they answer different questions:
+
+| field | what it counts | varies with |
+|---|---|---|
+| `meta.tokens_out` | how much *content* was selected | `--depth` only — **identical for every format** |
+| `meta.tokens_out_formatted` | the string you actually receive | `--format`, at 0.71×–1.75× of `tokens_out` |
+
+Use the second to compare formats; the first tells you nothing about them.
 
 ---
 
@@ -504,11 +543,13 @@ ai-db telemetry --json
 
 *Example Output:*
 ```
-[ai-db Telemetry Summary]
-Query Latency: p50=1.2ms | p95=3.4ms | p99=6.1ms (124 queries)
-Token Efficiency: Raw=145,000 -> Stub=21,750 (85.0% savings) | S-Exp=13,050 (91.0% savings)
-Cache Hit Rate: 92.4% (85 hits / 7 misses)
-Codebase Weak Points: 0 syntax errors, 2 complexity hotspots
+=== Telemetry Dashboard ===
+Token Savings: 0 tokens saved (0.0%)
+Query Latency: avg=0.87ms, p50=0.60ms, p95=2.11ms
+  stage total      n=1000  p50=0.41ms p95=4.11ms
+  stage bm25_ms    n=48    p50=4.8ms p95=9.06ms
+  stage graph_ms   n=48    p50=0.14ms p95=0.29ms
+Cache Performance: 117 hits / 136 lookups (86.03%)
 ```
 
 ---
@@ -688,7 +729,7 @@ transport it already has.
 
 | MCP Tool | Description | Key Arguments |
 |---|---|---|
-| `investigate` | **Start here.** One ranked evidence pack for a question, instead of many grep/read calls. `mode` selects `locate` / `explain` / `impact` / `flow` / `diff` | `query`, `mode`, `since`, `root`, `budget_tokens`, `project`, `allow_project`, `languages`, `chunk_types`, `modified_since` |
+| `investigate` | **Start here.** One ranked evidence pack for a question, instead of many grep/read calls. `mode` selects `locate` / `explain` / `impact` / `flow` / `diff`; `format` selects `json` / `compact` / `stub` / `sexp` | `query`, `mode`, `format`, `since`, `root`, `budget_tokens`, `project`, `allow_project`, `languages`, `chunk_types`, `modified_since` |
 | `query` | Ranked chunk search (BM25, or hybrid with vectors) | `query`, `top`, `project`, `allow_project`, `languages`, `chunk_types`, `modified_since` |
 | `locate` | Natural language concept and symbol search with snippet spans | `query`, `scope`, `k`, `format` |
 | `symbol` | Exact symbol lookup (classes, functions, methods) with file and line | `name`, `project`, `allow_project` |
@@ -826,7 +867,7 @@ ai-db query "database pool" --allow-project shared-core
 | Variable | Description | Default |
 |---|---|---|
 | `AI_DB_PATH` | Path to primary SQLite index database | `~/.local/share/ai-db/codebase_knowledge.db` |
-| `AI_DB_CONFIG_PATH` | Path to JSON configuration file | `~/.config/ai-db/config.json` |
+| `AI_DB_CONFIG` | Path to JSON configuration file | `~/.config/ai-db/config.json` |
 | `AI_DB_SKILL_DIRS` | Colon-separated directories containing agent skills | Standard XDG skill paths |
 
 ---
@@ -834,34 +875,40 @@ ai-db query "database pool" --allow-project shared-core
 ## Development & Testing
 
 ### Running the Test Suite
-The repository includes a comprehensive 5-tier test suite:
+The repository includes a 4-tier test suite (tier 1 feature coverage through tier 4
+real-world workflows), plus per-phase suites:
 
 ```bash
-# Run all unit and integration tests
-pytest
+# Everything (benchmarks are marked `bench` and deselected by default)
+uv run pytest
 
-# Run repository sanitization and hygiene audit
-pytest tests/test_sanitization.py -v
+# Subsystems
+uv run pytest tests/test_sanitization.py -v   # hygiene audit
+uv run pytest tests/test_storage.py -v
+uv run pytest tests/test_transports.py -v      # CLI, MCP
+uv run pytest tests/test_telemetry.py -v
 
-# Run storage layer tests
-pytest tests/test_storage.py -v
-
-# Run transport adapter tests (CLI, MCP)
-pytest tests/test_transports.py -v
-
-# Run telemetry tests
-pytest tests/test_telemetry.py -v
+# Benchmarks -- expensive, opt in individually
+uv run pytest tests/test_bench_vectors.py -m bench -q -s   # exact vs vec0
+uv run pytest tests/test_bench_gpu.py -m bench -q -s       # CPU vs CUDA
+AI_DB_BENCH_SYNC=1 uv run pytest tests/test_bench_gpu.py -m bench -q -s  # + end-to-end
 ```
+
+The GPU benchmark **skips** rather than fails without a CUDA device or a warm model
+cache, and refuses to benchmark a cold one -- you would be timing the download.
 
 ### Code Formatting & Type Checking
 ```bash
-# Linting and formatting with Ruff
-ruff check .
-ruff format --check .
+# Linting (scope comes from [tool.ruff] in pyproject.toml -- stray .py files
+# at the repo root are deliberately out of scope)
+uv run ruff check .
 
 # Static type verification with Mypy
-mypy ai_db
+uv run mypy ai_db mcp_server.py
 ```
+
+CI gates on exactly these two. `ruff format` is **not** run: the repository is not
+format-clean, so claiming it would be a check that always fails.
 
 ---
 

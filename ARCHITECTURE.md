@@ -607,14 +607,18 @@ vectordb --help
 ```
 
 ### 8.3 Quality Standards & Code Formatting
-- **PEP 8 Compliance & Linting**: Code formatting and linting are enforced via `ruff`:
+- **PEP 8 Compliance & Linting**: Enforced via `ruff`. CI runs exactly this, and
+  the scope comes from `[tool.ruff]` in `pyproject.toml` — stray `.py` files at the
+  repo root are deliberately out of scope, so a lint run cannot rewrite them:
   ```bash
-  ruff check .
-  ruff format --check .
+  uv run ruff check .
   ```
+  `ruff format` is **not** run: the repository is not format-clean (80 of 106 files
+  would be reformatted), so a `ruff format --check` gate would always fail. If you
+  want that gate, run `ruff format` once and commit the result.
 - **Static Type Checking**: Clean Python 3.10+ typing is enforced via `mypy`:
   ```bash
-  mypy ai_db
+  uv run mypy ai_db mcp_server.py
   ```
 - **Heavy-ML Dependency Constraint**: The core may depend on the parsing and index
   stack (`tree-sitter`, `tree-sitter-language-pack`, `sqlite-vec`, `tiktoken`,
