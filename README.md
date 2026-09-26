@@ -364,8 +364,48 @@ ai-db log --slow 500        # slow queries with per-stage latency
 ```
 
 Recorded measurements, the full retrieval-configuration matrix (lexical vs
-hybrid on CPU/GPU vs vec0 vs rerank) and the output-mode cost table live in
-[`eval/results/BENCHMARKS.md`](eval/results/BENCHMARKS.md).
+hybrid on CPU/GPU vs vec0 vs rerank), the output-mode cost table, the
+per-feature cold/warm latency table and the token-cost comparison live in
+[`eval/results/`](eval/results/) — see
+[BENCHMARKS.md](eval/results/BENCHMARKS.md),
+[FEATURE_BENCHMARK.md](eval/results/FEATURE_BENCHMARK.md) and
+[TOKEN_BUDGET.md](eval/results/TOKEN_BUDGET.md).
+
+### What it costs, and what it saves
+
+`eval/results/TOKEN_BUDGET.md` measures the question that decides whether a code
+database is worth its setup: on 40 real questions, how many tokens does an agent
+read, and how long does it wait? It compares against two baselines built from
+ripgrep — reading whole matching files, and reading only matching lines — so the
+comparison is not against a strawman.
+
+| | Median tokens | Median latency | Hit rate |
+|---|---|---|---|
+| no ai-db, read whole files | 157.6k | 7 ms | 95% |
+| no ai-db, read matching lines | 33.1k | 7 ms | 95% |
+| `ai-db query` | 636 | 238 ms | 72% |
+| `ai-db locate` | 304 | 250 ms | 72% |
+| `ai-db investigate` | 7,612 | 249 ms | 82% |
+
+Three things worth stating plainly, because the headline number alone is
+misleading:
+
+- **At matched recall the reduction is ~49x.** On the 29 questions where `query`
+  and the line baseline both found the file, 626 against 30.9k median tokens.
+- **But every ai-db arm finds the file *less* often** (72–82% vs 95%). The
+  baseline has a structural advantage: it reads files, so once ripgrep ranks one
+  into its top 5 the filename is guaranteed to appear. It is brute force, and
+  brute force is why it costs 33.1k tokens. The honest claim is "far cheaper and
+  somewhat less exhaustive" — closing the recall gap is the main open weakness.
+- **ai-db is much slower per call** — 238 ms against 7 ms, because every CLI
+  invocation pays ~200 ms of interpreter start and import before doing ~1 ms of
+  work. That is ~231 ms to avoid re-reading 32.5k tokens: worth it over a
+  session, never worth it against a single one-shot grep.
+
+Chaining features is not automatically better. `locate` + `outline` + `analyze`
++ `investigate` costs 9,271 tokens against `query`'s 636, because it re-reads
+code `query` already summarised. It does buy recall, so the trade is tokens for
+recall rather than free extra context.
 
 Passing `--baseline` makes the command a regression gate: it exits non-zero if the
 measured recall drops more than the tolerance in the baseline file, so CI fails on
@@ -373,27 +413,46 @@ a quality regression rather than only on a crash. Recorded results live in
 `eval/results/`, and the numbers each baseline was measured at are in the
 `_note` field alongside it.
 
+> The eval root is `.`, so tests and benchmark scripts compete with `ai_db/`
+> source in the index. Adding files can move recall without any code change. If
+> a baseline gate fails, check the corpus before suspecting the code — the
+> `_note` in `eval/baseline.json` records one such bisect.
+
 ---
 
 ## CLI Commands Reference
 
 ### 1. Code Health & Syntax Pre-Flight (`ai-db check`)
-Fast AST validation to catch syntax errors with exact file, line, and column numbers before running builds or tests:
+`check` answers one of two questions, and you pick which:
+
+- **`ai-db check <path>`** parses the files on disk **right now** and writes nothing. This is
+  the one to use in an editor, a pre-commit hook, or CI — it does not need an index, and it
+  cannot be misled by a stale one.
+- **`ai-db check --index`** reports the syntax errors recorded when the index was last built.
+  It answers "what does the index believe", which is a different question.
+
+Both report exact file, line, and column. Detection is tree-sitter for the 9 supported
+languages and a per-extension linter for the rest, and both paths share that single
+implementation, so a file cannot be reported clean on disk and broken in the index.
 
 ```bash
-# Check current directory
+# Validate files on disk (default when a path is given) - writes nothing
 ai-db check .
-
-# Check specific file
 ai-db check src/services/auth.py
 
-# Continuous watch mode (re-checks instantly upon file saves)
+# Validate the stored index instead
+ai-db check --index
+
+# Continuous watch mode (re-checks the files on disk as they change)
 ai-db check . --watch --interval 1.5
 ```
 
+`--index` and a path are mutually exclusive and asking for both is an error rather than a
+silent choice of one.
+
 *Example Output:*
 ```
-SYNTAX_ERROR: src/services/auth.py:42:18 Unterminated string literal
+SYNTAX_ERROR: src/services/auth.py:42:18 [myproj] syntax error: missing "
 Total errors: 1
 ```
 
@@ -738,7 +797,7 @@ transport it already has.
 | `expand` | Progressive disclosure of a `ref:hash` handle | `ref`, `depth`, `span` |
 | `callers` | All call sites and references to a symbol | `name`, `project`, `allow_project` |
 | `trace` | Chronological call flow from an entry point | `entry`, `direction`, `depth`, `max_nodes`, `include_tests`, `format`, `with_code`, `project`, `allow_project` |
-| `check` | Syntax pre-flight with line/column on failure | `path`, `project`, `allow_project` |
+| `check` | Syntax pre-flight; `path` = files on disk (read-only), `--index` = stored index | `path`, `index`, `project`, `allow_project` |
 | `diff` | Changed line spans in a file since the last snapshot or a git ref | `path`, `since` |
 | `todos` | TODO, FIXME, HACK and NOTE annotations across indexed files | `kind`, `filepath`, `project` |
 | `sync` | Scan a directory or file; update symbols, chunks and the FTS5 index | `path`, `project`, `verbose` |

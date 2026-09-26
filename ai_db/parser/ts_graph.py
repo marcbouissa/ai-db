@@ -8,9 +8,12 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from tree_sitter import Node, Query, QueryCursor
-from tree_sitter_language_pack import get_language, get_parser
+if TYPE_CHECKING:
+    # Annotation-only: `from __future__ import annotations` makes every `Node`
+    # in a signature a string, so this costs nothing at runtime.
+    from tree_sitter import Node
 
 SUPPORTED_LANGUAGES = {
     ".py": "python",
@@ -203,6 +206,13 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
     lang = language_for(filepath)
     if lang is None:
         return [], [], []
+
+    # Imported here, not at module scope: tree-sitter costs ~34 ms to import and
+    # five modules (including ai_db/__init__.py) import this one eagerly, so a
+    # module-level import made every `ai-db` command pay for a parser that
+    # retrieval never uses -- a query is served entirely from SQLite + FTS.
+    from tree_sitter import Query, QueryCursor
+    from tree_sitter_language_pack import get_language, get_parser
 
     parser = get_parser(lang)
     tree = parser.parse(content.encode("utf-8"))
@@ -426,11 +436,18 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
 
     # Third pass: collect syntax errors
     def collect_errors(node: Node):
-        if node.type == "ERROR" or node.type == "MISSING":
+        # `is_error`/`is_missing` are the flags to test, not the node type. A
+        # missing node carries the *expected token's* type -- `def broken(:`
+        # yields a node typed ")" with is_missing set -- so comparing
+        # node.type against the literal strings "ERROR"/"MISSING" never matches
+        # and these errors went unreported.
+        if node.is_error or node.is_missing:
             line = node.start_point[0] + 1
             col = node.start_point[1] + 1
             text = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
-            syntax_errors.append((line, col, f"syntax error near '{text[:50]}'"))
+            kind = "error: missing" if node.is_missing else "error near"
+            detail = node.type if node.is_missing else f"'{text[:50]}'"
+            syntax_errors.append((line, col, f"syntax {kind} {detail}"))
         for child in node.children:
             collect_errors(child)
 

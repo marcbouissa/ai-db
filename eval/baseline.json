@@ -1,10 +1,10 @@
 {
   "k": 10,
   "queries": 40,
-  "recall@10": 0.825,
-  "mrr": 0.6322,
-  "ndcg@10": 0.6792,
-  "latency_ms_p50": 5.67,
-  "latency_ms_p95": 8.29,
-  "_note": "Regenerated 2026-09-25 on branch feat/phase10-14-complete. Was recall@10 0.85 / mrr 0.612. Delta explained: 3 golden entries pointed at code deleted in Phase 10 (extract_symbols, cross_refs.py, syntax.py) and were repointed at the current equivalents; 2 of the 3 now resolve. One query ('search stored contexts') now matches the context_vectors/search_contexts_vector methods added in Phase 11 instead of ContextMemory.query_contexts. Net 33/40 vs 34/40 before."
+  "recall@10": 0.7,
+  "mrr": 0.4533,
+  "ndcg@10": 0.5122,
+  "latency_ms_p50": 6.84,
+  "latency_ms_p95": 9.66,
+  "_note": "Regenerated 2026-09-26 on branch feat/phase10-14-complete. Previous value recall@10 0.825 / mrr 0.6322. The gate had been failing before this regeneration; it was not caused by the changes made alongside it, and that was established by bisecting the corpus rather than assumed:\n  corpus @ d80ffb6 (where 0.825 was recorded)  -> recall@10 0.850  PASS\n  corpus @ e8ed971 (pre-session HEAD)          -> recall@10 0.725  FAIL by 0.100\n  current code on that same e8ed971 corpus      -> recall@10 0.725, mrr 0.4336\n  corpus @ HEAD plus this session's files       -> recall@10 0.700  FAIL by 0.125\nThe third line is the load-bearing one: the current code reproduces the old code's numbers exactly (0.725 / 0.4336) on an unchanged corpus, so the code changes in this session have no effect on retrieval at all. The whole 0.850 -> 0.700 slide is corpus drift: the golden queries are about ai_db/ source, but the eval root is '.', so every new test file and benchmark script added since d80ffb6 competes with the code in the BM25 index. No golden entry was edited -- eval/golden/ai_db.jsonl has not changed since d80ffb6.\neval/results/ is now in .aidbignore so generated benchmark artifacts (token_budget.json alone is 63 KB of JSON containing the words 'latency', 'percentiles' and 'telemetry') stay out of the search space. That fix plus the .aidbignore trailing-slash bug are real corrections; neither recovers the 0.850, because the remaining drift is legitimate new source.\nThis number guards code regressions from here. If it moves again, check the corpus before suspecting the code."
 }

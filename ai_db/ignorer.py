@@ -32,8 +32,16 @@ class AidbIgnore:
     @staticmethod
     def _compile(pattern: str) -> re.Pattern:
         """Convert a gitignore-style glob pattern to a compiled regex."""
+        # A trailing slash means "this directory and everything under it", which
+        # is what gitignore means by `build/`. It has to be stripped before
+        # escaping, because re.escape turns it into a literal "/" that then has
+        # to be followed by end-of-string or another slash -- so `build/` and
+        # `node_modules/` matched nothing at all, silently.
+        stripped = pattern.rstrip("/")
+        if not stripped:
+            return re.compile(r"(?!)")  # "/" alone ignores nothing
         # Escape special regex chars first, then translate globs
-        p = re.escape(pattern)
+        p = re.escape(stripped)
         # ** matches any depth of path segments
         p = p.replace(r"\*\*", ".*")
         # * matches within a single path component

@@ -1,0 +1,2616 @@
+{
+  "generated": "2026-09-26",
+  "config": "/tmp/feature_bench/lexical.json",
+  "golden": "eval/golden/ai_db.jsonl",
+  "n_queries": 40,
+  "definitions": {
+    "tokens_out": "tiktoken o200k_base over the exact stdout the agent would read",
+    "latency_ms": "median of 3 runs of the whole arm, subprocess included",
+    "hit": "output mentions the golden filepath",
+    "symbol_hit": "output mentions the golden symbol",
+    "baseline:files": "rg -l, then the first 5 matching files read whole",
+    "baseline:windows": "rg -n -C3, first 200 lines of matches"
+  },
+  "records": [
+    {
+      "query": "where is bm25 ranking of chunks done",
+      "expected": {
+        "filepath": "ai_db/storage/sqlite_backend.py",
+        "symbol": "search_chunks"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 6.4,
+          "chars": 611993,
+          "tokens": 140272,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 5.7,
+          "chars": 115666,
+          "tokens": 30872,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 234.4,
+          "chars": 1867,
+          "tokens": 602,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 236.0,
+          "chars": 1145,
+          "tokens": 373,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 253.8,
+          "chars": 32534,
+          "tokens": 8983,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 467.0,
+          "chars": 19634,
+          "tokens": 7239,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 891.4,
+          "chars": 58505,
+          "tokens": 18276,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "insert chunks compress content into fts index",
+      "expected": {
+        "filepath": "ai_db/storage/sqlite_backend.py",
+        "symbol": "insert_chunks"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 6.7,
+          "chars": 880980,
+          "tokens": 205051,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.7,
+          "chars": 258962,
+          "tokens": 69015,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 227.3,
+          "chars": 1827,
+          "tokens": 615,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 245.8,
+          "chars": 914,
+          "tokens": 291,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 236.5,
+          "chars": 30104,
+          "tokens": 8770,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 486.9,
+          "chars": 19403,
+          "tokens": 7157,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 943.6,
+          "chars": 55844,
+          "tokens": 17981,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "delete file cascade remove symbols annotations",
+      "expected": {
+        "filepath": "ai_db/storage/sqlite_backend.py",
+        "symbol": "delete_file"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 8.2,
+          "chars": 894341,
+          "tokens": 207226,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.8,
+          "chars": 236802,
+          "tokens": 63362,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 228.3,
+          "chars": 1998,
+          "tokens": 703,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 256.0,
+          "chars": 968,
+          "tokens": 316,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 243.6,
+          "chars": 28514,
+          "tokens": 8117,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 472.3,
+          "chars": 6653,
+          "tokens": 2310,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 868.3,
+          "chars": 38407,
+          "tokens": 11356,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "nested transaction savepoint rollback",
+      "expected": {
+        "filepath": "ai_db/storage/sqlite_backend.py",
+        "symbol": "transaction"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.6,
+          "chars": 198694,
+          "tokens": 44769,
+          "hit": false,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.2,
+          "chars": 48766,
+          "tokens": 12366,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 232.1,
+          "chars": 1971,
+          "tokens": 549,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 238.6,
+          "chars": 1152,
+          "tokens": 314,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 239.9,
+          "chars": 32283,
+          "tokens": 8672,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 467.9,
+          "chars": 19641,
+          "tokens": 7181,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 880.6,
+          "chars": 58261,
+          "tokens": 17907,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "create tables schema initialize wal pragmas",
+      "expected": {
+        "filepath": "ai_db/storage/sqlite_backend.py",
+        "symbol": "initialize"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.3,
+          "chars": 515494,
+          "tokens": 117152,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.5,
+          "chars": 96477,
+          "tokens": 24393,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 231.5,
+          "chars": 1839,
+          "tokens": 491,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 242.4,
+          "chars": 1044,
+          "tokens": 263,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 260.2,
+          "chars": 34221,
+          "tokens": 8780,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 461.4,
+          "chars": 19533,
+          "tokens": 7129,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 887.3,
+          "chars": 60091,
+          "tokens": 17963,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "vacuum optimize fts and prune missing files",
+      "expected": {
+        "filepath": "ai_db/storage/sqlite_backend.py",
+        "symbol": "optimize"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.8,
+          "chars": 723958,
+          "tokens": 166694,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.6,
+          "chars": 150468,
+          "tokens": 39889,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 223.7,
+          "chars": 1668,
+          "tokens": 559,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 237.9,
+          "chars": 930,
+          "tokens": 312,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 245.6,
+          "chars": 21993,
+          "tokens": 6265,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 474.1,
+          "chars": 19419,
+          "tokens": 7178,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 913.1,
+          "chars": 47749,
+          "tokens": 15497,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "semantic cache lookup by file hash",
+      "expected": {
+        "filepath": "ai_db/storage/sqlite_backend.py",
+        "symbol": "get_semantic_cache"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.1,
+          "chars": 808464,
+          "tokens": 185872,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.9,
+          "chars": 174977,
+          "tokens": 46995,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 233.6,
+          "chars": 1942,
+          "tokens": 648,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 236.5,
+          "chars": 835,
+          "tokens": 256,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 289.0,
+          "chars": 31899,
+          "tokens": 8767,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 614.9,
+          "chars": 19324,
+          "tokens": 7122,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 970.0,
+          "chars": 57560,
+          "tokens": 17943,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "find callers of a symbol cross references",
+      "expected": {
+        "filepath": "ai_db/search/query.py",
+        "symbol": "query_callers"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.3,
+          "chars": 706095,
+          "tokens": 161523,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.9,
+          "chars": 93195,
+          "tokens": 24366,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 225.6,
+          "chars": 1941,
+          "tokens": 664,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 249.4,
+          "chars": 918,
+          "tokens": 291,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 244.9,
+          "chars": 30406,
+          "tokens": 8741,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 503.5,
+          "chars": 3880,
+          "tokens": 1465,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 902.8,
+          "chars": 35512,
+          "tokens": 10627,
+          "hit": false,
+          "symbol_hit": false
+        }
+      }
+    },
+    {
+      "query": "query symbol exact resolution",
+      "expected": {
+        "filepath": "ai_db/search/query.py",
+        "symbol": "query_symbol"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.4,
+          "chars": 819783,
+          "tokens": 190619,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.9,
+          "chars": 199991,
+          "tokens": 54233,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 244.6,
+          "chars": 1860,
+          "tokens": 734,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 244.1,
+          "chars": 836,
+          "tokens": 287,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 259.9,
+          "chars": 15450,
+          "tokens": 5161,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 256.3,
+          "chars": 836,
+          "tokens": 287,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 540.2,
+          "chars": 16287,
+          "tokens": 5448,
+          "hit": false,
+          "symbol_hit": false
+        }
+      }
+    },
+    {
+      "query": "chunk markdown by headers",
+      "expected": {
+        "filepath": "ai_db/parser/chunker.py",
+        "symbol": "chunk_file"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.4,
+          "chars": 409619,
+          "tokens": 94319,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.1,
+          "chars": 71744,
+          "tokens": 19204,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 337.4,
+          "chars": 1824,
+          "tokens": 629,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 334.8,
+          "chars": 889,
+          "tokens": 306,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 343.4,
+          "chars": 26345,
+          "tokens": 7900,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 566.2,
+          "chars": 5979,
+          "tokens": 2064,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 857.4,
+          "chars": 35453,
+          "tokens": 10815,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "split python file into classes and functions chunks",
+      "expected": {
+        "filepath": "ai_db/parser/chunker.py",
+        "symbol": "chunk_file"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.8,
+          "chars": 882392,
+          "tokens": 205413,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.3,
+          "chars": 267352,
+          "tokens": 71722,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 247.3,
+          "chars": 1929,
+          "tokens": 701,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 243.0,
+          "chars": 777,
+          "tokens": 261,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 250.6,
+          "chars": 27589,
+          "tokens": 8243,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 253.1,
+          "chars": 777,
+          "tokens": 261,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 497.5,
+          "chars": 28367,
+          "tokens": 8504,
+          "hit": false,
+          "symbol_hit": false
+        }
+      }
+    },
+    {
+      "query": "extract symbols from python ast",
+      "expected": {
+        "filepath": "ai_db/parser/ts_graph.py",
+        "symbol": "extract_graph"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.7,
+          "chars": 679026,
+          "tokens": 155922,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.2,
+          "chars": 101573,
+          "tokens": 27218,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 234.8,
+          "chars": 1875,
+          "tokens": 623,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 250.9,
+          "chars": 923,
+          "tokens": 272,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 253.4,
+          "chars": 24391,
+          "tokens": 7054,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 486.1,
+          "chars": 1229,
+          "tokens": 381,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 895.3,
+          "chars": 25774,
+          "tokens": 7480,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "file outline skeleton",
+      "expected": {
+        "filepath": "ai_db/parser/ast_visitor.py",
+        "symbol": "extract_file_outline"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.1,
+          "chars": 785654,
+          "tokens": 179940,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.7,
+          "chars": 153868,
+          "tokens": 41415,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 248.6,
+          "chars": 1841,
+          "tokens": 595,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 255.8,
+          "chars": 963,
+          "tokens": 299,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 293.3,
+          "chars": 27426,
+          "tokens": 7825,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 501.6,
+          "chars": 2924,
+          "tokens": 1134,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 930.5,
+          "chars": 31124,
+          "tokens": 9257,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "extract call import inheritance references",
+      "expected": {
+        "filepath": "ai_db/parser/ts_graph.py",
+        "symbol": "extract_graph"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.9,
+          "chars": 991386,
+          "tokens": 232050,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.9,
+          "chars": 241094,
+          "tokens": 66275,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 254.9,
+          "chars": 1428,
+          "tokens": 552,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 246.9,
+          "chars": 807,
+          "tokens": 278,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 245.2,
+          "chars": 16655,
+          "tokens": 5216,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 488.4,
+          "chars": 3769,
+          "tokens": 1452,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 906.2,
+          "chars": 21650,
+          "tokens": 7089,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "todo fixme hack annotations extraction",
+      "expected": {
+        "filepath": "ai_db/parser/annotations.py",
+        "symbol": "extract_annotations"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.0,
+          "chars": 686575,
+          "tokens": 159330,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.1,
+          "chars": 54500,
+          "tokens": 14514,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 237.6,
+          "chars": 1949,
+          "tokens": 639,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 240.9,
+          "chars": 969,
+          "tokens": 302,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 247.3,
+          "chars": 25770,
+          "tokens": 7390,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 472.1,
+          "chars": 1275,
+          "tokens": 412,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 874.9,
+          "chars": 27199,
+          "tokens": 7847,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "validate python syntax errors",
+      "expected": {
+        "filepath": "ai_db/parser/linters.py",
+        "symbol": "validate_python_syntax"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.8,
+          "chars": 845205,
+          "tokens": 195125,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 12.7,
+          "chars": 129630,
+          "tokens": 34410,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 248.4,
+          "chars": 1906,
+          "tokens": 548,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 254.4,
+          "chars": 1150,
+          "tokens": 326,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 251.1,
+          "chars": 26725,
+          "tokens": 7471,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 513.6,
+          "chars": 2677,
+          "tokens": 883,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 873.5,
+          "chars": 29933,
+          "tokens": 8532,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "external linter validation for javascript shell yaml",
+      "expected": {
+        "filepath": "ai_db/parser/linters.py",
+        "symbol": "ExternalLinter"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 6.8,
+          "chars": 270329,
+          "tokens": 61892,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 5.8,
+          "chars": 20908,
+          "tokens": 5659,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 238.6,
+          "chars": 1858,
+          "tokens": 689,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 252.3,
+          "chars": 862,
+          "tokens": 288,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 234.9,
+          "chars": 22415,
+          "tokens": 6796,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 486.6,
+          "chars": 2389,
+          "tokens": 846,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 872.8,
+          "chars": 25335,
+          "tokens": 7820,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "sync directory skip unchanged files by sha256 hash",
+      "expected": {
+        "filepath": "ai_db/search/indexer.py",
+        "symbol": "sync"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.8,
+          "chars": 837069,
+          "tokens": 194224,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.0,
+          "chars": 202099,
+          "tokens": 54031,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 243.5,
+          "chars": 1879,
+          "tokens": 641,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 250.1,
+          "chars": 963,
+          "tokens": 303,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 263.9,
+          "chars": 25968,
+          "tokens": 7504,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 486.9,
+          "chars": 3805,
+          "tokens": 1370,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 892.6,
+          "chars": 30713,
+          "tokens": 9203,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "scan directory walk ignore rules",
+      "expected": {
+        "filepath": "ai_db/search/indexer.py",
+        "symbol": "scan_directory"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 6.2,
+          "chars": 426652,
+          "tokens": 97687,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.0,
+          "chars": 50472,
+          "tokens": 13225,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 235.7,
+          "chars": 1713,
+          "tokens": 620,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 280.6,
+          "chars": 930,
+          "tokens": 301,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 242.6,
+          "chars": 20884,
+          "tokens": 6297,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 471.8,
+          "chars": 3772,
+          "tokens": 1368,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 889.8,
+          "chars": 25596,
+          "tokens": 7994,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "aidbignore pattern matching",
+      "expected": {
+        "filepath": "ai_db/ignorer.py",
+        "symbol": "AidbIgnore"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.5,
+          "chars": 287585,
+          "tokens": 64934,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.4,
+          "chars": 27380,
+          "tokens": 7439,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 236.2,
+          "chars": 1837,
+          "tokens": 626,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 237.8,
+          "chars": 984,
+          "tokens": 307,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 256.2,
+          "chars": 22111,
+          "tokens": 6682,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 495.8,
+          "chars": 1811,
+          "tokens": 623,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 874.9,
+          "chars": 24222,
+          "tokens": 7416,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "detect project name from git marker",
+      "expected": {
+        "filepath": "ai_db/utils.py",
+        "symbol": "detect_project_name"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.3,
+          "chars": 868123,
+          "tokens": 200896,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.9,
+          "chars": 458359,
+          "tokens": 123257,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 236.8,
+          "chars": 1839,
+          "tokens": 662,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 262.4,
+          "chars": 861,
+          "tokens": 293,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 245.8,
+          "chars": 25159,
+          "tokens": 7683,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 510.2,
+          "chars": 1876,
+          "tokens": 659,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 880.5,
+          "chars": 27436,
+          "tokens": 8468,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "cross project access allowed projects config",
+      "expected": {
+        "filepath": "ai_db/utils.py",
+        "symbol": "get_allowed_projects"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.9,
+          "chars": 854258,
+          "tokens": 197994,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 8.0,
+          "chars": 358728,
+          "tokens": 96362,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 261.0,
+          "chars": 1748,
+          "tokens": 558,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 271.7,
+          "chars": 1045,
+          "tokens": 329,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 272.1,
+          "chars": 31727,
+          "tokens": 9047,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 500.3,
+          "chars": 2060,
+          "tokens": 695,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 881.1,
+          "chars": 34188,
+          "tokens": 9868,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "camelcase tokenizer for queries",
+      "expected": {
+        "filepath": "ai_db/utils.py",
+        "symbol": "tokenize"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.8,
+          "chars": 298885,
+          "tokens": 69183,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.8,
+          "chars": 24185,
+          "tokens": 6683,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 238.2,
+          "chars": 1879,
+          "tokens": 637,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 242.3,
+          "chars": 1052,
+          "tokens": 349,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 260.6,
+          "chars": 21150,
+          "tokens": 6067,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 539.1,
+          "chars": 6720,
+          "tokens": 2527,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 905.6,
+          "chars": 29587,
+          "tokens": 9236,
+          "hit": false,
+          "symbol_hit": false
+        }
+      }
+    },
+    {
+      "query": "which files should be indexed node_modules venv rules",
+      "expected": {
+        "filepath": "ai_db/utils.py",
+        "symbol": "should_index_path"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 5.8,
+          "chars": 712636,
+          "tokens": 163160,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.4,
+          "chars": 122447,
+          "tokens": 32558,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 237.4,
+          "chars": 1887,
+          "tokens": 651,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 247.0,
+          "chars": 1011,
+          "tokens": 338,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 262.3,
+          "chars": 31704,
+          "tokens": 8749,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 487.4,
+          "chars": 3973,
+          "tokens": 1512,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 897.8,
+          "chars": 36903,
+          "tokens": 10682,
+          "hit": false,
+          "symbol_hit": false
+        }
+      }
+    },
+    {
+      "query": "route prompt to best matching skill confidence",
+      "expected": {
+        "filepath": "ai_db/search/skills.py",
+        "symbol": "route_skills"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 8.2,
+          "chars": 556985,
+          "tokens": 126129,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 8.9,
+          "chars": 55564,
+          "tokens": 14939,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 245.1,
+          "chars": 1755,
+          "tokens": 685,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 254.0,
+          "chars": 1000,
+          "tokens": 360,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 233.2,
+          "chars": 27474,
+          "tokens": 8057,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 512.7,
+          "chars": 2445,
+          "tokens": 928,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 874.5,
+          "chars": 30440,
+          "tokens": 9173,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "index SKILL.md files",
+      "expected": {
+        "filepath": "ai_db/search/skills.py",
+        "symbol": "sync_skills"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.8,
+          "chars": 805107,
+          "tokens": 186781,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.5,
+          "chars": 181375,
+          "tokens": 48390,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 226.0,
+          "chars": 1890,
+          "tokens": 634,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 255.2,
+          "chars": 905,
+          "tokens": 289,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 241.7,
+          "chars": 30283,
+          "tokens": 8610,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 504.1,
+          "chars": 6831,
+          "tokens": 2324,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 852.3,
+          "chars": 37170,
+          "tokens": 10953,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "save session context memory",
+      "expected": {
+        "filepath": "ai_db/memory/context.py",
+        "symbol": "save_context"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 8.4,
+          "chars": 553401,
+          "tokens": 124124,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.7,
+          "chars": 71970,
+          "tokens": 18825,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 241.5,
+          "chars": 1858,
+          "tokens": 489,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 249.6,
+          "chars": 1187,
+          "tokens": 292,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 242.7,
+          "chars": 34273,
+          "tokens": 8880,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 487.6,
+          "chars": 9267,
+          "tokens": 3173,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 874.3,
+          "chars": 45582,
+          "tokens": 12748,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "search stored contexts",
+      "expected": {
+        "filepath": "ai_db/memory/context.py",
+        "symbol": "query_contexts"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.3,
+          "chars": 707383,
+          "tokens": 164030,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.7,
+          "chars": 103560,
+          "tokens": 27245,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 236.3,
+          "chars": 1839,
+          "tokens": 605,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 258.2,
+          "chars": 817,
+          "tokens": 245,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 247.8,
+          "chars": 25733,
+          "tokens": 7542,
+          "hit": false,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 256.7,
+          "chars": 817,
+          "tokens": 245,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 480.8,
+          "chars": 26551,
+          "tokens": 7787,
+          "hit": false,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "progressive disclosure analyze file depth structure targeted",
+      "expected": {
+        "filepath": "ai_db/analyzer/engine.py",
+        "symbol": "analyze_file"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.4,
+          "chars": 806100,
+          "tokens": 186032,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.3,
+          "chars": 190143,
+          "tokens": 51465,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 251.5,
+          "chars": 1949,
+          "tokens": 709,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 237.5,
+          "chars": 988,
+          "tokens": 340,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 236.9,
+          "chars": 22538,
+          "tokens": 6867,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 256.4,
+          "chars": 988,
+          "tokens": 340,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 486.8,
+          "chars": 23527,
+          "tokens": 7207,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "analyze many files with token budget and cursor",
+      "expected": {
+        "filepath": "ai_db/analyzer/engine.py",
+        "symbol": "analyze_batch"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.6,
+          "chars": 746874,
+          "tokens": 171206,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.7,
+          "chars": 209151,
+          "tokens": 55796,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 247.6,
+          "chars": 1909,
+          "tokens": 690,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 264.6,
+          "chars": 817,
+          "tokens": 270,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 235.2,
+          "chars": 25591,
+          "tokens": 7433,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 248.8,
+          "chars": 817,
+          "tokens": 270,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 493.1,
+          "chars": 26409,
+          "tokens": 7703,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "locate targets for a question",
+      "expected": {
+        "filepath": "ai_db/analyzer/engine.py",
+        "symbol": "locate_targets"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 6.1,
+          "chars": 329281,
+          "tokens": 75952,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.2,
+          "chars": 53372,
+          "tokens": 14521,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 234.3,
+          "chars": 1846,
+          "tokens": 667,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 274.0,
+          "chars": 924,
+          "tokens": 314,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 249.0,
+          "chars": 20719,
+          "tokens": 6274,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 474.3,
+          "chars": 9004,
+          "tokens": 3195,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 877.5,
+          "chars": 31765,
+          "tokens": 10164,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "expand opaque ref handle",
+      "expected": {
+        "filepath": "ai_db/analyzer/references.py",
+        "symbol": "expand_ref"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.8,
+          "chars": 468379,
+          "tokens": 104318,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.7,
+          "chars": 60107,
+          "tokens": 16574,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 243.8,
+          "chars": 1865,
+          "tokens": 614,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 255.7,
+          "chars": 984,
+          "tokens": 306,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 268.5,
+          "chars": 29682,
+          "tokens": 8460,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 459.2,
+          "chars": 1909,
+          "tokens": 683,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 875.5,
+          "chars": 32014,
+          "tokens": 9285,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "diff spans since git ref",
+      "expected": {
+        "filepath": "ai_db/analyzer/references.py",
+        "symbol": "_diff_spans"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.2,
+          "chars": 435750,
+          "tokens": 99829,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 5.6,
+          "chars": 121744,
+          "tokens": 33725,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 237.1,
+          "chars": 1735,
+          "tokens": 617,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 260.1,
+          "chars": 1019,
+          "tokens": 330,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 244.9,
+          "chars": 31351,
+          "tokens": 8956,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 479.1,
+          "chars": 1944,
+          "tokens": 706,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 879.1,
+          "chars": 33718,
+          "tokens": 9804,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "format output as s-expression",
+      "expected": {
+        "filepath": "ai_db/analyzer/formatters.py",
+        "symbol": "format_as_sexp"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.4,
+          "chars": 430388,
+          "tokens": 98311,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.5,
+          "chars": 66045,
+          "tokens": 18232,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 245.4,
+          "chars": 1929,
+          "tokens": 716,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 243.4,
+          "chars": 849,
+          "tokens": 294,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 248.5,
+          "chars": 18920,
+          "tokens": 5860,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 507.2,
+          "chars": 3381,
+          "tokens": 1276,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 896.0,
+          "chars": 23261,
+          "tokens": 7466,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "stub formatter output",
+      "expected": {
+        "filepath": "ai_db/analyzer/formatters.py",
+        "symbol": "format_as_stub"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.1,
+          "chars": 389728,
+          "tokens": 89660,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.3,
+          "chars": 66444,
+          "tokens": 18281,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 241.6,
+          "chars": 1638,
+          "tokens": 559,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 250.3,
+          "chars": 1006,
+          "tokens": 315,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 297.2,
+          "chars": 27418,
+          "tokens": 7960,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 478.8,
+          "chars": 9086,
+          "tokens": 3197,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 864.8,
+          "chars": 38546,
+          "tokens": 11852,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "record query latency percentiles telemetry",
+      "expected": {
+        "filepath": "ai_db/telemetry/tracker.py",
+        "symbol": "record_query"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 8.0,
+          "chars": 694787,
+          "tokens": 162820,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 8.0,
+          "chars": 185705,
+          "tokens": 50528,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 253.9,
+          "chars": 1949,
+          "tokens": 693,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 243.6,
+          "chars": 1012,
+          "tokens": 357,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 252.6,
+          "chars": 24823,
+          "tokens": 7131,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 512.7,
+          "chars": 7383,
+          "tokens": 2658,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 902.4,
+          "chars": 35683,
+          "tokens": 10862,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "token savings compression telemetry",
+      "expected": {
+        "filepath": "ai_db/telemetry/tracker.py",
+        "symbol": "record_token_compression"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.7,
+          "chars": 568891,
+          "tokens": 129142,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.0,
+          "chars": 58848,
+          "tokens": 15757,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 228.2,
+          "chars": 2107,
+          "tokens": 668,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 253.5,
+          "chars": 1011,
+          "tokens": 332,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 253.5,
+          "chars": 25500,
+          "tokens": 6839,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 516.2,
+          "chars": 3219,
+          "tokens": 1179,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 876.2,
+          "chars": 29571,
+          "tokens": 8302,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "tool registry dispatch execute validate required parameters",
+      "expected": {
+        "filepath": "ai_db/dispatcher.py",
+        "symbol": "execute"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 8.5,
+          "chars": 621366,
+          "tokens": 141996,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 7.7,
+          "chars": 175557,
+          "tokens": 46083,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 239.3,
+          "chars": 1933,
+          "tokens": 651,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 247.1,
+          "chars": 978,
+          "tokens": 310,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 243.2,
+          "chars": 20812,
+          "tokens": 5988,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 512.4,
+          "chars": 8195,
+          "tokens": 3099,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 899.4,
+          "chars": 31570,
+          "tokens": 9977,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "stdio json-rpc mcp server request handling",
+      "expected": {
+        "filepath": "mcp_server.py",
+        "symbol": "handle_request"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.1,
+          "chars": 649354,
+          "tokens": 151417,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 8.3,
+          "chars": 128290,
+          "tokens": 35308,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 242.6,
+          "chars": 1929,
+          "tokens": 693,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 250.8,
+          "chars": 1020,
+          "tokens": 372,
+          "hit": true,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 264.6,
+          "chars": 30801,
+          "tokens": 8420,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 485.6,
+          "chars": 2278,
+          "tokens": 826,
+          "hit": true,
+          "symbol_hit": true
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 905.9,
+          "chars": 33465,
+          "tokens": 9377,
+          "hit": true,
+          "symbol_hit": true
+        }
+      }
+    },
+    {
+      "query": "http server post endpoint json",
+      "expected": {
+        "filepath": "ai_db/server/http_server.py",
+        "symbol": "do_POST"
+      },
+      "arms": {
+        "baseline:files": {
+          "exit": 0,
+          "latency_ms": 7.5,
+          "chars": 660440,
+          "tokens": 153912,
+          "hit": false,
+          "symbol_hit": true
+        },
+        "baseline:windows": {
+          "exit": 0,
+          "latency_ms": 6.7,
+          "chars": 122920,
+          "tokens": 33902,
+          "hit": false,
+          "symbol_hit": true
+        },
+        "feature:query": {
+          "exit": 0,
+          "latency_ms": 254.3,
+          "chars": 1480,
+          "tokens": 558,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:locate": {
+          "exit": 0,
+          "latency_ms": 243.9,
+          "chars": 869,
+          "tokens": 281,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "feature:investigate": {
+          "exit": 0,
+          "latency_ms": 234.0,
+          "chars": 18743,
+          "tokens": 5771,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:minimal": {
+          "exit": 0,
+          "latency_ms": 509.5,
+          "chars": 1232,
+          "tokens": 422,
+          "hit": false,
+          "symbol_hit": false
+        },
+        "workflow:full": {
+          "exit": 0,
+          "latency_ms": 865.5,
+          "chars": 20142,
+          "tokens": 6250,
+          "hit": false,
+          "symbol_hit": false
+        }
+      }
+    }
+  ]
+}

@@ -130,3 +130,28 @@ def get_linter(config_validators: dict[str, list[str]] | None = None) -> Externa
     if _linter is None:
         _linter = ExternalLinter(config_validators)
     return _linter
+
+
+def parse_source(
+    filepath: str, content: str
+) -> tuple[list[dict], list[dict], tuple[int, int, str] | None]:
+    """Parse one file and report its syntax verdict. Pure: touches no storage.
+
+    Returns ``(symbols, refs, syntax_error)`` where ``syntax_error`` is
+    ``(line, col, message)`` or ``None``.
+
+    This is the single parse path. Both the indexer (which needs the symbols and
+    refs) and ``ai-db check <path>`` (which needs only the verdict) go through
+    here, so a file's syntax cannot be reported one way when checked on disk and
+    another way when read back from the index.
+
+    Languages tree-sitter handles are parsed with tree-sitter. Everything else
+    goes to the configured linter for its extension, which is a no-op when no
+    validator is registered -- an unvalidatable file is clean, not broken.
+    """
+    from ai_db.parser.ts_graph import extract_graph, language_for
+
+    if language_for(filepath) is not None:
+        symbols, refs, errors = extract_graph(filepath, content)
+        return symbols, refs, (errors[0] if errors else None)
+    return [], [], get_linter().validate(filepath, content)

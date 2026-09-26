@@ -1,0 +1,22 @@
+# Files ai-db must not index.
+#
+# Benchmark artifacts are generated data, not code. They are large, they change on
+# every measurement run, and they contain the very words the golden queries search
+# for: eval/results/token_budget.json is 63 KB of JSON full of "latency",
+# "percentiles" and "telemetry", and indexing it put those words into the search
+# space. A measurement must not be able to change the thing it measures.
+#
+# To be precise about what this does and does not fix: excluding it did NOT
+# recover the retrieval baseline. recall@10 had already slid from 0.850 to 0.725
+# before this file existed, purely from new test and benchmark source being
+# added to a corpus whose eval root is ".". See the _note in eval/baseline.json
+# for that bisect. This rule stops the generated data from making it worse.
+eval/results/
+
+# CI recreates this with `init --force`; it is a local artifact, not source.
+ci.json
+
+# Scratch output from ad-hoc runs.
+*.orig
+*.rej
+*.bak

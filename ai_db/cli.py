@@ -189,6 +189,8 @@ def _main(argv: list[str] | None = None) -> int:
     # check / lint
     check_p = subparsers.add_parser("check", aliases=["lint"], help="Check AST code validation and syntax errors")
     check_p.add_argument("path", nargs="?", default=None, help="Target path or file to check")
+    check_p.add_argument("--index", action="store_true",
+                         help="Validate the stored index instead of the files on disk")
     check_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
     check_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
     check_p.add_argument("--watch", action="store_true", help="Continuously re-check on file changes (F11)")
@@ -531,16 +533,27 @@ def _main(argv: list[str] | None = None) -> int:
                 print(f"  {clean_snippet}")
 
     elif args.command in ("check", "lint"):
+        check_args = {
+            "path": args.path,
+            "index": getattr(args, "index", False),
+            "project": active_proj,
+            "allow_project": allowed_projs,
+        }
         if getattr(args, "watch", False):
-            print(f"[ai-db check --watch] Monitoring '{args.path or '.'}' every {args.interval}s. Ctrl-C to stop.")
+            # Watch means "tell me when the file on disk changes", so it always
+            # validates files. Watching the index would only re-read a snapshot.
+            watch_args = dict(check_args, index=False)
+            if not watch_args["path"]:
+                raise AiDbConfigError(
+                    "check --watch needs a path to watch: it validates files on "
+                    "disk as they change. Use `check --index` for a one-shot read "
+                    "of the stored index."
+                )
+            print(f"[ai-db check --watch] Monitoring '{args.path}' every {args.interval}s. Ctrl-C to stop.")
             prev_error_keys: set[str] = set()
             while True:
                 try:
-                    errors = dispatcher.execute("check", {
-                        "path": args.path,
-                        "project": active_proj,
-                        "allow_project": allowed_projs
-                    })
+                    errors = dispatcher.execute("check", watch_args)
                     current_keys = {f"{e['file']}:{e['line']}:{e['col']}" for e in errors}
                     new_keys = current_keys - prev_error_keys
                     resolved_keys = prev_error_keys - current_keys
@@ -556,11 +569,7 @@ def _main(argv: list[str] | None = None) -> int:
                     print("\n[ai-db check --watch] Stopped.")
                     break
         else:
-            errors = dispatcher.execute("check", {
-                "path": args.path,
-                "project": active_proj,
-                "allow_project": allowed_projs
-            })
+            errors = dispatcher.execute("check", check_args)
             if not errors:
                 print("No syntax errors detected.")
                 dispatcher.close()
@@ -966,4 +975,8 @@ def _main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    main()
+    # Propagate the exit code. Bare `main()` discarded it, so every
+    # `python -m ai_db.cli ...` run exited 0 even when it reported a
+    # configuration error -- the console script, which wraps this in
+    # sys.exit(), was the only entry point that got it right.
+    raise SystemExit(main())

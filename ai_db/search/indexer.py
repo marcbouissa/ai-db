@@ -16,8 +16,7 @@ from ai_db.ignorer import AidbIgnore
 from ai_db.logger import _logger
 from ai_db.parser.annotations import extract_annotations
 from ai_db.parser.chunker import chunk_file
-from ai_db.parser.linters import get_linter
-from ai_db.parser.ts_graph import extract_graph, language_for
+from ai_db.parser.linters import parse_source
 from ai_db.storage.models import (
     AnnotationRecord,
     ChunkRecord,
@@ -37,47 +36,35 @@ def parse_file(filepath: str, file_hash: str, project: str) -> ParsedFile:
     mtime = os.path.getmtime(filepath)
     parsed = ParsedFile(filepath=filepath, sha256=file_hash, last_modified=mtime, project=project)
 
-    lang = language_for(filepath)
-    if lang is not None:
-        # Use tree-sitter for all supported languages
-        symbols, refs, syntax_errors = extract_graph(filepath, content)
-        if syntax_errors:
-            line, col, msg = syntax_errors[0]
-            parsed.syntax_error = SyntaxErrorRecord(
-                filepath=filepath, line=line, col=col, message=msg, timestamp=time.time(), project=project
-            )
-        parsed.symbols = [
-            SymbolRecord(
-                name=s["name"], symbol_type=s["symbol_type"], filepath=s["filepath"],
-                line=s["line"], signature=s.get("signature"), project=project,
-            )
-            for s in symbols
-        ]
-        parsed.refs = [
-            SymbolRefRecord(
-                caller_filepath=filepath,
-                caller_name=r["caller_name"],
-                caller_line=r["caller_line"],
-                call_col=r.get("call_col"),
-                seq=r.get("seq"),
-                callee_name=r["callee_name"],
-                ref_type=r["ref_type"],
-                await_kind=r.get("await_kind"),
-                guard=r.get("guard"),
-                receiver=r.get("receiver"),
-                project=project,
-            )
-            for r in refs
-        ]
-    else:
-        # Fallback for unsupported languages (markdown, text, etc.)
-        err = get_linter().validate(filepath, content)
-        if err:
-            line, col, msg = err
-            parsed.syntax_error = SyntaxErrorRecord(
-                filepath=filepath, line=line, col=col, message=msg, timestamp=time.time(), project=project
-            )
-        # For unsupported languages, no symbols or refs
+    symbols, refs, syntax_error = parse_source(filepath, content)
+    if syntax_error is not None:
+        line, col, msg = syntax_error
+        parsed.syntax_error = SyntaxErrorRecord(
+            filepath=filepath, line=line, col=col, message=msg, timestamp=time.time(), project=project
+        )
+    parsed.symbols = [
+        SymbolRecord(
+            name=s["name"], symbol_type=s["symbol_type"], filepath=s["filepath"],
+            line=s["line"], signature=s.get("signature"), project=project,
+        )
+        for s in symbols
+    ]
+    parsed.refs = [
+        SymbolRefRecord(
+            caller_filepath=filepath,
+            caller_name=r["caller_name"],
+            caller_line=r["caller_line"],
+            call_col=r.get("call_col"),
+            seq=r.get("seq"),
+            callee_name=r["callee_name"],
+            ref_type=r["ref_type"],
+            await_kind=r.get("await_kind"),
+            guard=r.get("guard"),
+            receiver=r.get("receiver"),
+            project=project,
+        )
+        for r in refs
+    ]
 
     parsed.chunks = [
         ChunkRecord(

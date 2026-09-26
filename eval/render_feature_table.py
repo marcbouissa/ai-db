@@ -98,8 +98,6 @@ def summary(rows: list[dict]) -> list[str]:
         "config check": "validates the embedding backend",
         "eval --pack": "builds packs for 40 queries",
         "eval (retrieval, 10 queries)": "builds packs for 10 queries",
-        "check": "re-indexes the file it is checking",
-        "lint": "re-indexes the file it is checking",
         "analyze --fmt json": "loads tiktoken to fill one meta field",
     }
     slow = sorted((r for r in rows if r.get("warm_ms")),
@@ -116,22 +114,22 @@ def summary(rows: list[dict]) -> list[str]:
                "index build) and the four `investigate` modes (2.1–2.6×, "
                "one-time pack assembly).")
     out.append("")
-    out.append("4. **`check` and `lint` re-index the file they are checking.** At "
-               "~580 ms they are the slowest non-model commands, and the cause is "
-               "not the syntax check — `ast.parse` on the same file is 0 ms. "
-               "`_handle_check` calls `prune_file` then `_index_file` on a file "
-               "path, so it re-parses and re-chunks the file (216 `count_tokens` "
-               "calls, which loads tiktoken) and only then reads the syntax "
-               "errors back out of the database it just rewrote. On a hybrid "
-               "config this would also re-embed. The check itself needs none of "
-               "that.")
-    out.append("")
-    out.append("5. **`analyze --format json` is ~2.4× the other formats for one "
+    out.append("4. **`analyze --format json` is ~2.4× the other formats for one "
                "telemetry field.** Loading tiktoken's encoder costs ~300 ms once "
                "per process (200k base64 decodes of the BPE ranks table) against "
-               "0.9 ms per subsequent count. The load is now skipped for the four "
-               "formats whose output is read directly and is only paid for json, "
-               "where the number appears in `meta`.")
+               "0.9 ms per subsequent count. Measured by counterfactual, forcing "
+               "the count on for every format costs ~290 ms on `outline` and "
+               "~318 ms on `prose`; `stub` and `sexp` already paid the load via "
+               "the analyze path. The count is now taken only for `json`, where "
+               "the number appears in `meta` and is actually read.")
+    out.append("")
+    out.append("5. **Three costs found by this benchmark have been fixed** since "
+               "the first run: the eager tree-sitter import (`import ai_db` "
+               "+102 ms → +67 ms), `check`/`lint` re-indexing the file they were "
+               "checking (583 ms → 265 ms, now at parity with `status`), and the "
+               "tiktoken regression above. `check` also now has two modes — "
+               "`check <path>` validates files on disk and writes nothing, "
+               "`check --index` reads the stored index.")
     return out
 
 

@@ -26,6 +26,11 @@ class ToolDefinition:
             "description": self.description,
             "inputSchema": self.parameters_schema,
             "parameters_schema": self.parameters_schema,
+            # Every tool sets a category and nothing dropped it, so the grouping
+            # was unreachable: list_tools() is what MCP clients see, and it
+            # returned None for all 21 tools. Additive, so existing clients that
+            # ignore unknown fields are unaffected.
+            "category": self.category,
         }
 
 
@@ -301,11 +306,18 @@ class ServiceDispatcher:
         # 7. check
         self.register_tool(
             name="check",
-            description="Validate Python AST syntax and report syntax errors with line/column/message.",
+            description=(
+                "Validate syntax and report errors with line/column/message. "
+                "With a path, parses the files on disk and writes nothing. "
+                "With --index, reports the errors recorded when the index was "
+                "last built."
+            ),
             parameters_schema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Path or file to check"},
+                    "path": {"type": "string", "description": "File or directory to validate on disk"},
+                    "index": {"type": "boolean", "default": False,
+                              "description": "Validate the stored index instead of files on disk"},
                     "project": {"type": "string", "description": "Project scope"},
                     "allow_project": {"type": "array", "items": {"type": "string"}, "description": "Allowed projects"},
                 },
@@ -728,22 +740,88 @@ class ServiceDispatcher:
             return db.sync(target_path, project=proj_name, verbose=verbose)
 
     def _handle_check(self, args: dict[str, Any]) -> Any:
+        """Validate either the files on disk or the stored index.
+
+        Two distinct questions, previously conflated into one slow path:
+
+        - **file mode** (``check <path>``) parses what is on disk right now.
+          It writes nothing. This is what you want in an editor or a pre-commit
+          hook, where the index may be stale or absent.
+        - **index mode** (``check`` with no path, or ``check --index``) reports
+          the syntax errors recorded when the index was last built. It answers
+          "what does the index believe", which is not the same question.
+
+        The old implementation re-indexed the file and then read the errors back
+        out of the database it had just rewritten. That made a read-only command
+        mutate the index, cost a full chunk-and-embed pass to answer a question
+        ``ast.parse`` answers in under a millisecond, and reported the index's
+        verdict while looking like it had checked the file.
+        """
         db = self._get_db(args)
         path = args.get("path")
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
-        if path:
-            target_path = os.path.abspath(os.path.expanduser(path))
-            if os.path.exists(target_path):
-                if os.path.isdir(target_path):
-                    db.sync(target_path, project=project, verbose=False)
-                elif os.path.isfile(target_path):
-                    from ai_db.utils import compute_sha256
-                    db.prune_file(target_path)
-                    db._index_file(target_path, compute_sha256(target_path), project=project or "global")
-                    if hasattr(db, "conn") and db.conn:
-                        db.conn.commit()
-        return db.check_syntax(path, relative_to=os.getcwd(), project=project, allowed_projects=allow_projects)
+        index_mode = bool(args.get("index", False))
+
+        from ai_db.errors import AiDbConfigError
+
+        if index_mode:
+            if path:
+                raise AiDbConfigError(
+                    "check: --index reads the stored index, so it cannot be "
+                    "combined with a path. Use `check <path>` to validate files "
+                    "on disk, or `check --index` to validate the index."
+                )
+            return db.check_syntax(relative_to=os.getcwd(), project=project,
+                                   allowed_projects=allow_projects)
+
+        if not path:
+            # No path and no --index: the whole index is the only thing left to
+            # report on, so treat it as index mode rather than silently
+            # validating nothing.
+            return db.check_syntax(relative_to=os.getcwd(), project=project,
+                                   allowed_projects=allow_projects)
+
+        return self._check_files_on_disk(db, path, project or "global")
+
+    def _check_files_on_disk(self, db: Any, path: str, project: str) -> list[dict[str, Any]]:
+        """Parse each candidate file and report its syntax errors. Writes nothing."""
+        from ai_db.errors import AiDbConfigError
+        from ai_db.parser.linters import parse_source
+
+        # Reuse the indexer's own directory walk so `check .` considers exactly
+        # the files `sync .` would index -- same extension filter, same
+        # .aidbignore, same hard-ignored directories. Walking the tree by hand
+        # here would try to parse binaries and vendored trees.
+        if os.path.isdir(path):
+            targets = db.scan_directory(path)
+        else:
+            target = os.path.abspath(os.path.expanduser(path))
+            if not os.path.isfile(target):
+                raise AiDbConfigError(f"check: not a file or directory: {path}")
+            targets = [target]
+
+        results: list[dict[str, Any]] = []
+        for target in targets:
+            try:
+                with open(target, "r", encoding="utf-8", errors="replace") as fh:
+                    content = fh.read()
+            except OSError as exc:
+                raise AiDbConfigError(f"check: cannot read {target}: {exc}") from exc
+            _, _, error = parse_source(target, content)
+            if error is None:
+                continue
+            line, col, message = error
+            results.append({
+                "file": os.path.relpath(target, os.getcwd()),
+                "abs_path": target,
+                "line": line,
+                "col": col,
+                "message": message,
+                "project": project,
+                "source": "file",
+            })
+        return results
 
     def _handle_status(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
