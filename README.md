@@ -336,6 +336,10 @@ AI_DB_SKILL_DIRS=tests/fixtures/skills ai-db eval --skills --golden eval/golden/
 ai-db log --slow 500        # slow queries with per-stage latency
 ```
 
+Recorded measurements, the full retrieval-configuration matrix (lexical vs
+hybrid on CPU/GPU vs vec0 vs rerank) and the output-mode cost table live in
+[`eval/results/BENCHMARKS.md`](eval/results/BENCHMARKS.md).
+
 Passing `--baseline` makes the command a regression gate: it exits non-zero if the
 measured recall drops more than the tolerance in the baseline file, so CI fails on
 a quality regression rather than only on a crash. Recorded results live in

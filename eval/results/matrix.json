@@ -513,41 +513,76 @@
           }
         }
       }
+    },
+    "hybrid_cpu": {
+      "config": "/tmp/matrix/hybrid_cpu.json",
+      "db": "/tmp/matrix/db/hybrid_cpu.db",
+      "project": "ai-db",
+      "index": {
+        "indexed": true,
+        "measured_without_resync": true,
+        "chunks": 1713
+      },
+      "retrieval": {
+        "k": 10,
+        "queries": 40,
+        "recall@10": 0.925,
+        "mrr": 0.7821,
+        "ndcg@10": 0.8184,
+        "latency_ms_p50": 205.7,
+        "latency_ms_p95": 217.79
+      },
+      "pack": {
+        "queries": 20,
+        "budget_tokens": 8000,
+        "pack_recall": 0.975,
+        "tokens_mean": 7694.7
+      }
     }
   },
   "model": {
     "embedding": "Qwen/Qwen3-Embedding-0.6B",
+    "dims": 1024,
     "rerank": "BAAI/bge-reranker-v2-m3",
-    "corpus": "this repo, 149 files / ~1709 chunks / 3204 symbols",
-    "golden": "eval/golden/ai_db.jsonl (40 queries), eval/golden/ai_db_pack.jsonl"
+    "corpus": "this repo, 149 files / 1713 chunks / 3204 symbols, 9 languages",
+    "golden": "eval/golden/ai_db.jsonl (40 queries), eval/golden/ai_db_pack.jsonl (20)"
   },
+  "hardware": "NVIDIA GeForce RTX 3070 Laptop GPU (sm_86, 8 GB); 16 CPU threads (Intel i7-11800H, 8 physical cores, AVX-512, no avx512_bf16, no AMX); torch 2.11.0+cu128",
   "headline": {
-    "1_hybrid_earns_its_cost": "recall@10 0.825 -> 0.950, MRR 0.618 -> 0.785, nDCG 0.668 -> 0.826, pack_recall 0.950 -> 1.000. Embeddings are a decisive win on this corpus, not a wash. This is the column that was missing from the raw-vs-lexical comparison.",
-    "2_vec0_is_not_a_speedup_here": "Identical accuracy to exact (0.950/0.785/0.826 both) and 156 ms vs 167 ms p50 -- within noise at 1709 chunks. Consistent with 13.3: vec0 is a constant-factor C-loop win, not ANN, so the gain shrinks as the corpus does not grow.",
-    "3_rerank_makes_retrieval_worse": "recall@10 0.950 -> 0.875, MRR 0.785 -> 0.555, nDCG 0.826 -> 0.632, AND p50 167 ms -> 16,772 ms (100x). A double negative. bge-reranker-v2-m3 is a general MS-Marco-style cross-encoder, not tuned for code, so re-scoring a good fused ranking with it discards signal.",
-    "4_rerank_latency_has_two_known_causes": "CrossEncoder loads with max_seq_length=8192 while the model was trained at 512; measured 27,575 ms -> 14,965 ms (512) -> 4,088 ms (256) for the same 10 real candidates. Separately it loads fp32 on GPU, and the dtype gate added in 6ae77a0 covers the embedder only, not the reranker. Both are unfixed and recorded here rather than silently corrected."
+    "1_hybrid_is_decisive": "recall@10 0.825 -> 0.950, MRR 0.618 -> 0.785, nDCG 0.668 -> 0.826, pack_recall 0.950 -> 1.000. Embeddings earn their cost on this corpus; this is the column missing from the raw-vs-lexical comparison.",
+    "2_device_matters_for_indexing_not_querying": "Indexing this corpus: CPU ~55 min vs GPU 22.9 s (145x). Query p50: 205.7 ms vs 167.4 ms (1.2x). A single short query cannot fill a GPU; bulk indexing can. Index on GPU, query on either.",
+    "3_vec0_is_not_a_speedup_here": "Identical accuracy to exact (0.950/0.785/0.826 both) and 156 ms vs 167 ms p50 -- noise at 1713 chunks. Consistent with the 100k synthetic benchmark: vec0 is a constant-factor C-loop win, not ANN.",
+    "4_rerank_makes_retrieval_worse": "recall@10 0.950 -> 0.875, MRR 0.785 -> 0.555, nDCG 0.826 -> 0.632, AND p50 167 ms -> 16,772 ms (100x). A double negative. bge-reranker-v2-m3 is a general MS-Marco cross-encoder, not code-tuned, so re-scoring a good fused ranking discards signal.",
+    "5_rerank_latency_two_known_causes": "CrossEncoder loads at max_seq_length=8192 while trained at 512: 27,575 ms -> 14,965 at 512 -> 4,088 at 256 for the same 10 real candidates. Separately it loads fp32 on GPU; the dtype gate covers the embedder only. Both unfixed and recorded rather than silently corrected.",
+    "6_cpu_and_gpu_embeddings_differ": "CPU loads float32, GPU loads the checkpoint bfloat16, so vectors differ and one borderline query flips: recall@10 0.925 vs 0.950, MRR effectively tied (0.782 vs 0.785). The numeric difference is sub-1%; the ranking effect is one query of 40."
   },
-  "output_mode_costs": {
-    "note": "Formats render identical evidence, so only cost differs. Ratios vs the cheapest mode of the same command.",
+  "index_wall_clock": {
+    "cpu": "~55 min",
+    "gpu": "22.9 s",
+    "chunks": 1713,
+    "note": "parse + chunk + embed + persist. Indexing 145x faster on GPU vs 1.2x faster query."
+  },
+  "output_mode_costs_chars": {
+    "note": "Formats render identical evidence, so only cost differs. Fixed target, lexical condition.",
     "analyze": {
       "outline": 5256,
       "stub": 5658,
       "prose": 6399,
       "sexp": 6727,
       "json": 15221,
-      "json_vs_outline": 2.9
+      "json_vs_cheapest": 2.9
     },
     "locate": {
       "sexp": 583,
       "stub": 942,
       "json": 1994,
-      "json_vs_sexp": 3.42
+      "json_vs_cheapest": 3.42
     },
     "trace": {
       "tree": 2268,
       "mermaid": 5006,
       "json": 134245,
-      "json_vs_tree": 59.2
+      "json_vs_cheapest": 59.2
     },
     "investigate": {
       "flow": 13602,
@@ -557,13 +592,18 @@
       "impact_vs_flow": 2.4
     }
   },
-  "bugs_found_by_this_matrix": [
-    "rerank was impossible to configure from a file: the section was key-checked against {provider, options, top_n} while the option extraction assumed flat siblings, so every shape of a non-`none` rerank was rejected. Fixed in the same commit; tests added.",
-    "rerank also could not be exercised before, which is why the previously recorded eval/results/hybrid_qwen3-0.6b_rerank_bge-v2-m3.json (recall@10 0.875, p50 20,489 ms) had no reproducible config path."
+  "bugs_found": [
+    "rerank was impossible to configure from a file: the section was key-checked against {provider, options, top_n} while option extraction assumed flat siblings, so every shape of a non-`none` provider was rejected. Fixed; tests added.",
+    "rerank therefore could not be exercised, which is why the previously recorded eval/results/hybrid_qwen3-0.6b_rerank_bge-v2-m3.json (recall@10 0.875, p50 20,489 ms) had no reproducible config path.",
+    "trace resolves bare symbol names only: 'Class.method' and 'path/file.py:symbol' both return 'No trace found'. Pre-existing.",
+    "evaluate --skills reported top1_accuracy 0.0 with no skills indexed, indistinguishable from a broken router. Now an error.",
+    "ruff check . reached stray root scripts and --fix rewrote them. Now pinned to project code."
   ],
   "caveats": [
-    "One corpus, one machine, no repeated runs; p50 varies run to run (the rerank condition ranged 12.7-20.5 s across three runs).",
-    "Rerank quality depends on the model; a code-tuned cross-encoder may behave differently. This measurement says THIS model hurts THIS corpus.",
-    "hybrid_cpu was measured while other conditions ran concurrently, so its latency is pessimistic; its accuracy numbers are unaffected."
-  ]
+    "One corpus, one machine, no repeated runs. p50 varies run to run (rerank ranged 12.7-20.5 s across three runs).",
+    "Rerank quality is model-dependent; a code-tuned cross-encoder may behave differently. This says THIS model hurts THIS corpus.",
+    "hybrid_cpu was measured with no competing load, via eval/measure_index.py against the already-built index, so its latency is directly comparable.",
+    "'~55 min on CPU' is one run and includes parsing and SQLite writes, not only embedding."
+  ],
+  "written_report": "eval/results/BENCHMARKS.md"
 }

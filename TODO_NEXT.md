@@ -571,6 +571,43 @@ a label grant inside one database and is not a security boundary.
 
 ---
 
+## Benchmark results (written up)
+
+`eval/results/BENCHMARKS.md` is the human-readable report; `eval/results/matrix.json`
+holds the machine-readable per-condition data. Six sections: the retrieval
+configuration matrix, output-mode costs, device throughput, the vec0/exact
+comparison, the dtype gate, and the bugs this exercise surfaced.
+
+Headline numbers, all on this repo (149 files, 1713 chunks, 40-query golden set):
+
+| condition | recall@10 | MRR | nDCG | p50 (ms) | pack |
+|---|---|---|---|---|---|
+| lexical (BM25 + graph) | 0.825 | 0.618 | 0.668 | 13.7 | 0.950 |
+| hybrid, embedder on CPU | 0.925 | 0.782 | 0.818 | 205.7 | 0.975 |
+| hybrid, embedder on GPU | **0.950** | **0.785** | **0.826** | 167.4 | **1.000** |
+| hybrid + vec0 | 0.950 | 0.785 | 0.826 | 156.1 | 1.000 |
+| hybrid + bge-reranker | 0.875 | 0.555 | 0.632 | 16,772 | 0.950 |
+
+1. **Hybrid is decisive** (+0.125 recall@10, +0.167 MRR, pack to 1.000). This is
+   the column that was missing from the raw-vs-lexical comparison, and it settles
+   whether embeddings earn their cost.
+2. **The device matters for indexing, not querying**: 145x on index time
+   (~55 min CPU vs 22.9 s GPU) but only 1.2x on query latency. One short query
+   cannot fill a GPU; bulk indexing can.
+3. **vec0 is a wash at real corpus size** — identical accuracy, 156 vs 167 ms.
+4. **Rerank is a double negative on this pairing**: worse accuracy *and* 100x the
+   latency. Two causes identified, both left unfixed and documented rather than
+   silently corrected.
+5. **Output formats are where the money is**: `trace --format json` is 59x the
+   tree renderer, `analyze --format json` 2.9x outline, `locate --format json`
+   3.4x sexp.
+
+Not done: a code-tuned cross-encoder, and the two rerank latency fixes
+(`max_seq_length` 8192 -> 512, and fp32 on GPU). Both are one-line changes with a
+known ~7x available, deliberately left so the measurement above stays reproducible.
+
+---
+
 ## Quick "what is left" summary
 
 | Block | State |
