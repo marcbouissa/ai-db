@@ -1,0 +1,682 @@
+{
+  "$comment": [
+    "Declarative benchmark cases for eval/benchmark_runner.py.",
+    "",
+    "Every `ground_truth` block below is copied verbatim from an existing golden",
+    "set under eval/golden/, and each block names its source in `golden_source`.",
+    "tests/test_scenarios.py re-checks that correspondence, so a scenario cannot",
+    "drift away from the golden set it claims to come from. Ground truth that is",
+    "invented rather than copied would make every accuracy number meaningless.",
+    "",
+    "`repo` selects the corpus. Flow scenarios use tests/fixtures/callflow because",
+    "that is the corpus eval/golden/flow.jsonl was built against; everything else",
+    "uses the repository root.",
+    "",
+    "Scoring axes, all deterministic and requiring no LLM:",
+    "  recall        - every listed filepath appears in the output",
+    "  symbol_recall - every listed symbol appears in the output",
+    "  order         - the listed symbols appear in that relative order (flow only;",
+    "                   a call path out of order is a wrong answer, not a short one)",
+    "  unresolved    - citations in the output that name a file or symbol which",
+    "                   does not exist, counted as fabrications"
+  ],
+  "repos": {
+    "root": ".",
+    "callflow": "tests/fixtures/callflow"
+  },
+  "known_unreachable": {
+    "$comment": [
+      "One entry in eval/golden/ai_db.jsonl targets ai_db/server/http_server.py,",
+      "which was deleted when the HTTP transport was removed. It can never be",
+      "recalled, so recall@10 over that golden set is capped at 0.975. It is left",
+      "in place because editing the golden set changes what the CI gate measures,",
+      "but every recall figure should be read against that ceiling."
+    ],
+    "queries": [
+      "http server post endpoint json"
+    ],
+    "missing_files": [
+      "ai_db/server/http_server.py"
+    ],
+    "recall_ceiling": 0.975
+  },
+  "query_modes": [
+    {
+      "mode": "locate",
+      "goal": "Find symbol definitions across a multi-file project.",
+      "command": "investigate --mode locate {query}",
+      "golden_source": "eval/golden/ai_db.jsonl",
+      "cases": [
+        {
+          "query": "where is bm25 ranking of chunks done",
+          "ground_truth": {
+            "recall": [
+              "ai_db/storage/sqlite_backend.py"
+            ],
+            "symbol_recall": [
+              "search_chunks"
+            ]
+          }
+        },
+        {
+          "query": "insert chunks compress content into fts index",
+          "ground_truth": {
+            "recall": [
+              "ai_db/storage/sqlite_backend.py"
+            ],
+            "symbol_recall": [
+              "insert_chunks"
+            ]
+          }
+        },
+        {
+          "query": "delete file cascade remove symbols annotations",
+          "ground_truth": {
+            "recall": [
+              "ai_db/storage/sqlite_backend.py"
+            ],
+            "symbol_recall": [
+              "delete_file"
+            ]
+          }
+        },
+        {
+          "query": "nested transaction savepoint rollback",
+          "ground_truth": {
+            "recall": [
+              "ai_db/storage/sqlite_backend.py"
+            ],
+            "symbol_recall": [
+              "transaction"
+            ]
+          }
+        },
+        {
+          "query": "find callers of a symbol cross references",
+          "ground_truth": {
+            "recall": [
+              "ai_db/search/query.py"
+            ],
+            "symbol_recall": [
+              "query_callers"
+            ]
+          }
+        },
+        {
+          "query": "split python file into classes and functions chunks",
+          "ground_truth": {
+            "recall": [
+              "ai_db/parser/chunker.py"
+            ],
+            "symbol_recall": [
+              "chunk_file"
+            ]
+          }
+        },
+        {
+          "query": "extract symbols from python ast",
+          "ground_truth": {
+            "recall": [
+              "ai_db/parser/ts_graph.py"
+            ],
+            "symbol_recall": [
+              "extract_graph"
+            ]
+          }
+        },
+        {
+          "query": "validate python syntax errors",
+          "ground_truth": {
+            "recall": [
+              "ai_db/parser/linters.py"
+            ],
+            "symbol_recall": [
+              "validate_python_syntax"
+            ]
+          }
+        },
+        {
+          "query": "sync directory skip unchanged files by sha256 hash",
+          "ground_truth": {
+            "recall": [
+              "ai_db/search/indexer.py"
+            ],
+            "symbol_recall": [
+              "sync"
+            ]
+          }
+        },
+        {
+          "query": "aidbignore pattern matching",
+          "ground_truth": {
+            "recall": [
+              "ai_db/ignorer.py"
+            ],
+            "symbol_recall": [
+              "AidbIgnore"
+            ]
+          }
+        },
+        {
+          "query": "camelcase tokenizer for queries",
+          "ground_truth": {
+            "recall": [
+              "ai_db/utils.py"
+            ],
+            "symbol_recall": [
+              "tokenize"
+            ]
+          }
+        },
+        {
+          "query": "stub formatter output",
+          "ground_truth": {
+            "recall": [
+              "ai_db/analyzer/formatters.py"
+            ],
+            "symbol_recall": [
+              "format_as_stub"
+            ]
+          }
+        },
+        {
+          "query": "record query latency percentiles telemetry",
+          "ground_truth": {
+            "recall": [
+              "ai_db/telemetry/tracker.py"
+            ],
+            "symbol_recall": [
+              "record_query"
+            ]
+          }
+        },
+        {
+          "query": "save session context memory",
+          "ground_truth": {
+            "recall": [
+              "ai_db/memory/context.py"
+            ],
+            "symbol_recall": [
+              "save_context"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "mode": "explain",
+      "goal": "Architectural understanding of a component.",
+      "command": "investigate --mode explain {query}",
+      "golden_source": "eval/golden/ai_db_pack.jsonl",
+      "cases": [
+        {
+          "query": "how does hybrid retrieval fuse bm25 and vector results",
+          "ground_truth": {
+            "recall": [
+              "ai_db/search/retriever.py",
+              "ai_db/storage/sqlite_backend.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "how is the final ranking of search candidates computed",
+          "ground_truth": {
+            "recall": [
+              "ai_db/search/ranking.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "how does sync decide which files to reindex",
+          "ground_truth": {
+            "recall": [
+              "ai_db/search/indexer.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "how are oversized code chunks split into parts",
+          "ground_truth": {
+            "recall": [
+              "ai_db/parser/chunker.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "how is the config file validated",
+          "ground_truth": {
+            "recall": [
+              "ai_db/config.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "how are storage providers discovered from entry points",
+          "ground_truth": {
+            "recall": [
+              "ai_db/storage/factory.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "how are embeddings computed for chunks without vectors",
+          "ground_truth": {
+            "recall": [
+              "ai_db/embed/indexing.py",
+              "ai_db/storage/sqlite_backend.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "how are hosted provider http requests retried",
+          "ground_truth": {
+            "recall": [
+              "ai_db/http_client.py"
+            ],
+            "symbol_recall": []
+          }
+        }
+      ]
+    },
+    {
+      "mode": "impact",
+      "goal": "Identify blast radius and reverse dependencies before refactoring.",
+      "command": "investigate --mode impact {query}",
+      "golden_source": "eval/golden/ai_db_pack.jsonl",
+      "cases": [
+        {
+          "query": "search_chunks",
+          "ground_truth": {
+            "recall": [
+              "ai_db/search/retriever.py",
+              "ai_db/analyzer/engine.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "count_tokens",
+          "ground_truth": {
+            "recall": [
+              "ai_db/parser/chunker.py",
+              "ai_db/analysis/investigate.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "expand_terms",
+          "ground_truth": {
+            "recall": [
+              "ai_db/search/retriever.py",
+              "ai_db/search/ranking.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "get_chunks_by_ids",
+          "ground_truth": {
+            "recall": [
+              "ai_db/search/retriever.py",
+              "ai_db/search/ranking.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "build_fts",
+          "ground_truth": {
+            "recall": [
+              "ai_db/storage/sqlite_backend.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "parse_config",
+          "ground_truth": {
+            "recall": [
+              "ai_db/config.py",
+              "ai_db/config_template.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "embed_missing",
+          "ground_truth": {
+            "recall": [
+              "ai_db/__init__.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "materialize_tracked",
+          "ground_truth": {
+            "recall": [
+              "ai_db/cli.py"
+            ],
+            "symbol_recall": []
+          }
+        }
+      ]
+    },
+    {
+      "mode": "flow",
+      "goal": "Trace call sequence and execution flow from an entrypoint.",
+      "command": "investigate --mode flow {query}",
+      "golden_source": "eval/golden/flow.jsonl",
+      "repo": "callflow",
+      "cases": [
+        {
+          "query": "launch_stage_ov",
+          "ground_truth": {
+            "order": [
+              "launch_stage_ov",
+              "open_stage",
+              "_load_async",
+              "_fetch_assets",
+              "_init_ui",
+              "wait_for_stage_load",
+              "_wait_ready",
+              "preload_prefabs"
+            ]
+          }
+        },
+        {
+          "query": "open_stage",
+          "ground_truth": {
+            "order": [
+              "open_stage",
+              "_load_async",
+              "_fetch_assets",
+              "_init_ui"
+            ]
+          }
+        },
+        {
+          "query": "wait_for_stage_load",
+          "ground_truth": {
+            "order": [
+              "wait_for_stage_load",
+              "_wait_ready"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "mode": "diff",
+      "goal": "Understand structural changes across commits without raw churn.",
+      "command": "investigate --mode diff --since {since} {query}",
+      "golden_source": "eval/golden/ai_db_diff.jsonl",
+      "requires_since": true,
+      "cases": [
+        {
+          "query": "config migration",
+          "since": "0dc99234607beea22a3512e089508627afd43f7a..e861b84b028b2a183da2f2c7ffad6f3635ccd6c2",
+          "ground_truth": {
+            "recall": [
+              "ai_db/config_template.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "resolve which device to run embeddings on",
+          "since": "e861b84b028b2a183da2f2c7ffad6f3635ccd6c2..0dc99234607beea22a3512e089508627afd43f7a",
+          "ground_truth": {
+            "recall": [
+              "ai_db/device.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "symbol centrality rebuild after sync",
+          "since": "e861b84b028b2a183da2f2c7ffad6f3635ccd6c2..0dc99234607beea22a3512e089508627afd43f7a",
+          "ground_truth": {
+            "recall": [
+              "ai_db/storage/sqlite_backend.py"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "which new test fixture files did this change add",
+          "since": "5514287e112bd66592f593d8cbaa12ea9d3ff2d3..e861b84b028b2a183da2f2c7ffad6f3635ccd6c2",
+          "ground_truth": {
+            "recall": [
+              "tests/fixtures/polyglot/ts/billing/tax.ts"
+            ],
+            "symbol_recall": []
+          }
+        },
+        {
+          "query": "which go fixture symbols were added",
+          "since": "5514287e112bd66592f593d8cbaa12ea9d3ff2d3..e861b84b028b2a183da2f2c7ffad6f3635ccd6c2",
+          "ground_truth": {
+            "recall": [
+              "tests/fixtures/polyglot/go/billing/invoice.go"
+            ],
+            "symbol_recall": []
+          }
+        }
+      ]
+    }
+  ],
+  "format_matrix": {
+    "$comment": [
+      "Matrix 2. analyze formats and pack formats are DIFFERENT sets and the runner",
+      "asserts it: `outline` and `prose` are valid for analyze and must be REJECTED",
+      "for a pack. `analyze --format json` is the only format that emits",
+      "meta.tokens_out_formatted, and the runner checks the emitted value equals the",
+      "token count of the bytes actually received."
+    ],
+    "targets": [
+      "ai_db/parser/ts_graph.py",
+      "ai_db/search/ranking.py",
+      "ai_db/config.py"
+    ],
+    "analyze_formats": [
+      "json",
+      "stub",
+      "sexp",
+      "outline",
+      "prose"
+    ],
+    "pack_formats": [
+      "compact",
+      "json",
+      "stub",
+      "sexp"
+    ],
+    "rejected_pack_formats": [
+      "outline",
+      "prose"
+    ],
+    "pack_queries": [
+      "how are search results ranked",
+      "how is the config file validated"
+    ],
+    "budget_tokens": 8000
+  },
+  "depth_matrix": {
+    "$comment": [
+      "Matrix 4. `summary` and `structure` are documented as byte-identical; the",
+      "runner checks that instead of trusting the doc, and reports a finding if",
+      "they ever diverge. `expand --depth` cannot be benchmarked as a subprocess",
+      "-- ref handles are process-scoped -- so it is recorded as not-measurable",
+      "rather than faked."
+    ],
+    "analyze_depths": [
+      "summary",
+      "structure",
+      "targeted",
+      "full"
+    ],
+    "expand_depths": [
+      "targeted",
+      "full"
+    ],
+    "targets": [
+      "ai_db/search/ranking.py"
+    ]
+  },
+  "config_matrix": {
+    "$comment": [
+      "Matrix 3. Conditions are generated by eval/matrix_configs.py into a scratch",
+      "dir and each is synced before querying, so latency reflects a built index.",
+      "A condition listed in `cuda_conditions` is SKIPPED with an explicit note",
+      "when no GPU is present -- reported as skipped, never as a zero.",
+      "",
+      "`sync_root` bounds the corpus, and it is the SAME for every condition,",
+      "which is what makes the comparison valid: a config comparison needs one",
+      "corpus held constant, not a large one. `ai_db/` is the library source; it",
+      "excludes tests/ and eval/, which the retrieval benchmark showed to be the",
+      "largest confound in the index. The runner records the file and chunk count",
+      "per condition so a reader can verify the corpora really do match.",
+      "",
+      "Bounding this matters: a full-repository hybrid_cuda sync took ~30 min for",
+      "2,023 chunks (~890 ms/chunk), against ~73 ms/chunk measured on a 12-file",
+      "corpus, so a full sweep of 7 conditions did not fit in any reasonable",
+      "timeout. That superlinearity is unexplained and worth its own investigation."
+    ],
+    "sync_root": "ai_db",
+    "conditions": [
+      "lexical",
+      "lexical_vec0",
+      "hybrid_cuda",
+      "hybrid_cuda_vec0"
+    ],
+    "dtype_conditions_opt_in": [
+      "hybrid_cuda_fp32",
+      "hybrid_cuda_bf16",
+      "hybrid_cuda_fp16"
+    ],
+    "dtype_conditions_measured": {
+      "$comment": [
+        "Measured on this host (RTX 3070 Laptop), same model and device, 189 chunks:",
+        "  bfloat16  26.6s   7.1 chunks/s",
+        "  float16   29.2s   6.5 chunks/s",
+        "  float32  594.8s   0.3 chunks/s   <- 22x slower than bfloat16",
+        "A full float32 index over sync_root is therefore ~50 minutes against ~2",
+        "for bfloat16, so the dtype sweep is opt-in rather than in the default run.",
+        "Note `embedding.dtype: auto` resolves to None on an accelerator, meaning",
+        "'load whatever the model ships in' -- bfloat16 for Qwen3-Embedding -- so",
+        "the default already takes the fast path and the gate is not choosing",
+        "badly. Only an explicit float32 pays the 22x."
+      ],
+      "float32_chunks_per_s": 0.317,
+      "bfloat16_chunks_per_s": 7.108,
+      "float16_chunks_per_s": 6.477,
+      "float32_slowdown_vs_bfloat16": 22.4
+    },
+    "cuda_conditions": [
+      "hybrid_cuda",
+      "hybrid_cuda_vec0",
+      "hybrid_cuda_fp32",
+      "hybrid_cuda_bf16",
+      "hybrid_cuda_fp16"
+    ],
+    "recall_queries": [
+      "where is bm25 ranking of chunks done",
+      "how is the config file validated",
+      "how are oversized code chunks split into parts",
+      "delete file cascade remove symbols annotations",
+      "extract symbols from python ast"
+    ]
+  },
+  "agent_matrix": {
+    "$comment": [
+      "Matrix 5. Agent-realistic: config x transport, scored on a held-out half.",
+      "",
+      "Transport dominates configuration. Measured on this repo, same index:",
+      "  CLI subprocess, lexical   ~240 ms per call, every call",
+      "  CLI subprocess, hybrid   ~10.5 s per call, every call (model reload)",
+      "  persistent MCP           8-286 ms first call, then 0.2-1.4 ms",
+      "So a CLI-only harness does not add noise to the hybrid comparison, it",
+      "inverts it: the highest-recall config looks like the slowest by three",
+      "orders of magnitude, purely because of how the process is launched.",
+      "",
+      "Config selection reads the `tune` half of the golden set and reporting",
+      "reads `holdout`, because choosing a config to maximise recall@10 on the",
+      "same 40 queries that gate CI would manufacture the number being reported.",
+      "The split is deterministic and stratified by module; see eval/heldout.py.",
+      "",
+      "`doc_weight` is swept on hybrid only. A lexical config has no fusion",
+      "weight, so sweeping it there would report a no-op as if it were a",
+      "datapoint. `conditions` defaults to lexical + hybrid so the run needs at",
+      "most one CUDA index build; add the vec0 and dtype variants to sweep them."
+    ],
+    "golden": "eval/golden/ai_db.jsonl",
+    "mode": "locate",
+    "budget_tokens": 8000,
+    "sync_root": "ai_db",
+    "conditions": [
+      "lexical",
+      "hybrid_cuda"
+    ],
+    "doc_weights": [
+      0.3,
+      0.5,
+      0.7
+    ]
+  },
+  "baselines": {
+    "$comment": [
+      "Raw-context baselines, both reported. `files` reads the top N matching files",
+      "whole, which is what an agent does with `cat`. `windows` reads matching lines",
+      "plus context, the strongest thing an agent can do with a shell. Quoting only",
+      "the first would flatter ai-db. The limits are set generously on purpose."
+    ],
+    "file_read": 5,
+    "line_window": 3,
+    "max_lines": 200
+  },
+  "llm": {
+    "$comment": [
+      "The LLM arm is OPTIONAL and defaults to off. With no API key the runner sets",
+      "llm.measured = false and every LLM metric to null. It does not invent TTFT,",
+      "generation time or a hallucination rate.",
+      "",
+      "Quality metrics (recall, symbol recall, order, unresolved citations) are",
+      "deterministic functions of the output text and need no LLM, so they are",
+      "always reported. The `unresolved` count is the structural stand-in for",
+      "fabrication: a pack that cites a symbol or file that does not exist has",
+      "invented it, and that is checkable without a model.",
+      "",
+      "`answer_tokens` is the assumed reply length used by the cost projection. It",
+      "is a declared assumption, labelled as such, not a measurement."
+    ],
+    "enabled": false,
+    "provider": "openai_compatible",
+    "model": "gpt-4o-mini",
+    "base_url_env": "BENCH_LLM_BASE_URL",
+    "api_key_env": "BENCH_LLM_API_KEY",
+    "answer_tokens": 300,
+    "pricing_usd_per_1m": {
+      "gpt-4o-mini": {
+        "input": 0.15,
+        "output": 0.6
+      },
+      "gpt-4o": {
+        "input": 2.5,
+        "output": 10.0
+      },
+      "claude-3-5-haiku": {
+        "input": 0.8,
+        "output": 4.0
+      }
+    }
+  }
+}

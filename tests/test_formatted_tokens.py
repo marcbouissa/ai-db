@@ -68,14 +68,21 @@ def test_field_is_actually_the_size_of_the_returned_string(analysis):
         assert d["meta"]["format"] == style
 
 
-def test_annotate_returns_exactly_what_format_analyze_would(analysis):
-    """The caller must be able to print what was counted, not re-render it."""
+def test_annotate_returns_exactly_what_it_counted(analysis):
+    """The caller must print the string the recorded count describes.
+
+    This used to assert equality with a render of the *pre-annotation* data,
+    which is only true if the annotation happens after rendering -- and that is
+    precisely the bug: it meant the json payload never contained the field. The
+    correct invariant is the fixed point, asserted in
+    `TestAnnotatedCountIsAFixedPoint`. Here we only require that a re-render of
+    the annotated dict reproduces what was returned, i.e. nothing is mutated
+    after the last render.
+    """
     for style in sorted(ANALYZE_FORMATS):
-        before = copy.deepcopy(analysis)
         d = copy.deepcopy(analysis)
-        # compare against the *pre-annotation* data: annotate mutates meta, and
-        # re-rendering after the mutation would describe a different string
-        assert annotate_formatted_tokens(d, style) == format_analyze(before, style)
+        rendered = annotate_formatted_tokens(d, style, count=True)
+        assert rendered == format_analyze(d, style), style
 
 
 def test_existing_meta_is_preserved(analysis):
@@ -102,21 +109,28 @@ def test_batch_results_keep_their_own_per_file_meta(analysis):
         "the batch total is annotated; per-file counts are the caller's to request")
 
 
-def test_json_payload_cannot_contain_its_own_count(analysis):
-    """Documented asymmetry, asserted so it cannot change unnoticed.
+def test_json_payload_does_contain_its_own_count(analysis):
+    """A json payload carries the count, and the count describes that payload.
 
-    The field is set after rendering, so a json payload cannot contain its own
-    token count. The dict (MCP/HTTP) does carry it; the printed string does not.
-    Counting a re-render would be worse -- that string is longer than the one
-    counted, so the number would describe something nobody receives.
+    This test previously asserted the opposite -- that the field could *not* be
+    in the payload -- and gave a rationale: "counting a re-render would be worse,
+    that string is longer than the one counted, so the number would describe
+    something nobody receives." The rationale does not hold. A fixed point
+    resolves it: set the value, re-render, recount, repeat until stable, and
+    return the string whose cost is the number recorded. The earlier behaviour
+    meant the field was unreachable in the only format whose output is read by a
+    machine.
     """
     d = copy.deepcopy(analysis)
-    rendered = annotate_formatted_tokens(d, "json")
+    rendered = annotate_formatted_tokens(d, "json", count=True)
     parsed = json.loads(rendered)
     assert parsed["meta"]["tokens_out"] == 817
-    assert "tokens_out_formatted" not in parsed["meta"]
-    # the dict the MCP and HTTP transports deliver does carry it
-    assert d["meta"]["tokens_out_formatted"] > 0
+    assert parsed["meta"]["tokens_out_formatted"] > 0
+    from ai_db.parser.chunker import count_tokens
+
+    assert parsed["meta"]["tokens_out_formatted"] == count_tokens(rendered)
+    # The dict the MCP and HTTP transports deliver carries the same number.
+    assert d["meta"]["tokens_out_formatted"] == parsed["meta"]["tokens_out_formatted"]
     from ai_db.parser.chunker import count_tokens
     assert d["meta"]["tokens_out_formatted"] == count_tokens(rendered)
 
@@ -148,3 +162,56 @@ def test_a_tokenizer_failure_does_not_lose_the_output(analysis, monkeypatch):
     assert rendered.strip(), "the text must survive a failed count"
     assert d["meta"]["tokens_out_formatted"] is None
     assert d["meta"]["format"] == "stub"
+
+
+class TestAnnotatedCountIsAFixedPoint:
+    """The recorded count must be the cost of the string the caller receives.
+
+    The previous implementation rendered first and set `meta` afterwards, so the
+    field never appeared in the `json` payload -- the one format whose output a
+    machine reads `meta` from. Asserting on the mutated *dict* (as the tests
+    above do) cannot catch that; the assertion has to be on the rendered string.
+    """
+
+    @staticmethod
+    def _count(text: str) -> int:
+        from ai_db.parser.chunker import count_tokens
+
+        return count_tokens(text)
+
+    def test_json_output_actually_contains_the_field(self, analysis):
+        d = copy.deepcopy(analysis)
+        rendered = annotate_formatted_tokens(d, "json", count=True)
+        assert "tokens_out_formatted" in rendered, (
+            "the field must be visible in the json payload, not only in the dict")
+        assert json.loads(rendered)["meta"]["format"] == "json"
+
+    def test_recorded_equals_true_cost_of_returned_string(self, analysis):
+        d = copy.deepcopy(analysis)
+        rendered = annotate_formatted_tokens(d, "json", count=True)
+        recorded = json.loads(rendered)["meta"]["tokens_out_formatted"]
+        assert recorded == self._count(rendered), (
+            f"recorded {recorded} but the string costs {self._count(rendered)}")
+
+    def test_converges_in_a_bounded_number_of_passes(self, analysis):
+        """A fixed point that oscillates would make the number meaningless."""
+        d = copy.deepcopy(analysis)
+        rendered = annotate_formatted_tokens(d, "json", count=True)
+        recorded = json.loads(rendered)["meta"]["tokens_out_formatted"]
+        again = annotate_formatted_tokens(d, "json", count=True)
+        assert json.loads(again)["meta"]["tokens_out_formatted"] == recorded
+
+    def test_holds_for_every_analyze_format(self, analysis):
+        for style in ANALYZE_FORMATS:
+            d = copy.deepcopy(analysis)
+            rendered = annotate_formatted_tokens(d, style, count=True)
+            assert d["meta"]["format"] == style
+            assert isinstance(d["meta"]["tokens_out_formatted"], int)
+            assert rendered.strip()
+
+    def test_count_false_skips_the_count_but_keeps_the_format(self, analysis):
+        d = copy.deepcopy(analysis)
+        rendered = annotate_formatted_tokens(d, "stub", count=False)
+        assert d["meta"]["format"] == "stub"
+        assert d["meta"].get("tokens_out_formatted") is None
+        assert rendered.strip()

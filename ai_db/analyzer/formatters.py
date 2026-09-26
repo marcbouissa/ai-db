@@ -377,6 +377,11 @@ def _analyze_prose(data: dict[str, Any]) -> str:
     return "\n".join(out)
 
 
+# Bounded iteration for the tokens_out_formatted fixed point. Two passes suffice
+# in practice (the digit width settles); the bound is a guard, not a target.
+_ANNOTATION_FIXED_POINT_PASSES = 4
+
+
 def annotate_formatted_tokens(data: dict[str, Any], style: str, *,
                               count: bool = True) -> str:
     """Render and record the real formatted size on ``meta``.
@@ -406,22 +411,37 @@ def annotate_formatted_tokens(data: dict[str, Any], style: str, *,
 
     Returns the rendered text so the caller prints exactly what was counted.
 
-    One inherent asymmetry, stated rather than hidden: the field is set *after*
-    rendering, so a ``json`` payload cannot contain its own token count. For MCP
-    and HTTP, which deliver the dict, the field is in the payload and the count
-    describes that payload. For the CLI printing JSON, the count describes the
-    string as printed, which is one field's worth smaller than the dict.
-    Re-rendering after setting the field would fix neither -- the second string
-    is longer than the one counted.
+    The count is a fixed point. Setting the field changes the string being
+    counted, so the value is iterated until re-rendering with it does not change
+    the token count (two passes in practice: the digit width settles). The
+    invariant -- and the thing a test must assert -- is that
+    ``count_tokens(returned) == meta["tokens_out_formatted"]``. An earlier
+    version set the field *after* rendering and so never emitted it into the
+    ``json`` payload at all, which is the one place it is meant to be read.
     """
-    rendered = format_analyze(data, style)
     meta = data.setdefault("meta", {})
     meta["format"] = style
+    rendered = format_analyze(data, style)
     if not count:
         return rendered
     try:
         from ai_db.parser.chunker import count_tokens
+    except Exception:  # noqa: BLE001 - no tokenizer must not lose the output
+        return rendered
+    try:
+        measured = count_tokens(rendered)
+        for _ in range(_ANNOTATION_FIXED_POINT_PASSES):
+            meta["tokens_out_formatted"] = measured
+            candidate = format_analyze(data, style)
+            actual = count_tokens(candidate)
+            if actual == measured:
+                return candidate
+            measured = actual
+        # Did not settle: emit the last render and report what it really costs,
+        # rather than reporting a number for a string nobody receives.
+        rendered = format_analyze(data, style)
         meta["tokens_out_formatted"] = count_tokens(rendered)
+        return rendered
     except Exception:  # noqa: BLE001 - a tokenizer failure must not lose the output
         meta["tokens_out_formatted"] = None
-    return rendered
+        return rendered
