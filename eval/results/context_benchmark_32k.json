@@ -1,0 +1,2834 @@
+{
+  "generated": "2026-09-26",
+  "repo": "/root/GitRepos/ai-db",
+  "budget_chars": 32000,
+  "chars_per_token": 4,
+  "golden": "eval/golden/ai_db.jsonl",
+  "config": "/tmp/matrix/lexical.json",
+  "summary": {
+    "raw ripgrep + read (no ai-db)": {
+      "queries": 40,
+      "hits_in_budget": 4,
+      "hit_rate": 0.1,
+      "found": 39,
+      "found_rate": 0.975,
+      "median_chars": 182258,
+      "total_chars": 8817371,
+      "median_tokens": 45564,
+      "total_tokens": 2204342
+    },
+    "ai-db lexical | sexp": {
+      "queries": 40,
+      "hits_in_budget": 35,
+      "hit_rate": 0.875,
+      "found": 38,
+      "found_rate": 0.95,
+      "median_chars": 3770,
+      "total_chars": 528066,
+      "median_tokens": 942,
+      "total_tokens": 132016
+    },
+    "ai-db lexical | stub": {
+      "queries": 40,
+      "hits_in_budget": 35,
+      "hit_rate": 0.875,
+      "found": 38,
+      "found_rate": 0.95,
+      "median_chars": 2995,
+      "total_chars": 416208,
+      "median_tokens": 748,
+      "total_tokens": 104052
+    },
+    "ai-db lexical | outline": {
+      "queries": 40,
+      "hits_in_budget": 35,
+      "hit_rate": 0.875,
+      "found": 38,
+      "found_rate": 0.95,
+      "median_chars": 2743,
+      "total_chars": 384683,
+      "median_tokens": 685,
+      "total_tokens": 96170
+    },
+    "ai-db lexical | prose": {
+      "queries": 40,
+      "hits_in_budget": 35,
+      "hit_rate": 0.875,
+      "found": 38,
+      "found_rate": 0.95,
+      "median_chars": 3528,
+      "total_chars": 501503,
+      "median_tokens": 882,
+      "total_tokens": 125375
+    },
+    "ai-db lexical | json": {
+      "queries": 40,
+      "hits_in_budget": 25,
+      "hit_rate": 0.625,
+      "found": 38,
+      "found_rate": 0.95,
+      "median_chars": 9514,
+      "total_chars": 1142323,
+      "median_tokens": 2378,
+      "total_tokens": 285580
+    },
+    "ai-db lexical | summary depth": {
+      "queries": 40,
+      "hits_in_budget": 35,
+      "hit_rate": 0.875,
+      "found": 38,
+      "found_rate": 0.95,
+      "median_chars": 2995,
+      "total_chars": 416208,
+      "median_tokens": 748,
+      "total_tokens": 104052
+    },
+    "ai-db lexical | structure depth": {
+      "queries": 40,
+      "hits_in_budget": 35,
+      "hit_rate": 0.875,
+      "found": 38,
+      "found_rate": 0.95,
+      "median_chars": 2995,
+      "total_chars": 416208,
+      "median_tokens": 748,
+      "total_tokens": 104052
+    },
+    "ai-db investigate --mode locate": {
+      "queries": 40,
+      "hits_in_budget": 37,
+      "hit_rate": 0.925,
+      "found": 37,
+      "found_rate": 0.925,
+      "median_chars": 20668,
+      "total_chars": 763416,
+      "median_tokens": 5167,
+      "total_tokens": 190854
+    },
+    "ai-db investigate --mode explain": {
+      "queries": 40,
+      "hits_in_budget": 38,
+      "hit_rate": 0.95,
+      "found": 38,
+      "found_rate": 0.95,
+      "median_chars": 31586,
+      "total_chars": 1173164,
+      "median_tokens": 7896,
+      "total_tokens": 293291
+    },
+    "ai-db investigate --mode impact": {
+      "queries": 40,
+      "hits_in_budget": 36,
+      "hit_rate": 0.9,
+      "found": 36,
+      "found_rate": 0.9,
+      "median_chars": 29440,
+      "total_chars": 969152,
+      "median_tokens": 7360,
+      "total_tokens": 242288
+    },
+    "ai-db investigate --mode flow": {
+      "queries": 40,
+      "hits_in_budget": 31,
+      "hit_rate": 0.775,
+      "found": 31,
+      "found_rate": 0.775,
+      "median_chars": 17996,
+      "total_chars": 560816,
+      "median_tokens": 4499,
+      "total_tokens": 140204
+    }
+  },
+  "per_query": {
+    "raw ripgrep + read (no ai-db)": [
+      {
+        "chars_to_hit": 90996,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 90996,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 90996,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 170948,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 90996,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 90996,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 90996,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 407663,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 492334,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 254674,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 433815,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 163025,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 575220,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 36112,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 267919,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 282202,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 25201,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 200893,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 76090,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2001,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 561126,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 452072,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 324042,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 631092,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 10523,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 153598,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 193156,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 415767,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 358584,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 182258,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 111546,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 334111,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 317988,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 207914,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 153021,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 240211,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 26225,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 134980,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 75084,
+        "within_budget": false,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 709912,
+        "within_budget": false,
+        "hit_flag": false
+      }
+    ],
+    "ai-db lexical | sexp": [
+      {
+        "chars_to_hit": 23107,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 24480,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 72774,
+        "within_budget": false,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23107,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23107,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23107,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23107,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1995,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 70025,
+        "within_budget": false,
+        "files": 10,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 17895,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 22067,
+        "within_budget": true,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 27170,
+        "within_budget": true,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3015,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3757,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3783,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1767,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1767,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3495,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3495,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1038,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1325,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1325,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 98716,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 5082,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1772,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1772,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 10931,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 70146,
+        "within_budget": false,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 12319,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3709,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 15615,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1206,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1206,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1157,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 10716,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2794,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2794,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 8610,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1529,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 30257,
+        "within_budget": false,
+        "hit_flag": false
+      }
+    ],
+    "ai-db lexical | stub": [
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19536,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 54255,
+        "within_budget": false,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1564,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 55776,
+        "within_budget": false,
+        "files": 10,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 13282,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 16590,
+        "within_budget": true,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19861,
+        "within_budget": true,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2472,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2982,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2917,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1449,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1449,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2900,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2900,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 847,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1035,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1035,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 75300,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 4017,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1465,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1465,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9168,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 56220,
+        "within_budget": false,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9944,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3009,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 13048,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 945,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 945,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 909,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9009,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2228,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2228,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 6935,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1278,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 22356,
+        "within_budget": false,
+        "hit_flag": false
+      }
+    ],
+    "ai-db lexical | outline": [
+      {
+        "chars_to_hit": 17188,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18070,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 50538,
+        "within_budget": false,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 17188,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 17188,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 17188,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 17188,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1395,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 51728,
+        "within_budget": false,
+        "files": 10,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 12220,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 15161,
+        "within_budget": true,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 17902,
+        "within_budget": true,
+        "files": 7,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2185,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2700,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2518,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1320,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1320,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2642,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2642,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 750,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 940,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 940,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 69838,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 3640,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1313,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1313,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 8582,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 52206,
+        "within_budget": false,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9211,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2787,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 12169,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 827,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 827,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 806,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 8446,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2027,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2027,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 6424,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1167,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20374,
+        "within_budget": false,
+        "hit_flag": false
+      }
+    ],
+    "ai-db lexical | prose": [
+      {
+        "chars_to_hit": 21891,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23143,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 69654,
+        "within_budget": false,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21891,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21891,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21891,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21891,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1868,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 66659,
+        "within_budget": false,
+        "files": 10,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 17066,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20948,
+        "within_budget": true,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 25627,
+        "within_budget": true,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2798,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3533,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3469,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1668,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1668,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3286,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3286,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 967,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1258,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1258,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 94189,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 4791,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1646,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1646,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 10439,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 66775,
+        "within_budget": false,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 11725,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3523,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 14883,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1116,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1116,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1079,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 10241,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2634,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2634,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 8202,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1442,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 28708,
+        "within_budget": false,
+        "hit_flag": false
+      }
+    ],
+    "ai-db lexical | json": [
+      {
+        "chars_to_hit": 48890,
+        "within_budget": false,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 52655,
+        "within_budget": false,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 150274,
+        "within_budget": false,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 48890,
+        "within_budget": false,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 48890,
+        "within_budget": false,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 48890,
+        "within_budget": false,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 48890,
+        "within_budget": false,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 5291,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 152140,
+        "within_budget": false,
+        "files": 10,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 40326,
+        "within_budget": false,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 50299,
+        "within_budget": false,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 60783,
+        "within_budget": false,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 7799,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9087,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9942,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3707,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3707,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 8034,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 8034,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2413,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2813,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2813,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 208096,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 11900,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 4164,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 4164,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 22269,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 150886,
+        "within_budget": false,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 27612,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 8135,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 33300,
+        "within_budget": false,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2920,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2920,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2532,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21376,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 6429,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 6429,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19477,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3243,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 64000,
+        "within_budget": false,
+        "hit_flag": false
+      }
+    ],
+    "ai-db lexical | summary depth": [
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19536,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 54255,
+        "within_budget": false,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1564,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 55776,
+        "within_budget": false,
+        "files": 10,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 13282,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 16590,
+        "within_budget": true,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19861,
+        "within_budget": true,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2472,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2982,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2917,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1449,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1449,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2900,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2900,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 847,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1035,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1035,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 75300,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 4017,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1465,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1465,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9168,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 56220,
+        "within_budget": false,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9944,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3009,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 13048,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 945,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 945,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 909,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9009,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2228,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2228,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 6935,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1278,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 22356,
+        "within_budget": false,
+        "hit_flag": false
+      }
+    ],
+    "ai-db lexical | structure depth": [
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19536,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 54255,
+        "within_budget": false,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18509,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1564,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 55776,
+        "within_budget": false,
+        "files": 10,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 13282,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 16590,
+        "within_budget": true,
+        "files": 5,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19861,
+        "within_budget": true,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2472,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2982,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2917,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1449,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1449,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2900,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2900,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 847,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1035,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1035,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 75300,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 4017,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1465,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1465,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9168,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 56220,
+        "within_budget": false,
+        "files": 9,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9944,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 3009,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 13048,
+        "within_budget": true,
+        "files": 3,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 945,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 945,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 909,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9009,
+        "within_budget": true,
+        "files": 2,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2228,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 2228,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 6935,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 1278,
+        "within_budget": true,
+        "files": 1,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 22356,
+        "within_budget": false,
+        "hit_flag": false
+      }
+    ],
+    "ai-db investigate --mode locate": [
+      {
+        "chars_to_hit": 21572,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20764,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21052,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19108,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21668,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21780,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18408,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19504,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20624,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21932,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20356,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20548,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20596,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19240,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21240,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18492,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18344,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21412,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20436,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19544,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20768,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20668,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 21732,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21208,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23188,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20184,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 21824,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20668,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21484,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21064,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21436,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20724,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20664,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20652,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20308,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20220,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20004,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      }
+    ],
+    "ai-db investigate --mode explain": [
+      {
+        "chars_to_hit": 31648,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31324,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31964,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31512,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31516,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31708,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31464,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31976,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31576,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31684,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31536,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 28844,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 27808,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31884,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 28072,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 26308,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 24132,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31712,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31420,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31656,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31696,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31624,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 31932,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31792,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31392,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31304,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31384,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31684,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31972,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31596,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31824,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31476,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31608,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 26624,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31840,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31712,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 30784,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31176,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      }
+    ],
+    "ai-db investigate --mode impact": [
+      {
+        "chars_to_hit": 31556,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31356,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31948,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 29576,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31920,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23620,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31608,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31464,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31520,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23704,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 21792,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31948,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 24556,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19872,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19164,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31444,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 17740,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18388,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 29304,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31776,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 31276,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 29956,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31872,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 24264,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31896,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19568,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 25140,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23856,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31968,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31840,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 31688,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23836,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23564,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 16424,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23972,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23776,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      }
+    ],
+    "ai-db investigate --mode flow": [
+      {
+        "chars_to_hit": 24300,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 22224,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 19244,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23088,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 17132,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19344,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18840,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 14776,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 17016,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 16484,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 15336,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 14200,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19744,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 14260,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 9160,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 16644,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 18416,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 21692,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19436,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 23672,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 19380,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 16796,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 15936,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      },
+      {
+        "chars_to_hit": 15540,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 24648,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 21944,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 15296,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 20392,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 13632,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 14248,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 17996,
+        "within_budget": true,
+        "hit_flag": true
+      },
+      {
+        "chars_to_hit": 0,
+        "within_budget": false,
+        "hit_flag": false
+      }
+    ]
+  }
+}

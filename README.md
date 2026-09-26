@@ -726,13 +726,40 @@ detached afterwards, so a later call cannot report through it.
 
 `ai-db` dramatically cuts token consumption by eliminating raw file ingestion in favor of structural and semantic representations:
 
-| Representation / Format | CLI Flag | Token Footprint vs Raw | Token Savings | Optimal Use Case |
-|---|---|---|---|---|
-| **Raw File Dump** | *(traditional)* | 100% (Baseline) | 0% | Dumb context loading (wasteful) |
-| **Standard JSON** | `--fmt json` | ~40%–55% | 45%–60% | Automated tooling & structured parsing |
-| **Native Stub** | `--fmt stub` | ~12%–20% | **80%–88%** | LLM reasoning, types, signatures |
-| **S-Expression** | `--fmt sexp` | ~5%–12% | **88%–95%** | Maximum context density & tree navigation |
-| **Signature Summary** | `--depth summary`| ~4%–8% | **92%–96%** | High-level file scanning & discovery |
+Measured on this repository over 40 questions; "cost to answer" is the characters
+emitted before the target symbol becomes visible. Full method, caveats and
+per-query data in [`eval/results/CONTEXT_BENCHMARK.md`](eval/results/CONTEXT_BENCHMARK.md).
+
+| Representation / Format | CLI Flag | Median chars to answer | vs raw | Hit rate @32k | Use it for |
+|---|---|---|---|---|---|
+| **Raw File Dump** | *(traditional)* | 182,258 | 100% | 4/40 | Nothing — exceeds any realistic context window |
+| **Signature Outline** | `--fmt outline` | 2,743 | **1.5%** | 35/40 | **Cheapest way to find a symbol** |
+| **Native Stub** | `--fmt stub` | 2,995 | 1.6% | 35/40 | LLM reasoning, types, signatures |
+| **Prose** | `--fmt prose` | 3,528 | 1.9% | 35/40 | Human-readable summaries |
+| **S-Expression** | `--fmt sexp` | 3,770 | 2.1% | 35/40 | Nested structure, when you need the tree |
+| **Standard JSON** | `--fmt json` | 9,514 | 5.2% | 25/40 | Programs parsing the output — **not agents** |
+| **investigate `--mode locate`** | | 20,668 | 11.3% | 37/40 | Best accuracy-per-token of any mode |
+| **investigate `--mode explain`** | | 31,586 | 17.3% | 38/40 | Most accurate; full evidence + tests |
+| **investigate `--mode impact`** | | 29,440 | 16.2% | 36/40 | "What breaks if this changes" |
+| **investigate `--mode flow`** | | 17,996 | 9.9% | 31/40 | Execution order, not symbol location |
+
+Three things this measurement contradicts, previously stated here as estimates:
+
+- **`--fmt outline`, not `--fmt sexp`, is the cheapest format** — and for locating a
+  symbol all four of outline/stub/prose/sexp score an identical 35/40, because the
+  name is in a signature either way. The extra structure in `sexp` costs 37% more
+  and buys nothing for this task. It earns its place when you need the tree.
+- **JSON costs 3.3× outline *and* scores worse** (25/40 vs 35/40), because being
+  larger is how it overflows the budget. Right for tooling, wrong for an agent.
+- **There is no separate "Signature Summary" format.** `--depth summary` and
+  `--depth structure` produce byte-identical output (0–9 char differences). The
+  row has been removed rather than corrected, because there is nothing to
+  distinguish.
+
+The savings percentages are *understated* here, because the raw baseline is
+expensive: whole Python files read top-down, ~45,000 tokens to answer the median
+question. Only the absolute counts and the within-ai-db ranking are portable;
+percentages depend entirely on which baseline you pick.
 
 ---
 
