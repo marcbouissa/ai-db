@@ -1,153 +1,151 @@
 # Context-cost benchmark: no ai-db vs ai-db
 
-Does using ai-db actually cost less context to answer the same questions, and
-which representation costs least?
+Does using ai-db cost less context to answer the same questions, and which
+output style costs least?
 
-Run:
 ```bash
 uv run python eval/context_benchmark.py --budget 32000 --out eval/results/context_benchmark_32k.json
 uv run python eval/context_benchmark.py --budget 8000  --out eval/results/context_benchmark_8k.json
 ```
 
+## What each column means
+
+Read this before the tables. Four of the six columns measure different things,
+and two of them can disagree with each other on purpose.
+
+| Column | What it is | How to read it | How it affects the others |
+|---|---|---|---|
+| **Hit rate** | Share of the 40 golden questions where the expected symbol was found **and** the answer fitted in the stated budget | The pass/fail gate. This is the only column that depends on the budget. | It gates everything: a condition can be cheap and still score badly if the cheapness pushes the answer *out* of the ranked set. Raising the budget can only help this column, and changes none of the others. |
+| **Median ctx** | Characters emitted before the target symbol became visible, over the questions where it was found | The cost of an answer. **Uncapped** — capping made every representation report the same number. | Independent of the budget. This is the cost you pay on a hit, so it is the numerator for everything to its right. |
+| **Tokens out** | `Median ctx` ÷ 4, the repo's usual chars-per-token approximation | The same number in token units, for comparison with a model's context window. | A restatement of `Median ctx`, not new information. Tokens are the unit a model actually bills; chars are the unit this benchmark can measure uniformly across a subprocess baseline. |
+| **Paired vs raw** | Median, over questions where **both** this condition and the raw baseline found the answer, of `this / raw` **for that same question** | How much of the raw cost each condition uses, per question, then summarised. Lower is better. | Needs the raw row to be meaningful. Pairing is what makes it robust: a plain ratio of medians compares two possibly-different question sets (raw found 39/40, outline 38/40). Not the same as `Median ctx ÷ raw median` — that ratio-of-medians number appeared in an earlier revision of this report and was removed because it is not a per-query quantity. |
+| **Token saving** | `1 − (tokens out ÷ tokens in)`, where `tokens in` is the raw file content the representation was built from | What fraction of the source you did not have to send. Higher is better. | Only available for the `analyze`-based rows, which have a well-defined "raw input" (the file they render). `investigate` assembles evidence from many files, so there is no single input to divide by — hence the dash. Do not compare this column to `Paired vs raw`; they answer different questions. |
+| *(internal)* `pack_claim` | The token count the pack reports about itself | Kept to compare against `Tokens out`. | The two disagree, and that is a finding — see below. |
+
 ## Method
 
-Three things are held constant so the representation is the only variable:
+Held constant: the 40 questions in `eval/golden/ai_db.jsonl`, the hit test
+(*is the expected symbol literally visible in the context emitted*, in the file
+the golden entry names — not "did retrieval return the right chunk id"), and the
+budget.
 
-- **Questions** — `eval/golden/ai_db.jsonl`, 40 queries. (The older raw-vs-ai-db
-  comparison used 37; the 3 stale entries were repointed at current code in
-  Phase 15, so all 40 are usable now.)
-- **Hit test** — a query hits when the expected symbol is literally visible in the
-  context emitted, in the file the golden entry names. Not "the right chunk id
-  came back" — *can an agent act on this*.
-- **Budget** — the context window the agent is allowed. Two are reported.
-
-What varies per row: discovery (ripgrep, or ai-db lexical) and representation
-(raw file text, sexp, stub, outline, prose, json, or an investigate mode).
-
-`Median ctx` is the **cost to answer**: characters emitted before the expected
-symbol became visible, over the queries where it was found. It is not capped at
-the budget, because capping made every representation report the same number and
-hid exactly the differences this benchmark exists to measure. The budget instead
-acts as a gate on hit rate.
+Varies per row: discovery (ripgrep, or ai-db lexical) and output style.
 
 ## Results
 
 ### Budget 32,000 chars (~8k tokens)
 
-| Condition | Hit rate | Median ctx (ch) | Total ctx (ch) | Median vs raw |
-|---|---|---|---|---|
-| raw ripgrep + read  (no ai-db) | 4/40 (10%) | 182,258 | 8,817,371 | 100.0% |
-| ai-db lexical · outline | 35/40 (88%) | 2,743 | 384,683 | 1.5% |
-| ai-db lexical · stub | 35/40 (88%) | 2,995 | 416,208 | 1.6% |
-| ai-db lexical · prose | 35/40 (88%) | 3,528 | 501,503 | 1.9% |
-| ai-db lexical · sexp | 35/40 (88%) | 3,770 | 528,066 | 2.1% |
-| ai-db lexical · json | 25/40 (62%) | 9,514 | 1,142,323 | 5.2% |
-| ai-db lexical · stub `--depth summary` | 35/40 (88%) | 2,995 | 416,208 | 1.6% |
-| ai-db lexical · stub `--depth structure` | 35/40 (88%) | 2,995 | 416,208 | 1.6% |
-| ai-db investigate `--mode locate` | 37/40 (92%) | 20,668 | 763,416 | 11.3% |
-| ai-db investigate `--mode explain` | 38/40 (95%) | 31,586 | 1,173,164 | 17.3% |
-| ai-db investigate `--mode impact` | 36/40 (90%) | 29,440 | 969,152 | 16.2% |
-| ai-db investigate `--mode flow` | 31/40 (78%) | 17,996 | 560,816 | 9.9% |
+| Condition | Hit rate | Median ctx (ch) | Tokens out | Paired vs raw | Token saving |
+|---|---|---|---|---|---|
+| raw ripgrep + read  (no ai-db) | 5/40 (12%) | 170,948 | 42,737 | 100.0% | 0% |
+| ai-db lexical · outline | 35/40 (88%) | 2,743 | 685 | 4.6% | 80% |
+| ai-db lexical · stub | 35/40 (88%) | 2,995 | 748 | 4.9% | 79% |
+| ai-db lexical · prose | 35/40 (88%) | 3,528 | 881 | 5.7% | 74% |
+| ai-db lexical · sexp | 35/40 (88%) | 3,770 | 941 | 6.0% | 73% |
+| ai-db lexical · json | 25/40 (62%) | 9,514 | 2,377 | 12.9% | 41% |
+| ai-db investigate `--mode locate` | 37/40 (92%) | 20,490 | 5,122 | 12.4% | — |
+| ai-db investigate `--mode flow` | 31/40 (78%) | 18,461 | 4,615 | 12.0% | — |
+| ai-db investigate `--mode impact` | 21/40 (52%) | 30,128 | 7,532 | 19.3% | — |
+| ai-db investigate `--mode explain` | 13/40 (32%) | 32,438 | 8,109 | 19.2% | — |
+| ai-db investigate `explain` · **compact** | 38/40 (95%) | 26,559 | 6,639 | 15.8% | — |
+| ai-db investigate `explain` · **stub** | 32/40 (80%) | 3,607 | 901 | 2.6% | — |
 
 ### Budget 8,000 chars (~2k tokens)
 
-| Condition | Hit rate | Median ctx (ch) | Total ctx (ch) | Median vs raw |
-|---|---|---|---|---|
-| raw ripgrep + read  (no ai-db) | 1/40 (2%) | 182,258 | 8,817,371 | 100.0% |
-| ai-db lexical · outline | 22/40 (55%) | 2,743 | 384,683 | 1.5% |
-| ai-db lexical · stub | 22/40 (55%) | 2,995 | 416,208 | 1.6% |
-| ai-db lexical · prose | 21/40 (52%) | 3,528 | 501,503 | 1.9% |
-| ai-db lexical · sexp | 21/40 (52%) | 3,770 | 528,066 | 2.1% |
-| ai-db lexical · json | 15/40 (38%) | 8,135 | 689,023 | 4.5% |
-| ai-db lexical · stub `--depth summary` | 22/40 (55%) | 2,995 | 415,938 | 1.6% |
-| ai-db lexical · stub `--depth structure` | 22/40 (55%) | 2,995 | 416,208 | 1.6% |
-| ai-db investigate `--mode locate` | 35/40 (88%) | 7,900 | 273,924 | 4.3% |
-| ai-db investigate `--mode explain` | 36/40 (90%) | 7,932 | 283,252 | 4.4% |
-| ai-db investigate `--mode impact` | 32/40 (80%) | 7,904 | 251,508 | 4.3% |
-| ai-db investigate `--mode flow` | 30/40 (75%) | 7,924 | 236,040 | 4.3% |
+| Condition | Hit rate | Median ctx (ch) | Tokens out | Paired vs raw | Token saving |
+|---|---|---|---|---|---|
+| raw ripgrep + read  (no ai-db) | 1/40 (2%) | 170,948 | 42,737 | 100.0% | 0% |
+| ai-db lexical · outline | 22/40 (55%) | 2,743 | 685 | 4.6% | 80% |
+| ai-db lexical · stub | 22/40 (55%) | 2,995 | 748 | 4.9% | 79% |
+| ai-db lexical · prose | 21/40 (52%) | 3,528 | 881 | 5.7% | 74% |
+| ai-db lexical · sexp | 21/40 (52%) | 3,770 | 941 | 6.0% | 73% |
+| ai-db lexical · json | 15/40 (38%) | 8,135 | 2,033 | 11.5% | 45% |
+| ai-db investigate `--mode locate` | 14/40 (35%) | 8,032 | 2,008 | 5.0% | — |
+| ai-db investigate `--mode flow` | 14/40 (35%) | 8,022 | 2,005 | 5.6% | — |
+| ai-db investigate `--mode impact` | 17/40 (42%) | 7,986 | 1,996 | 5.6% | — |
+| ai-db investigate `--mode explain` | 6/40 (15%) | 8,213 | 2,053 | 5.1% | — |
+| ai-db investigate `explain` · **compact** | 36/40 (90%) | 6,034 | 1,508 | 3.8% | — |
+| ai-db investigate `explain` · **stub** | 32/40 (80%) | 1,167 | 291 | 0.9% | — |
 
 ## What the numbers say
 
-**The raw baseline cannot answer these questions in any realistic context
-window.** It needs a median of **182,258 characters — about 45,000 tokens** — to
-find the answer, and lands 4/40 even with 32,000 characters available. A single
-Python file in this repo is larger than a typical agent's whole budget. This is
-the honest shape of the problem: not "ai-db saves tokens" but *without it you
-cannot answer at all*.
+**The raw baseline cannot answer these questions in any realistic window.** A
+median of **170,948 characters — roughly 43,000 tokens** — and 5/40 even with
+32,000 characters available. One Python file in this repo is larger than a
+typical agent's whole budget. The honest framing is not "ai-db saves tokens" but
+*without it you cannot answer at all*.
 
-**Every ai-db representation costs 1.5–5% of that.** The cheapest,
-`--format outline`, is **1.5% of raw** and hits 88% at a 32k budget. The
-expensive one, `--format json`, is 5.2% and still hits 62%.
+**`investigate --mode explain` was overrunning its own budget.** At
+`--budget 8000` it reports 15% in-budget, and at 32,000 only 32%. The pack sizes
+its evidence selection to fit the budget, then wraps it in `indent=2` JSON —
+and the envelope pushes the total over. The pack believes it emitted 8,000
+tokens; the caller actually receives 8,109. This is invisible from the pack's own
+numbers, which is why the benchmark measures rendered output rather than
+`token_count`.
 
-**Cheapest is not `sexp`, and the extra structure buys nothing here.** The
-ranking by cost is `outline` (2,743) < `stub` (2,995) < `prose` (3,528) <
-`sexp` (3,770) << `json` (9,514). All four of the first four score an identical
-35/40, because the symbol name appears in a signature in all of them. **If you
-are looking for a symbol, `outline` is 27% cheaper than `sexp` for the same
-result.** The README's token table ranks `sexp` as the most context-dense
-format; on this task it is the fourth most expensive of five, and buys nothing.
+**The two new formats fix that and shrink it further.**
 
-**JSON is a trap.** It is 3.3x the cost of `outline` *and* scores worse — 62%
-versus 88% at a 32k budget, 38% versus 55% at 8k — because being larger is how
-it overflows the budget and loses the answer. It is the right choice for a
-program consuming the output, and the wrong choice for an agent reading it.
+| | 32k hit rate | 8k hit rate | Median ctx | vs json |
+|---|---|---|---|---|
+| `explain` (json, as before) | 13/40 | 6/40 | 32,438 | 1.00× |
+| `explain --format compact` | **38/40** | **36/40** | 26,559 | 0.82× |
+| `explain --format stub` | 32/40 | 32/40 | **3,607** | **0.11×** |
+
+`compact` is the same data on one line — 18% smaller, no information lost — and
+by removing the indent overhead it stops the budget overrun. `stub` is 9× smaller
+again and lands at **2.6% of the raw baseline**, the best figure in the table.
+
+**The stub's lower hit rate than compact is not a regression in quality.** It is
+the same pack, rendered without bodies. At 3,607 characters it fits, so 32/40
+survive; the 6 that miss are ones where the answer lived only in a body, which
+`stub` deliberately does not inline and which remain one `ai-db expand <ref>`
+away. That is the intended trade: pay 3.6k, and fetch the bodies you actually
+need.
+
+**Among the `analyze` formats, `outline` is the cheapest and `sexp` is fourth.**
+All four of outline/stub/prose/sexp score an identical 35/40, because the symbol
+name appears in a signature in all of them. `sexp` costs 37% more than `outline`
+and buys nothing for locating a symbol; it earns its place when you need the
+tree.
 
 **`--depth summary` is the same as `--depth structure`.** Byte-identical medians
-(2,995 both), and per-file differences of 0–9 characters on a header line. The
-README's token table lists "Signature Summary" as a distinct format at ~4% of raw
-versus stub's ~12%; in fact the two produce the same output. That row should be
-removed rather than corrected — there is nothing to distinguish.
+(2,995 both), 0–9 character differences on a header line. There is no separate
+"Signature Summary" format to document.
 
-**`investigate --mode explain` is the most accurate and the most expensive.**
-95% at 31,586 chars, versus `locate` at 92% for 20,668 — 35% cheaper for 3
-points of hit rate. `flow` is the cheapest at 17,996 but drops to 78%: it
-answers a different question, and when you need the symbol's surroundings it
-does not find them. `impact` sits at 90% for 29,440 and is worth its cost only
-when you specifically need transitive callers.
+## Two accounting problems this surfaced
 
-**The budget dominates everything.** At 8,000 characters the raw baseline
-collapses to 1/40 and the analyze-based representations to ~55%, while every
-`investigate` mode stays above 75% — because `investigate` is the only path that
-takes the budget as an input and sizes its own output to it. Representations
-that ignore the budget do not degrade gracefully as it shrinks; they overflow.
+**1. `meta.tokens_out` ignores `--format`.** For `ai_db/analysis/pack.py` it
+reports `tokens_in=447, tokens_out=423` identically for json, stub, sexp,
+outline and prose — while the actual emitted output ranges 658 to 2,930
+characters. It tracks `--depth` but not the format. So the token figures the
+product reports cannot support any comparison between output formats, and
+`ai-db telemetry`'s savings line is a depth measurement wearing a format
+label.
 
-## Correcting the published token table
-
-`README.md` claims these footprints "vs raw". Measured here, against a baseline
-of 182,258 characters:
-
-| Format | README claim | Measured | Verdict |
-|---|---|---|---|
-| json | 45–60% saving | 94.8% saving | conservative |
-| stub | 80–88% saving | 98.4% saving | conservative |
-| sexp | 88–95% saving | 97.9% saving | conservative, but see below |
-| summary | 92–96% saving | *identical to stub* | **wrong — not a distinct format** |
-
-The savings percentages are *understated*, because the README never defines its
-raw baseline and this one is expensive (whole Python files, top-down). The
-absolute numbers are the trustworthy part. The `sexp` row is the one worth
-changing regardless of baseline: it is not the most dense format for this task,
-and the density advantage it advertises does not show up in hit rate.
+**2. `investigate` had no format option at all.** No `--format` on the CLI, no
+`format` in the dispatcher schema, `indent=2` hardcoded in both the CLI and
+`mcp_server.py`. The `analyze` formatters could not be reused because a pack is
+a different schema from analyze output, so pack renderers were written rather
+than the existing ones reshaped. `json` remains the default so every existing
+caller keeps parsing it.
 
 ## Caveats
 
-- The analyze-based rows emit a **whole file** in the chosen representation, so
-  they measure the cost of the containing file, not of the symbol alone. A
-  span- or symbol-targeted extraction would be cheaper for all of them, and the
-  ranking between formats would likely hold.
-- One corpus, one machine, one run. No repetition, so small differences (stub vs
-  outline, 2,995 vs 2,743) are not significant.
-- `raw ripgrep + read` is a generous baseline: it greps for *every* content term
-  in the question, including stop-word-adjacent ones, which finds more files than
-  a real agent would guess. A weaker baseline would widen the gap, not narrow it.
-- The golden set targets Python symbols. The corpus is 9 languages, but the
-  questions are all Python, so per-language representation differences are not
-  covered.
-- Percentages depend entirely on the raw baseline chosen. Only the absolute
-  character counts and the within-ai-db ranking are portable.
+- The `analyze` rows emit a **whole file**, so they measure the containing file,
+  not the symbol alone. A span- or symbol-targeted extraction would be cheaper
+  for all of them; the ranking would likely hold.
+- One corpus, one machine, one run. Differences under ~5% (stub vs outline) are
+  not significant.
+- `raw ripgrep + read` is a **generous** baseline: it greps every content term in
+  the question, finding more files than a real agent would guess. A weaker
+  baseline widens the gap.
+- The golden set targets Python symbols. Per-language representation differences
+  are not covered.
+- Only the absolute character counts and the within-ai-db ranking are portable;
+  every percentage depends on the raw baseline chosen.
 
 ## Files
 
 - `eval/context_benchmark.py` — the benchmark
-- `eval/results/context_benchmark_32k.json` — per-query data, 32k budget
-- `eval/results/context_benchmark_8k.json` — per-query data, 8k budget
+- `eval/results/context_benchmark_32k.json`, `context_benchmark_8k.json` — per-query
+- `eval/results/BENCHMARKS.md` — the retrieval/device/vec0 benchmarks

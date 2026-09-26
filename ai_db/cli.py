@@ -308,6 +308,10 @@ def _main(argv: list[str] | None = None) -> int:
     inv_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
     inv_p.add_argument("--since", default=None, help="diff mode only: git ref to diff against (e.g. HEAD~1)")
     inv_p.add_argument("--root", default=None, help="diff mode only: repository root to diff in (default: .)")
+    inv_p.add_argument("--format", "--fmt", dest="format",
+                       choices=["json", "compact", "stub", "sexp"], default="json",
+                       help="json (indented, default) | compact (one line, ~20%% smaller) | "
+                            "stub (no bodies, ~5x smaller; expand refs for bodies) | sexp")
 
     # locate
     locate_p = subparsers.add_parser("locate", help="Locate files and snippet spans for a question")
@@ -502,9 +506,11 @@ def _main(argv: list[str] | None = None) -> int:
         pack = dispatcher.execute("investigate", {
             "query": args.query, "mode": args.mode, "budget_tokens": args.budget,
             "project": active_proj, "allow_project": allowed_projs, "languages": args.lang,
-            "since": args.since, "root": args.root,
+            "since": args.since, "root": args.root, "format": args.format,
         })
-        print(json.dumps(pack, indent=2, ensure_ascii=False))
+        # A non-default style comes back pre-rendered from the dispatcher.
+        print(pack if isinstance(pack, str)
+              else json.dumps(pack, indent=2, ensure_ascii=False))
 
     elif args.command == "query":
         hits = dispatcher.execute("query", {

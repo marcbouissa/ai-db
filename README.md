@@ -738,10 +738,19 @@ per-query data in [`eval/results/CONTEXT_BENCHMARK.md`](eval/results/CONTEXT_BEN
 | **Prose** | `--fmt prose` | 3,528 | 1.9% | 35/40 | Human-readable summaries |
 | **S-Expression** | `--fmt sexp` | 3,770 | 2.1% | 35/40 | Nested structure, when you need the tree |
 | **Standard JSON** | `--fmt json` | 9,514 | 5.2% | 25/40 | Programs parsing the output — **not agents** |
-| **investigate `--mode locate`** | | 20,668 | 11.3% | 37/40 | Best accuracy-per-token of any mode |
-| **investigate `--mode explain`** | | 31,586 | 17.3% | 38/40 | Most accurate; full evidence + tests |
-| **investigate `--mode impact`** | | 29,440 | 16.2% | 36/40 | "What breaks if this changes" |
-| **investigate `--mode flow`** | | 17,996 | 9.9% | 31/40 | Execution order, not symbol location |
+| **investigate `--mode explain --format stub`** | | 3,607 | **2.6%** | 32/40 | The pack without bodies; expand refs for them |
+| **investigate `--mode explain --format compact`** | | 26,559 | 15.8% | **38/40** | Same data, one line — stops the pack overrunning its own budget |
+| **investigate `--mode locate`** | | 20,490 | 12.4% | 37/40 | Best accuracy-per-token of a JSON mode |
+| **investigate `--mode impact`** | | 30,128 | 19.3% | 21/40 | "What breaks if this changes" |
+| **investigate `--mode flow`** | | 18,461 | 12.0% | 31/40 | Execution order, not symbol location |
+| **investigate `--mode explain`** (default json) | | 32,438 | 19.2% | 13/40 | Most accurate, and it exceeds its own budget |
+
+`investigate` takes `--format json|compact|stub|sexp`. `json` (indented) is the
+default so existing callers keep parsing it; `compact` is the same data on one
+line, 18% smaller; `stub` drops bodies and scaffolding, 9× smaller, with every
+body still one `ai-db expand <ref>` away. The pack already decided per item
+whether it could afford a body — `stub` keeps those decisions and stops shipping
+the JSON around them.
 
 Three things this measurement contradicts, previously stated here as estimates:
 

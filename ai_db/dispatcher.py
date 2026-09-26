@@ -484,6 +484,8 @@ class ServiceDispatcher:
                 "properties": {
                     "query": {"type": "string", "description": "The question or concept. Optional in diff mode, where it only breaks ties."},
                     "mode": {"type": "string", "enum": ["locate", "explain", "impact", "flow", "diff"], "default": "explain"},
+                    "format": {"type": "string", "enum": ["json", "compact", "stub", "sexp"], "default": "json",
+                               "description": "Output style. 'json' is indented and parseable; 'compact' is the same data on one line (~20% smaller); 'stub' drops bodies and scaffolding for an agent (~5x smaller), with bodies still one 'expand' away by ref; 'sexp' is a navigable tree."},
                     "since": {"type": "string", "description": "diff mode only: git ref to diff against, e.g. 'HEAD~1', 'main'"},
                     "root": {"type": "string", "description": "diff mode only: repository root to diff in (default '.')"},
                     "budget_tokens": {"type": "integer", "default": 8000, "description": "Max tokens of the returned pack (>= 500)"},
@@ -910,7 +912,7 @@ class ServiceDispatcher:
 
     def _handle_investigate(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
-        return db.investigate(
+        pack = db.investigate(
             args["query"], budget_tokens=int(args.get("budget_tokens", 8000)),
             mode=args.get("mode", "explain"), project=args.get("project"),
             allowed_projects=args.get("allow_project") or args.get("allowed_projects"),
@@ -918,6 +920,15 @@ class ServiceDispatcher:
             modified_since=args.get("modified_since"),
             since=args.get("since"), root=args.get("root"),
         )
+        # Default stays a dict so every existing caller keeps parsing JSON.
+        # A non-default style returns a rendered string, which the MCP and HTTP
+        # transports already pass through verbatim, so one renderer serves all
+        # three instead of being reimplemented per transport.
+        style = args.get("format") or "json"
+        if style == "json":
+            return pack
+        from ai_db.analyzer.formatters import format_pack
+        return format_pack(pack, style)
 
     def _handle_prune(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)

@@ -1,4 +1,12 @@
+import json
+import os
 from typing import Any
+
+from ai_db.errors import AiDbConfigError
+
+#: Output styles for an ``investigate`` pack. ``json`` stays the default because
+#: every existing caller parses it; the rest are opt-in.
+PACK_FORMATS = frozenset({"json", "compact", "stub", "sexp"})
 
 
 class Formatters:
@@ -119,9 +127,185 @@ class Formatters:
             return f"(:batch :targets-count {len(file_sexps)} :files ({' '.join(file_sexps)}))"
         elif "symbols" in data:
             return render_file_sexp(data.get("file", "unknown"), data)
+        elif "entry_points" in data:
+            # An investigation pack is a different schema from analyze output.
+            return format_pack_as_sexp(data)
         return "()"
+
+    @staticmethod
+    def format_pack(pack: dict[str, Any], style: str) -> str:
+        """Render an ``investigate`` pack in ``style``.
+
+        The pack is not AST-shaped like analyze output, so it needs its own
+        renderers rather than a reshape into symbols. It carries an
+        entry-point list, evidence with optional bodies or stubs, a call graph,
+        tests, and diff spans.
+
+        ``stub`` is the point of this: a pack already decides per evidence item
+        whether it can afford a full body, and then ships that body inside JSON
+        alongside every span, ref and ``why`` string. Rendering as a stub keeps
+        the decisions and drops the scaffolding. Bodies stay one ``expand`` away
+        via the ``ref:`` handle, which is the whole point of having handles.
+        """
+        if style == "compact":
+            return json.dumps(pack, separators=(",", ":"), ensure_ascii=False)
+        if style == "stub":
+            return format_pack_as_stub(pack)
+        if style == "sexp":
+            return format_pack_as_sexp(pack)
+        if style == "json":
+            return json.dumps(pack, indent=2, ensure_ascii=False)
+        raise AiDbConfigError(
+            f"unknown investigate format {style!r}; "
+            f"expected one of {sorted(PACK_FORMATS)}"
+        )
+
+
+def _pack_rel(filepath: str) -> str:
+    """Shorten an absolute path to something readable.
+
+    Packs routinely span absolute paths that all share one long prefix, and
+    repeating it costs more than the answer. Relative to the working directory
+    when possible; otherwise the basename, which is still more useful than a
+    200-character prefix repeated once per item. Deliberately does not try to
+    guess a repo root by name: a checkout directory can be called anything, and
+    matching on a name produced ``ai-db/ai_db/...`` on this repo.
+    """
+    if not filepath:
+        return ""
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        return os.path.basename(filepath)
+    if filepath.startswith(cwd + os.sep):
+        return filepath[len(cwd) + 1:]
+    if os.sep in filepath:
+        return os.path.basename(filepath)
+    return filepath
+
+
+def format_pack_as_stub(pack: dict[str, Any]) -> str:
+    """Compact, agent-readable rendering of an investigation pack.
+
+    No bodies: they are the bulk of the payload and are available on demand via
+    ``ai-db expand <ref>``. What stays is the ranked answer, why each item was
+    chosen, and the graph relationships -- the parts a reader acts on.
+    """
+    from ai_db.constants import PACK_STUB_MAX_ITEMS, PACK_STUB_WHY_CHARS
+
+    out: list[str] = []
+    mode = pack.get("mode", "?")
+    tokens = pack.get("token_count", 0)
+    budget = pack.get("budget_tokens", 0)
+    query = pack.get("query", "")
+
+    entry_points = pack.get("entry_points", [])
+    out.append(f"# investigate {mode}: {query!r}  [{tokens}/{budget} tokens]")
+    out.append(f"# {len(entry_points)} entry points")
+
+    by_name = {}
+    for ep in entry_points:
+        by_name[ep.get("qualified_name")] = ep
+        why = (ep.get("why") or "")[:PACK_STUB_WHY_CHARS]
+        out.append(f"  {ep.get('qualified_name')}  {_pack_rel(ep.get('filepath', ''))}"
+                   f" {ep.get('lines', '')}")
+        if why:
+            out.append(f"      why: {why}")
+
+    evidence = pack.get("evidence", [])
+    if evidence:
+        out.append(f"# evidence {len(evidence)}"
+                   + (f", {pack.get('omitted_count', 0)} omitted"
+                      if pack.get("omitted_count") else ""))
+        seen = set()
+        shown = 0
+        for ev in evidence:
+            name = ev.get("qualified_name", "")
+            if name in seen:
+                continue
+            seen.add(name)
+            if shown >= PACK_STUB_MAX_ITEMS:
+                out.append(f"  ... {len(seen) - shown} more")
+                break
+            shown += 1
+            ref = ev.get("ref", "")
+            out.append(f"  {name}  {ev.get('lines', '')}"
+                       + (f"  {ref}" if ref else "")
+                       + (f"  [{ev.get('body') and 'body' or ev.get('stub') and 'stub' or 'meta'}]"
+                          if True else ""))
+            if ev.get("role") and ev["role"] != "seed":
+                out.append(f"      role: {ev['role']}")
+
+    graph = pack.get("call_graph") or {}
+    edges = graph.get("edges") or []
+    if graph.get("nodes") or edges:
+        out.append(f"# call graph  {len(graph.get('nodes') or [])} nodes, {len(edges)} edges")
+        for edge in edges[:PACK_STUB_MAX_ITEMS]:
+            out.append(f"  {edge[0]} -> {edge[1]}")
+
+    tests = pack.get("tests") or []
+    if tests:
+        out.append(f"# tests {len(tests)}")
+        for t in tests[:PACK_STUB_MAX_ITEMS]:
+            name = t.get("qualified_name") or t.get("name") or "?"
+            out.append(f"  {name}  {_pack_rel(t.get('filepath', ''))}")
+
+    changes = pack.get("changes") or []
+    if changes:
+        out.append(f"# changes {len(changes)}")
+        for c in changes[:PACK_STUB_MAX_ITEMS]:
+            out.append(f"  {_pack_rel(c.get('filepath', ''))} {c.get('lines', '')}")
+
+    unresolved = pack.get("unresolved") or []
+    if unresolved:
+        out.append("# unresolved")
+        out.append("  " + ", ".join(str(u) for u in unresolved[:PACK_STUB_MAX_ITEMS]))
+
+    if pack.get("omitted_count"):
+        out.append(f"# {pack['omitted_count']} items omitted for budget"
+                   f" (ai-db expand <ref> for any of them)")
+    return "\n".join(out)
+
+
+def format_pack_as_sexp(pack: dict[str, Any]) -> str:
+    """S-expression rendering of a pack, for callers that want the structure
+    to be machine-navigable without JSON's key noise."""
+    from ai_db.constants import PACK_STUB_MAX_ITEMS
+
+    def node(s: str) -> str:
+        return f'"{s}"' if (" " in str(s) or '"' in str(s)) else str(s)
+
+    parts = [
+        "(:investigate",
+        node(pack.get("mode", "?")),
+        node(pack.get("query", "")),
+        f'(:tokens {pack.get("token_count", 0)} {pack.get("budget_tokens", 0)})',
+    ]
+    for ep in (pack.get("entry_points") or [])[:PACK_STUB_MAX_ITEMS]:
+        parts.append(
+            f"(:entry {node(ep.get('qualified_name'))} "
+            f"{node(_pack_rel(ep.get('filepath', '')))} {node(ep.get('lines', ''))} "
+            f"{node((ep.get('why') or '')[:120])})"
+        )
+    for ev in (pack.get("evidence") or [])[:PACK_STUB_MAX_ITEMS]:
+        parts.append(
+            f"(:evidence {node(ev.get('qualified_name'))} {node(ev.get('lines', ''))} "
+            f"{node(ev.get('ref', ''))} "
+            f":kind {'body' if ev.get('body') else 'stub' if ev.get('stub') else 'meta'})"
+        )
+    for edge in ((pack.get("call_graph") or {}).get("edges") or [])[:PACK_STUB_MAX_ITEMS]:
+        parts.append(f"(:calls {node(edge[0])} {node(edge[1])})")
+    for t in (pack.get("tests") or [])[:PACK_STUB_MAX_ITEMS]:
+        parts.append(f"(:test {node(t.get('qualified_name') or t.get('name') or '?')})")
+    unresolved = pack.get("unresolved") or []
+    if unresolved:
+        parts.append("(:unresolved " + " ".join(node(u) for u in unresolved) + ")")
+    parts.append(f"(:omitted {pack.get('omitted_count', 0)})")
+    parts.append(")")
+    return " ".join(parts)
 
 
 
 format_as_stub = Formatters.format_as_stub
 format_as_sexp = Formatters.format_as_sexp
+format_pack = Formatters.format_pack

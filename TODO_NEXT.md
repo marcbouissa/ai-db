@@ -608,6 +608,50 @@ known ~7x available, deliberately left so the measurement above stays reproducib
 
 ---
 
+## investigate output formats (added after the context benchmark)
+
+`investigate` was JSON-only: no `--format` on the CLI, no `format` in the
+dispatcher schema, and `indent=2` hardcoded in both `ai_db/cli.py` and
+`mcp_server.py`. The `analyze` formatters could not be reused because a pack is a
+different schema from analyze output, so pack renderers were written rather than
+the existing ones reshaped.
+
+`format_pack(pack, style)` in `ai_db/analyzer/formatters.py` renders
+`json` (default, indented), `compact` (same data, one line), `stub` (ranked
+answer + `why` provenance + graph edges, no bodies) and `sexp`. The dispatcher
+returns a rendered **string** for a non-default style; `mcp_server.py` already
+passed `str` results through verbatim, so one renderer serves CLI, MCP and HTTP
+instead of being reimplemented per transport. `json` stays a dict so every
+existing caller keeps parsing it.
+
+Measured on this repo at `--budget 8000`, 40 questions:
+
+| format | median ctx | vs raw | 32k hit rate | 8k hit rate |
+|---|---|---|---|---|
+| `json` (before) | 32,438 | 19.2% | 13/40 | 6/40 |
+| `compact` | 26,559 | 15.8% | **38/40** | **36/40** |
+| `stub` | **3,607** | **2.6%** | 32/40 | 32/40 |
+
+**Two findings the benchmark produced, both recorded rather than quietly fixed:**
+
+1. **`investigate` was overrunning its own budget.** The pack sizes its evidence
+   to fit `--budget`, then the `indent=2` JSON envelope pushes the total past it.
+   It reports 8,000 tokens; the caller receives 8,109. Invisible from the pack's
+   own numbers. `compact` fixes it as a side effect of removing indent overhead.
+2. **`meta.tokens_out` ignores `--format`.** For `ai_db/analysis/pack.py` it
+   reports `tokens_in=447, tokens_out=423` identically for json, stub, sexp,
+   outline and prose, while the emitted output ranges 658–2,930 characters. It
+   tracks `--depth` but not the format, so the product's own token figures cannot
+   support any comparison between output formats. **Not fixed** — it is a
+   behaviour change to `analyze` telemetry and the README's example block still
+   shows per-format savings the code cannot produce.
+
+The stub's lower hit rate than compact (32 vs 38) is not a quality regression: it
+is the same pack rendered without bodies. The 6 extra hits live in bodies, which
+`stub` deliberately does not inline and which remain one `expand <ref>` away.
+
+---
+
 ## Quick "what is left" summary
 
 | Block | State |
