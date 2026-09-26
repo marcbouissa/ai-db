@@ -770,41 +770,12 @@ def _main(argv: list[str] | None = None) -> int:
 
         if isinstance(output_data, str):
             print(output_data)
-        elif effective_fmt == "json":
-            print(json.dumps(output_data, indent=2))
-        elif effective_fmt == "stub":
-            print(VectorDB.format_as_stub(output_data))
-        elif effective_fmt == "sexp":
-            print(VectorDB.format_as_sexp(output_data))
-        elif effective_fmt == "outline":
-            items = output_data.get("symbols", []) if "symbols" in output_data else []
-            if not items and "results" in output_data:
-                for fpath, fres in output_data["results"].items():
-                    print(f"=== {fpath} ({fres['meta']['tokens_out']} tokens) ===")
-                    for s in fres.get("symbols", []):
-                        sig = s.get("sig", s["name"])
-                        span_str = f"L{s['span'][0]}-L{s['span'][1]}" if "span" in s else ""
-                        print(f"  [{s.get('ref', '')}] {span_str:10} {sig}")
-            else:
-                for s in items:
-                    sig = s.get("sig", s["name"])
-                    span_str = f"L{s['span'][0]}-L{s['span'][1]}" if "span" in s else ""
-                    print(f"[{s.get('ref', '')}] {span_str:10} {sig}")
         else:
-            meta = output_data.get("meta", {})
-            print(f"### Analysis Result ({meta.get('tokens_out', 0)} tokens, cached={meta.get('cached', False)})")
-            if "symbols" in output_data:
-                for s in output_data["symbols"]:
-                    print(f"- **{s['name']}** ({s['kind']}) `{s.get('ref', '')}`: {s.get('sig', '')}")
-                    if s.get("body"):
-                        print(f"```\n{s['body']}\n```")
-            elif "results" in output_data:
-                for fpath, fres in output_data["results"].items():
-                    print(f"\n#### {fpath}")
-                    for s in fres.get("symbols", []):
-                        print(f"- **{s['name']}** `{s.get('ref', '')}`: {s.get('sig', '')}")
-                        if s.get("body"):
-                            print(f"```\n{s['body']}\n```")
+            # One renderer, shared with the token accounting, so the printed
+            # string and meta.tokens_out_formatted cannot describe different
+            # things.
+            from ai_db.analyzer.formatters import annotate_formatted_tokens
+            print(annotate_formatted_tokens(output_data, effective_fmt))
 
     elif args.command == "expand":
         parsed_span = None

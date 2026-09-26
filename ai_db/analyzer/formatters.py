@@ -309,3 +309,99 @@ def format_pack_as_sexp(pack: dict[str, Any]) -> str:
 format_as_stub = Formatters.format_as_stub
 format_as_sexp = Formatters.format_as_sexp
 format_pack = Formatters.format_pack
+
+
+#: Output styles for `analyze`. Mirrors the CLI's --format choices.
+ANALYZE_FORMATS = frozenset({"json", "stub", "sexp", "outline", "prose"})
+
+
+def format_analyze(data: dict[str, Any], style: str) -> str:
+    """Render ``analyze`` output in one of its styles.
+
+    Lives here rather than in the CLI so the token accounting can count the
+    exact string a caller receives. While rendering was inline in the CLI, the
+    formatted size could not be measured without duplicating the rendering --
+    and duplicated rendering drifts, at which point the number is worse than no
+    number.
+    """
+    if style == "json":
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    if style == "stub":
+        return Formatters.format_as_stub(data)
+    if style == "sexp":
+        return Formatters.format_as_sexp(data)
+    if style == "outline":
+        return _analyze_outline(data)
+    if style == "prose":
+        return _analyze_prose(data)
+    raise AiDbConfigError(
+        f"unknown analyze format {style!r}; expected one of {sorted(ANALYZE_FORMATS)}"
+    )
+
+
+def _analyze_outline(data: dict[str, Any]) -> str:
+    lines: list[str] = []
+    items = data.get("symbols", []) if "symbols" in data else []
+    if not items and "results" in data:
+        for fpath, fres in data["results"].items():
+            lines.append(f"=== {fpath} ({fres['meta']['tokens_out']} tokens) ===")
+            for s in fres.get("symbols", []):
+                sig = s.get("sig", s["name"])
+                span = f"L{s['span'][0]}-L{s['span'][1]}" if "span" in s else ""
+                lines.append(f"  [{s.get('ref', '')}] {span:10} {sig}")
+        return "\n".join(lines)
+    for s in items:
+        sig = s.get("sig", s["name"])
+        span = f"L{s['span'][0]}-L{s['span'][1]}" if "span" in s else ""
+        lines.append(f"[{s.get('ref', '')}] {span:10} {sig}")
+    return "\n".join(lines)
+
+
+def _analyze_prose(data: dict[str, Any]) -> str:
+    out: list[str] = []
+    meta = data.get("meta", {})
+    out.append(f"### Analysis Result ({meta.get('tokens_out', 0)} tokens, "
+               f"cached={meta.get('cached', False)})")
+    if "symbols" in data:
+        for s in data["symbols"]:
+            out.append(f"- **{s['name']}** ({s['kind']}) `{s.get('ref', '')}`: {s.get('sig', '')}")
+            if s.get("body"):
+                out.append(f"```\n{s['body']}\n```")
+    elif "results" in data:
+        for fpath, fres in data["results"].items():
+            out.append(f"\n#### {fpath}")
+            for s in fres.get("symbols", []):
+                out.append(f"- **{s['name']}** `{s.get('ref', '')}`: {s.get('sig', '')}")
+                if s.get("body"):
+                    out.append(f"```\n{s['body']}\n```")
+    return "\n".join(out)
+
+
+def annotate_formatted_tokens(data: dict[str, Any], style: str) -> str:
+    """Render and record the real formatted size on ``meta``.
+
+    ``meta.tokens_out`` is a depth-derived estimate of how much *content* was
+    selected, and it is identical for every format -- which is why it could
+    never support a comparison between them. ``tokens_out_formatted`` is the
+    token count of the string the caller actually receives, so the two together
+    show the overhead the format itself adds.
+
+    Returns the rendered text so the caller prints exactly what was counted.
+
+    One inherent asymmetry, stated rather than hidden: the field is set *after*
+    rendering, so a ``json`` payload cannot contain its own token count. For MCP
+    and HTTP, which deliver the dict, the field is in the payload and the count
+    describes that payload. For the CLI printing JSON, the count describes the
+    string as printed, which is one field's worth smaller than the dict.
+    Re-rendering after setting the field would fix neither -- the second string
+    is longer than the one counted.
+    """
+    rendered = format_analyze(data, style)
+    meta = data.setdefault("meta", {})
+    meta["format"] = style
+    try:
+        from ai_db.parser.chunker import count_tokens
+        meta["tokens_out_formatted"] = count_tokens(rendered)
+    except Exception:  # noqa: BLE001 - a tokenizer failure must not lose the output
+        meta["tokens_out_formatted"] = None
+    return rendered

@@ -766,9 +766,28 @@ Three things this measurement contradicts, previously stated here as estimates:
   distinguish.
 
 The savings percentages are *understated* here, because the raw baseline is
-expensive: whole Python files read top-down, ~45,000 tokens to answer the median
+expensive: whole Python files read top-down, ~43,000 tokens to answer the median
 question. Only the absolute counts and the within-ai-db ranking are portable;
 percentages depend entirely on which baseline you pick.
+
+### Reading the token counts
+
+`ai-db analyze --format json` reports two different numbers, and they answer
+different questions:
+
+- **`meta.tokens_out`** — a depth-derived estimate of how much *content* was
+  selected. It is the **same for every format**: 5,774 for `ai_db/storage/backend.py`
+  whether you ask for json, stub, sexp, outline or prose. It tracks `--depth`,
+  not `--format`.
+- **`meta.tokens_out_formatted`** — the token count of the string you actually
+  receive, so it *does* vary by format. Same file: outline 4,111 · stub 4,454 ·
+  prose 4,743 · sexp 4,909 · **json 10,132**.
+
+The ratio is the honest measure of what a format costs you. Use the second
+number when comparing formats, the first when comparing depths. One asymmetry:
+a `json` payload cannot contain its own count, because the field is set after
+rendering — the dict delivered over MCP/HTTP carries it, the printed string does
+not.
 
 ---
 

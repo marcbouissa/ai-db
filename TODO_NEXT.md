@@ -642,9 +642,27 @@ Measured on this repo at `--budget 8000`, 40 questions:
    reports `tokens_in=447, tokens_out=423` identically for json, stub, sexp,
    outline and prose, while the emitted output ranges 658–2,930 characters. It
    tracks `--depth` but not the format, so the product's own token figures cannot
-   support any comparison between output formats. **Not fixed** — it is a
-   behaviour change to `analyze` telemetry and the README's example block still
-   shows per-format savings the code cannot produce.
+   support any comparison between output formats.
+
+   **Partly addressed.** `meta.tokens_out_formatted` now reports the token count
+   of the string the caller actually receives, so the two together show each
+   format's real overhead. Measured on `ai_db/storage/backend.py`:
+   outline 4,111 · stub 4,454 · prose 4,743 · sexp 4,909 · json 10,132,
+   against a `tokens_out` of 5,774 that was identical for all five.
+
+   To make the measurement possible, `analyze`'s rendering moved out of
+   `ai_db/cli.py` into `format_analyze()` / `annotate_formatted_tokens()` in
+   `ai_db/analyzer/formatters.py` — the CLI had it inline, and counting the
+   formatted size without duplicating the rendering means the number and the
+   printed string can drift apart. All five formats verified byte-identical
+   before and after the move.
+
+   **Still outstanding:** `tokens_out` itself is unchanged, so anything reading
+   the old field is still format-blind, and the README's telemetry example block
+   still shows per-format savings (`Raw=145,000 -> Stub=21,750 | S-Exp=13,050`)
+   that this code cannot produce. Deprecating the old field, or making
+   `ai-db telemetry` report `tokens_out_formatted`, is a behaviour change and is
+   left as a decision rather than done silently.
 
 The stub's lower hit rate than compact (32 vs 38) is not a quality regression: it
 is the same pack rendered without bodies. The 6 extra hits live in bodies, which
