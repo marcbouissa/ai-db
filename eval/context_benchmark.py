@@ -51,9 +51,13 @@ CHARS_PER_TOKEN = 4
 # answer inside 8,000 chars is going to answer inside 80,000.
 MAX_BUDGET_OVERSHOOT = 10
 
-STOP = set(["a", "an", "the", "of", "to", "in", "is", "are", "be", "for", "on", "by", "with", "from", "this", "that", "it", "its", "where", "what", "how", "which", "does", "do", "done", "when", "why", "who", "can", "should", "would", "there", "into", "and", "or", "as", "at", "if", "then", "else", "use", "used", "using"])
+STOP = frozenset(
+    ["a", "an", "the", "of", "to", "in", "is", "are", "be", "for", "on", "by", "with", "from", "this", "that", "it", "its", "where", "what", "how", "which", "does", "do", "done", "when", "why", "who", "can", "should", "would", "there", "into", "and", "or", "as", "at", "if", "then", "else", "use", "used", "using"]
+)
 
-RG_EXCLUDES = ["-g", "!.venv", "-g", "!node_modules", "-g", "!.git", "-t", "py"]
+
+RG_EXCLUDES = ["-g", "!.venv", "-g", "!node_modules", "-g", "!.git",
+               "-t", "py"]
 
 
 # --------------------------------------------------------------------------- util
