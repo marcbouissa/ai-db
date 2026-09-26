@@ -377,8 +377,26 @@ def _analyze_prose(data: dict[str, Any]) -> str:
     return "\n".join(out)
 
 
-def annotate_formatted_tokens(data: dict[str, Any], style: str) -> str:
+def annotate_formatted_tokens(data: dict[str, Any], style: str, *,
+                              count: bool = True) -> str:
     """Render and record the real formatted size on ``meta``.
+
+    ``count=False`` records the format but skips the token count. That exists
+    because loading tiktoken's encoder costs ~300 ms once per process, against
+    ~0.9 ms per subsequent count: for a long-lived MCP server that is free
+    after the first call, but the CLI runs one command per process and would pay
+    it every time -- which more than doubled `analyze` latency. The CLI passes
+    ``count=False`` for the formats whose output the user reads directly and only
+    counts for ``json``, where the number is part of what is being looked at.
+
+    Known limitation: the field is only defined when a format *and* a dict are
+    both in play. Over MCP and HTTP, ``analyze`` with an explicit format returns
+    a rendered string -- so there is no meta to carry the number -- and with no
+    format there is no "formatted output" to count, the field being
+    format-specific by definition. So it is populated on the CLI path, where both
+    are known. Covering the other transports means deciding whether they should
+    return a dict plus a rendered form, which is a contract change rather than a
+    missing line.
 
     ``meta.tokens_out`` is a depth-derived estimate of how much *content* was
     selected, and it is identical for every format -- which is why it could
@@ -399,6 +417,8 @@ def annotate_formatted_tokens(data: dict[str, Any], style: str) -> str:
     rendered = format_analyze(data, style)
     meta = data.setdefault("meta", {})
     meta["format"] = style
+    if not count:
+        return rendered
     try:
         from ai_db.parser.chunker import count_tokens
         meta["tokens_out_formatted"] = count_tokens(rendered)

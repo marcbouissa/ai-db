@@ -775,7 +775,10 @@ def _main(argv: list[str] | None = None) -> int:
             # string and meta.tokens_out_formatted cannot describe different
             # things.
             from ai_db.analyzer.formatters import annotate_formatted_tokens
-            print(annotate_formatted_tokens(output_data, effective_fmt))
+            # Only pay for tiktoken when the count is part of what the user is
+            # looking at: json embeds meta, the other formats are read directly.
+            print(annotate_formatted_tokens(output_data, effective_fmt,
+                                            count=(effective_fmt == "json")))
 
     elif args.command == "expand":
         parsed_span = None
