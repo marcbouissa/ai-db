@@ -1,0 +1,569 @@
+{
+  "generated": "2026-09-26",
+  "repo": "/root/GitRepos/ai-db",
+  "conditions": {
+    "lexical": {
+      "config": "/tmp/mx2/lexical.json",
+      "db": "/tmp/mx2/db/lexical.db",
+      "index": {
+        "indexed": true,
+        "seconds": 3.9,
+        "summary": "+149 ~0 -0 =0"
+      },
+      "retrieval": {
+        "k": 10,
+        "queries": 40,
+        "recall@10": 0.825,
+        "mrr": 0.6179,
+        "ndcg@10": 0.6685,
+        "latency_ms_p50": 13.69,
+        "latency_ms_p95": 19.59,
+        "seconds": 4.1
+      },
+      "pack": {
+        "queries": 20,
+        "budget_tokens": 8000,
+        "pack_recall": 0.95,
+        "tokens_mean": 7300.6,
+        "latency_ms_p50": 100.16,
+        "latency_ms_p95": 159.07,
+        "seconds": 6.2
+      },
+      "output_modes": {
+        "analyze": {
+          "stub": {
+            "exit": 0,
+            "ms": 627.2,
+            "chars": 5658,
+            "error": ""
+          },
+          "sexp": {
+            "exit": 0,
+            "ms": 456.3,
+            "chars": 6727,
+            "error": ""
+          },
+          "outline": {
+            "exit": 0,
+            "ms": 442.6,
+            "chars": 5256,
+            "error": ""
+          },
+          "prose": {
+            "exit": 0,
+            "ms": 470.2,
+            "chars": 6399,
+            "error": ""
+          },
+          "json": {
+            "exit": 0,
+            "ms": 498.9,
+            "chars": 15221,
+            "error": ""
+          }
+        },
+        "locate": {
+          "json": {
+            "exit": 0,
+            "ms": 449.0,
+            "chars": 1994,
+            "error": ""
+          },
+          "stub": {
+            "exit": 0,
+            "ms": 438.9,
+            "chars": 942,
+            "error": ""
+          },
+          "sexp": {
+            "exit": 0,
+            "ms": 465.7,
+            "chars": 583,
+            "error": ""
+          }
+        },
+        "trace": {
+          "tree": {
+            "exit": 0,
+            "ms": 536.1,
+            "chars": 2268,
+            "error": ""
+          },
+          "json": {
+            "exit": 0,
+            "ms": 455.5,
+            "chars": 134245,
+            "error": ""
+          },
+          "mermaid": {
+            "exit": 0,
+            "ms": 481.4,
+            "chars": 5006,
+            "error": ""
+          }
+        },
+        "investigate": {
+          "locate": {
+            "exit": 0,
+            "ms": 1220.5,
+            "chars": 18166,
+            "error": ""
+          },
+          "explain": {
+            "exit": 0,
+            "ms": 1298.5,
+            "chars": 31202,
+            "error": ""
+          },
+          "impact": {
+            "exit": 0,
+            "ms": 1267.5,
+            "chars": 32694,
+            "error": ""
+          },
+          "flow": {
+            "exit": 0,
+            "ms": 1149.7,
+            "chars": 19318,
+            "error": ""
+          }
+        }
+      }
+    },
+    "hybrid_cuda": {
+      "config": "/tmp/matrix/hybrid_cuda.json",
+      "db": "/tmp/matrix/db/hybrid_cuda.db",
+      "index": {
+        "indexed": true,
+        "seconds": 22.9,
+        "summary": "+0 ~3 -0 =146"
+      },
+      "retrieval": {
+        "k": 10,
+        "queries": 40,
+        "recall@10": 0.95,
+        "mrr": 0.7849,
+        "ndcg@10": 0.8259,
+        "latency_ms_p50": 167.4,
+        "latency_ms_p95": 192.2,
+        "seconds": 109.3
+      },
+      "pack": {
+        "queries": 20,
+        "budget_tokens": 8000,
+        "pack_recall": 1.0,
+        "tokens_mean": 7650.6,
+        "latency_ms_p50": 383.12,
+        "latency_ms_p95": 537.84,
+        "seconds": 157.5
+      },
+      "output_modes": {
+        "analyze": {
+          "stub": {
+            "exit": 0,
+            "ms": 21858.8,
+            "chars": 5667,
+            "error": ""
+          },
+          "sexp": {
+            "exit": 0,
+            "ms": 20317.9,
+            "chars": 6727,
+            "error": ""
+          },
+          "outline": {
+            "exit": 0,
+            "ms": 20515.9,
+            "chars": 5256,
+            "error": ""
+          },
+          "prose": {
+            "exit": 0,
+            "ms": 20926.0,
+            "chars": 6399,
+            "error": ""
+          },
+          "json": {
+            "exit": 0,
+            "ms": 20228.9,
+            "chars": 15221,
+            "error": ""
+          }
+        },
+        "locate": {
+          "json": {
+            "exit": 0,
+            "ms": 19870.4,
+            "chars": 1792,
+            "error": ""
+          },
+          "stub": {
+            "exit": 0,
+            "ms": 19811.4,
+            "chars": 945,
+            "error": ""
+          },
+          "sexp": {
+            "exit": 0,
+            "ms": 21385.7,
+            "chars": 540,
+            "error": ""
+          }
+        },
+        "trace": {
+          "tree": {
+            "exit": 0,
+            "ms": 18807.6,
+            "chars": 2268,
+            "error": ""
+          },
+          "json": {
+            "exit": 0,
+            "ms": 18149.7,
+            "chars": 134245,
+            "error": ""
+          },
+          "mermaid": {
+            "exit": 0,
+            "ms": 17800.5,
+            "chars": 5006,
+            "error": ""
+          }
+        },
+        "investigate": {
+          "locate": {
+            "exit": 0,
+            "ms": 22795.7,
+            "chars": 19375,
+            "error": ""
+          },
+          "explain": {
+            "exit": 0,
+            "ms": 23093.4,
+            "chars": 31287,
+            "error": ""
+          },
+          "impact": {
+            "exit": 0,
+            "ms": 20820.0,
+            "chars": 31499,
+            "error": ""
+          },
+          "flow": {
+            "exit": 0,
+            "ms": 20612.4,
+            "chars": 13602,
+            "error": ""
+          }
+        }
+      }
+    },
+    "hybrid_cuda_vec0": {
+      "config": "/tmp/matrix/hybrid_cuda_vec0.json",
+      "db": "/tmp/matrix/db/hybrid_cuda_vec0.db",
+      "index": {
+        "indexed": true,
+        "seconds": 20.6,
+        "summary": "+0 ~3 -0 =146"
+      },
+      "retrieval": {
+        "k": 10,
+        "queries": 40,
+        "recall@10": 0.95,
+        "mrr": 0.7849,
+        "ndcg@10": 0.8259,
+        "latency_ms_p50": 156.14,
+        "latency_ms_p95": 192.59,
+        "seconds": 98.7
+      },
+      "pack": {
+        "queries": 20,
+        "budget_tokens": 8000,
+        "pack_recall": 1.0,
+        "tokens_mean": 7661.1,
+        "latency_ms_p50": 299.35,
+        "latency_ms_p95": 395.83,
+        "seconds": 142.7
+      },
+      "output_modes": {
+        "analyze": {
+          "stub": {
+            "exit": 0,
+            "ms": 21470.5,
+            "chars": 5667,
+            "error": ""
+          },
+          "sexp": {
+            "exit": 0,
+            "ms": 19375.8,
+            "chars": 6727,
+            "error": ""
+          },
+          "outline": {
+            "exit": 0,
+            "ms": 19363.1,
+            "chars": 5256,
+            "error": ""
+          },
+          "prose": {
+            "exit": 0,
+            "ms": 19134.4,
+            "chars": 6399,
+            "error": ""
+          },
+          "json": {
+            "exit": 0,
+            "ms": 18595.0,
+            "chars": 15221,
+            "error": ""
+          }
+        },
+        "locate": {
+          "json": {
+            "exit": 0,
+            "ms": 20938.7,
+            "chars": 1792,
+            "error": ""
+          },
+          "stub": {
+            "exit": 0,
+            "ms": 22006.7,
+            "chars": 945,
+            "error": ""
+          },
+          "sexp": {
+            "exit": 0,
+            "ms": 20655.1,
+            "chars": 540,
+            "error": ""
+          }
+        },
+        "trace": {
+          "tree": {
+            "exit": 0,
+            "ms": 18960.9,
+            "chars": 2268,
+            "error": ""
+          },
+          "json": {
+            "exit": 0,
+            "ms": 18385.5,
+            "chars": 134245,
+            "error": ""
+          },
+          "mermaid": {
+            "exit": 0,
+            "ms": 17672.7,
+            "chars": 5006,
+            "error": ""
+          }
+        },
+        "investigate": {
+          "locate": {
+            "exit": 0,
+            "ms": 19937.7,
+            "chars": 19375,
+            "error": ""
+          },
+          "explain": {
+            "exit": 0,
+            "ms": 20165.1,
+            "chars": 31287,
+            "error": ""
+          },
+          "impact": {
+            "exit": 0,
+            "ms": 20135.8,
+            "chars": 31499,
+            "error": ""
+          },
+          "flow": {
+            "exit": 0,
+            "ms": 20271.8,
+            "chars": 13602,
+            "error": ""
+          }
+        }
+      }
+    },
+    "hybrid_cuda_rerank": {
+      "config": "/tmp/matrix/hybrid_cuda_rerank.json",
+      "db": "/tmp/matrix/db/hybrid_cuda_rerank.db",
+      "index": {
+        "indexed": false,
+        "note": "copied index from hybrid_cuda",
+        "seconds": 0.0
+      },
+      "retrieval": {
+        "k": 10,
+        "queries": 40,
+        "recall@10": 0.875,
+        "mrr": 0.5548,
+        "ndcg@10": 0.6323,
+        "latency_ms_p50": 16771.7,
+        "latency_ms_p95": 29427.16,
+        "seconds": 860.4
+      },
+      "pack": {
+        "queries": 20,
+        "budget_tokens": 8000,
+        "pack_recall": 0.95,
+        "tokens_mean": 7121.4,
+        "latency_ms_p50": 11945.05,
+        "latency_ms_p95": 22150.18,
+        "seconds": 445.8
+      },
+      "output_modes": {
+        "analyze": {
+          "stub": {
+            "exit": 0,
+            "ms": 17256.2,
+            "chars": 5667,
+            "error": ""
+          },
+          "sexp": {
+            "exit": 0,
+            "ms": 16610.0,
+            "chars": 6727,
+            "error": ""
+          },
+          "outline": {
+            "exit": 0,
+            "ms": 16373.8,
+            "chars": 5256,
+            "error": ""
+          },
+          "prose": {
+            "exit": 0,
+            "ms": 16081.2,
+            "chars": 6399,
+            "error": ""
+          },
+          "json": {
+            "exit": 0,
+            "ms": 16155.3,
+            "chars": 15221,
+            "error": ""
+          }
+        },
+        "locate": {
+          "json": {
+            "exit": 0,
+            "ms": 17636.3,
+            "chars": 2005,
+            "error": ""
+          },
+          "stub": {
+            "exit": 0,
+            "ms": 17883.4,
+            "chars": 988,
+            "error": ""
+          },
+          "sexp": {
+            "exit": 0,
+            "ms": 22337.0,
+            "chars": 541,
+            "error": ""
+          }
+        },
+        "trace": {
+          "tree": {
+            "exit": 0,
+            "ms": 21330.7,
+            "chars": 2268,
+            "error": ""
+          },
+          "json": {
+            "exit": 0,
+            "ms": 15859.6,
+            "chars": 134245,
+            "error": ""
+          },
+          "mermaid": {
+            "exit": 0,
+            "ms": 15930.9,
+            "chars": 5006,
+            "error": ""
+          }
+        },
+        "investigate": {
+          "locate": {
+            "exit": 0,
+            "ms": 17850.7,
+            "chars": 18882,
+            "error": ""
+          },
+          "explain": {
+            "exit": 0,
+            "ms": 17945.8,
+            "chars": 30802,
+            "error": ""
+          },
+          "impact": {
+            "exit": 0,
+            "ms": 18017.6,
+            "chars": 31537,
+            "error": ""
+          },
+          "flow": {
+            "exit": 0,
+            "ms": 18158.4,
+            "chars": 14181,
+            "error": ""
+          }
+        }
+      }
+    }
+  },
+  "model": {
+    "embedding": "Qwen/Qwen3-Embedding-0.6B",
+    "rerank": "BAAI/bge-reranker-v2-m3",
+    "corpus": "this repo, 149 files / ~1709 chunks / 3204 symbols",
+    "golden": "eval/golden/ai_db.jsonl (40 queries), eval/golden/ai_db_pack.jsonl"
+  },
+  "headline": {
+    "1_hybrid_earns_its_cost": "recall@10 0.825 -> 0.950, MRR 0.618 -> 0.785, nDCG 0.668 -> 0.826, pack_recall 0.950 -> 1.000. Embeddings are a decisive win on this corpus, not a wash. This is the column that was missing from the raw-vs-lexical comparison.",
+    "2_vec0_is_not_a_speedup_here": "Identical accuracy to exact (0.950/0.785/0.826 both) and 156 ms vs 167 ms p50 -- within noise at 1709 chunks. Consistent with 13.3: vec0 is a constant-factor C-loop win, not ANN, so the gain shrinks as the corpus does not grow.",
+    "3_rerank_makes_retrieval_worse": "recall@10 0.950 -> 0.875, MRR 0.785 -> 0.555, nDCG 0.826 -> 0.632, AND p50 167 ms -> 16,772 ms (100x). A double negative. bge-reranker-v2-m3 is a general MS-Marco-style cross-encoder, not tuned for code, so re-scoring a good fused ranking with it discards signal.",
+    "4_rerank_latency_has_two_known_causes": "CrossEncoder loads with max_seq_length=8192 while the model was trained at 512; measured 27,575 ms -> 14,965 ms (512) -> 4,088 ms (256) for the same 10 real candidates. Separately it loads fp32 on GPU, and the dtype gate added in 6ae77a0 covers the embedder only, not the reranker. Both are unfixed and recorded here rather than silently corrected."
+  },
+  "output_mode_costs": {
+    "note": "Formats render identical evidence, so only cost differs. Ratios vs the cheapest mode of the same command.",
+    "analyze": {
+      "outline": 5256,
+      "stub": 5658,
+      "prose": 6399,
+      "sexp": 6727,
+      "json": 15221,
+      "json_vs_outline": 2.9
+    },
+    "locate": {
+      "sexp": 583,
+      "stub": 942,
+      "json": 1994,
+      "json_vs_sexp": 3.42
+    },
+    "trace": {
+      "tree": 2268,
+      "mermaid": 5006,
+      "json": 134245,
+      "json_vs_tree": 59.2
+    },
+    "investigate": {
+      "flow": 13602,
+      "locate": 18166,
+      "explain": 31287,
+      "impact": 32694,
+      "impact_vs_flow": 2.4
+    }
+  },
+  "bugs_found_by_this_matrix": [
+    "rerank was impossible to configure from a file: the section was key-checked against {provider, options, top_n} while the option extraction assumed flat siblings, so every shape of a non-`none` rerank was rejected. Fixed in the same commit; tests added.",
+    "rerank also could not be exercised before, which is why the previously recorded eval/results/hybrid_qwen3-0.6b_rerank_bge-v2-m3.json (recall@10 0.875, p50 20,489 ms) had no reproducible config path."
+  ],
+  "caveats": [
+    "One corpus, one machine, no repeated runs; p50 varies run to run (the rerank condition ranged 12.7-20.5 s across three runs).",
+    "Rerank quality depends on the model; a code-tuned cross-encoder may behave differently. This measurement says THIS model hurts THIS corpus.",
+    "hybrid_cpu was measured while other conditions ran concurrently, so its latency is pessimistic; its accuracy numbers are unaffected."
+  ]
+}

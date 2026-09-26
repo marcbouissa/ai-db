@@ -195,3 +195,57 @@ def test_float16_is_not_a_cpu_candidate():
     gate must never pick it on its own.
     """
     assert "float16" not in constants.CPU_DTYPES
+
+
+# ==============================================================================
+# rerank config: every shape used to be rejected
+# ==============================================================================
+
+def _hybrid_cfg(rerank: dict) -> dict:
+    return {"version": 2,
+            "storage": {"provider": "sqlite", "options": {"path": None}},
+            "retrieval": {"mode": "hybrid"},
+            "embedding": {"provider": "sentence_transformers", "model": "m",
+                          "device": "cpu", "batch_size": 8},
+            "rerank": rerank}
+
+
+def test_rerank_provider_options_are_configurable():
+    """Regression: no shape of a non-`none` rerank section used to validate.
+
+    The section was key-checked against {provider, options, top_n}, which
+    rejected the flat sibling shape, while the option extraction looked for
+    required keys inside a nested "options" dict that nothing ever wrote. Every
+    shape failed, so rerank could not be switched on from a config file at all.
+    Options are siblings of "provider", exactly as in the `embedding` section.
+    """
+    from ai_db.config import parse_config
+
+    cfg = parse_config(_hybrid_cfg({"provider": "sentence_transformers",
+                                    "model": "m", "device": "cpu"}))
+    assert cfg.rerank.provider == "sentence_transformers"
+    assert cfg.rerank.options == {"model": "m", "device": "cpu"}
+    assert cfg.rerank.top_n == 10
+
+
+def test_rerank_top_n_is_a_sibling_not_an_option():
+    from ai_db.config import parse_config
+
+    cfg = parse_config(_hybrid_cfg({"provider": "sentence_transformers",
+                                    "model": "m", "device": "cpu", "top_n": 25}))
+    assert cfg.rerank.top_n == 25
+    assert "top_n" not in cfg.rerank.options
+
+
+@pytest.mark.parametrize("bad,match", [
+    ({"provider": "sentence_transformers", "model": "m"}, "device"),
+    ({"provider": "sentence_transformers", "model": "m", "device": "cpu", "typo": 1}, "typo"),
+    ({"provider": "sentence_transformers", "model": "m", "device": "cpu", "top_n": 0}, "top_n"),
+    ({"provider": "sentence_transformers",
+      "options": {"model": "m", "device": "cpu"}}, "requires"),
+])
+def test_rerank_config_errors_are_still_useful(bad, match):
+    from ai_db.config import parse_config
+
+    with pytest.raises(AiDbConfigError, match=match):
+        parse_config(_hybrid_cfg(bad))

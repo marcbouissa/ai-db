@@ -229,10 +229,15 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
 
     embedding = _parse_provider(data["embedding"], "embedding", EMBEDDING_PROVIDERS)
     rerank_raw = _require_dict(data["rerank"], "rerank")
-    _check_keys(rerank_raw, frozenset({"provider", "options", "top_n"}), "rerank")
     provider = rerank_raw.get("provider")
     if not isinstance(provider, str):
         raise AiDbConfigError("'rerank.provider' must be a string")
+    # Provider options are siblings of "provider", exactly as in the `embedding`
+    # section -- the section is NOT itself key-checked, because doing that while
+    # also flattening options made every non-`none` provider unconfigurable:
+    # the section check rejected the flat shape, and the flattening then looked
+    # for required keys inside a nested "options" dict that nothing wrote.
+    # `top_n` is a sibling of provider, not an option.
     options = {k: v for k, v in rerank_raw.items() if k not in ("provider", "top_n")}
     if provider in RERANK_PROVIDERS:
         required, optional = RERANK_PROVIDERS[provider]
