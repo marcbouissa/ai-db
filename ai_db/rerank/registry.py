@@ -35,11 +35,16 @@ BUILTIN: dict[str, Callable[[dict[str, Any]], RerankProvider]] = {
     name: _lazy(name) for name in ("sentence_transformers", "voyage", "cohere")
 }
 
+_RERANKER_CACHE: dict[tuple[Any, ...], RerankProvider] = {}
+
 
 def build_reranker(cfg: ProviderConfig | RerankConfig) -> RerankProvider | None:
     """Return the configured reranker, or None only when ``provider == 'none'``."""
     if cfg.provider == "none":
         return None
+    cache_key = (cfg.provider, tuple(sorted(cfg.options.items())))
+    if cache_key in _RERANKER_CACHE:
+        return _RERANKER_CACHE[cache_key]
     factory = BUILTIN.get(cfg.provider)
     if factory is None:
         plugins = {ep.name: ep for ep in entry_points(group=ENTRY_POINT_GROUP)}
@@ -52,4 +57,5 @@ def build_reranker(cfg: ProviderConfig | RerankConfig) -> RerankProvider | None:
     provider = factory(options)
     if not isinstance(provider, RerankProvider):
         raise AiDbConfigError(f"rerank provider '{cfg.provider}' did not return a RerankProvider")
+    _RERANKER_CACHE[cache_key] = provider
     return provider

@@ -443,6 +443,6 @@ def test_skills_eval_autosyncs_from_skill_dirs(tmp_path, lexical_config, monkeyp
     db = VectorDB(str(tmp_path / "skills.db"))
     result = run_skills(
         str(Path(__file__).parent.parent / "eval/golden/skills.jsonl"), db)
-    assert result["skills_indexed"] == 5, result
+    assert result["skills_indexed"] == 6, result
     assert result["top1_accuracy"] == 1.0, result
     db.close()

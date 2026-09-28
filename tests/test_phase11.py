@@ -218,7 +218,7 @@ def test_run_skills_top1_accuracy(tmp_path):
     db.sync_skills(skill_dirs=[FIXTURE_SKILLS], verbose=False)
     res = run_skills(GOLDEN_SKILLS, db)
     assert res["queries"] == 20
-    assert res["skills_indexed"] == 5
+    assert res["skills_indexed"] == 6
     assert res["top1_accuracy"] == 1.0
     assert len(res["per_query"]) == 20
     db.close()

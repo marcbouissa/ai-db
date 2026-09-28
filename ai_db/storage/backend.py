@@ -479,3 +479,11 @@ class VectorCapable(ABC):
     def drop_vector_index(self) -> None:
         """Delete all vectors and embed meta (used by ``ai-db reindex --embeddings``)."""
 
+    @abstractmethod
+    def wal_checkpoint(self, mode: str = "TRUNCATE") -> None:
+        """Checkpoint the WAL file. SQLite-specific; no-op on other backends.
+
+        Args:
+            mode: "PASSIVE", "FULL", "RESTART", or "TRUNCATE" (default).
+        """
+

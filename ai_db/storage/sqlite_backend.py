@@ -1156,6 +1156,15 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self.conn.execute("DELETE FROM session_state WHERE key = 'embed_meta'")
         self._auto_commit()
 
+    def wal_checkpoint(self, mode: str = "TRUNCATE") -> None:
+        """Checkpoint the WAL file, optionally truncating it."""
+        self._check_closed()
+        valid_modes = {"PASSIVE", "FULL", "RESTART", "TRUNCATE"}
+        if mode.upper() not in valid_modes:
+            raise ValueError(f"Invalid WAL checkpoint mode: {mode}. Valid: {valid_modes}")
+        self.conn.execute(f"PRAGMA wal_checkpoint({mode.upper()})")
+        self._auto_commit()
+
     def get_chunks_by_ids(self, ids: list[int]) -> list[ChunkRecord]:
         """Chunks for ``ids`` in the same order (missing ids are skipped)."""
         self._check_closed()

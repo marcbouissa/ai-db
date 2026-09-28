@@ -37,11 +37,16 @@ BUILTIN: dict[str, Callable[[dict[str, Any]], EmbeddingProvider]] = {
     "voyage": _voyage,
 }
 
+_EMBEDDER_CACHE: dict[tuple[Any, ...], EmbeddingProvider] = {}
+
 
 def build_embedder(cfg: ProviderConfig) -> EmbeddingProvider | None:
     """Return the configured provider, or None only when ``provider == 'none'``."""
     if cfg.provider == "none":
         return None
+    cache_key = (cfg.provider, tuple(sorted(cfg.options.items())))
+    if cache_key in _EMBEDDER_CACHE:
+        return _EMBEDDER_CACHE[cache_key]
     factory = BUILTIN.get(cfg.provider)
     if factory is None:
         plugins = {ep.name: ep for ep in entry_points(group=ENTRY_POINT_GROUP)}
@@ -55,4 +60,5 @@ def build_embedder(cfg: ProviderConfig) -> EmbeddingProvider | None:
     provider = factory(options)
     if not isinstance(provider, EmbeddingProvider):
         raise AiDbConfigError(f"embedding provider '{cfg.provider}' did not return an EmbeddingProvider")
+    _EMBEDDER_CACHE[cache_key] = provider
     return provider

@@ -3,12 +3,12 @@
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](tests/)
-[![Dependencies: Zero](https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-blueviolet.svg)](pyproject.toml)
+[![Dependencies: Minimal](https://img.shields.io/badge/dependencies-minimal-blueviolet.svg)](pyproject.toml)
 [![Token Efficiency](https://img.shields.io/badge/token%20savings-80--95%25-success.svg)](#token-optimization-benchmarks)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type%20checked-mypy-informational.svg)](http://mypy-lang.org/)
 
-A high-speed, self-contained local code intelligence engine, vector database, and AST analyzer designed specifically for AI coding assistants (such as Claude Desktop, Cursor, Google Antigravity, and autonomous coding agents) to **instantly recall codebase architecture, symbols, files, and session memories with 80%–95% token savings without repetitive codebase re-analysis on every chat**.
+A high-speed, local code intelligence engine, vector database, and AST analyzer designed specifically for AI coding assistants (such as Claude Desktop, Cursor, and autonomous coding agents) to **recall codebase architecture, symbols, files, and session memories with 80%–95% token savings**.
 
 ---
 
@@ -67,12 +67,13 @@ Traditional AI coding workflows waste enormous context windows and API costs. Wh
 
 ## Key Features
 
-- **No Heavy Third-Party Dependencies**: The core platform (indexing, AST analysis, search, CLI, MCP stdio server) relies on a small declared runtime stack (tree-sitter, sqlite-vec, tiktoken, numpy) and nothing else. Torch and sentence-transformers are optional (`ai-db[local-embed]`).
+- **Minimal Runtime Dependencies**: The core platform (indexing, AST analysis, search, CLI, MCP stdio server) relies on a small declared runtime stack (tree-sitter, sqlite-vec, tiktoken, numpy, watchfiles). Torch and sentence-transformers are optional (`ai-db[local-embed]`).
 - **Sub-Millisecond Search**: SQLite WAL mode with FTS5 BM25 ranking, identifier-aware tokenization, and zlib level-9 compression executes complex code queries in $< 2\text{ ms}$.
 - **Pluggable Storage Layer (SOLID / Open-Closed)**: Decoupled `StorageBackend` abstraction with a built-in SQLite backend; other databases plug in as separate packages via the `ai_db.storage` entry-point group (see ARCHITECTURE.md §3.4).
 - **Pluggable Transports**: Single unified `ServiceDispatcher` serving CLI commands (`ai-db`, `vectordb`) and the Model Context Protocol (stdio JSON-RPC 2.0). Adding a transport means registering tools, not duplicating logic.
 - **Performance & Token Telemetry**: Quantitative measurement of p50/p95/p99 query latencies, compression savings across 4 serialization formats, semantic cache hit rates, and codebase weak points (syntax error density, complexity hotspots).
 - **Project Isolation & Scoping**: Auto-detects project boundaries via `.git`, `pyproject.toml`, or `package.json` to prevent cross-project context pollution while allowing explicit read-only sharing.
+- **Daemon Mode (HTTP API)**: Long-running `ai-db daemon` process holds loaded embedding/rerank models in memory, serving requests via HTTP + WebSocket with sub-millisecond latency for repeated queries. Includes hot config reload, idle project TTL unloading, model warming, cross-project queries, and Prometheus-compatible `/metrics` endpoint.
 
 ---
 
@@ -281,6 +282,71 @@ Model names are only ever read from the config. `ai-db init` writes suggested mo
 (see `ai_db/embed/defaults.py`) with a `_note` to verify them on MTEB-Code/CoIR.
 Changing the embedding model requires `ai-db reindex --embeddings`. Hosted providers
 read their API key from the environment variable named in `api_key_env`.
+
+---
+
+## Daemon Mode (HTTP API)
+
+`ai-db daemon` runs a long-lived FastAPI server that holds loaded embedding/rerank models in memory, eliminating per-invocation model load latency (~200 ms per CLI call). It serves requests via HTTP + WebSocket and is designed for AI agents making repeated queries.
+
+```bash
+# Start daemon in background (default port 8080)
+ai-db daemon start
+
+# Register a project with the daemon
+ai-db daemon register myproject --db-path ~/.local/share/ai-db/myproject.db
+
+# Query via daemon (models already loaded)
+ai-db --daemon-url http://localhost:8080 --project myproject query "search term"
+ai-db --daemon-url http://localhost:8080 --project myproject investigate "how does X work"
+
+# Stop daemon
+ai-db daemon stop
+
+# Check status
+ai-db daemon status
+```
+
+**Features:**
+- **Hot config reload**: Watches `config.json` for changes and auto-reloads projects
+- **Model warming**: Pre-loads embedding/rerank models on project registration
+- **Idle project TTL**: Auto-unloads projects idle > 5 minutes to reclaim memory
+- **Cross-project queries**: Single request searches multiple projects (`/query/cross-project`)
+- **WebSocket progress**: Real-time progress via `ws://host/projects/{name}/tools/call/progress/ws`
+- **Prometheus metrics**: `/metrics` endpoint with per-project latency, requests, errors
+- **Project templates**: `GET /templates` returns python/js/rust/go configs
+- **Bearer token auth**: Per-project API keys via `AI_DB_API_KEYS="proj=key"`
+- **Rate limiting**: Per-project token bucket (default 100 req/min)
+- **Structured JSON logging**: Every request logged with latency, status, project
+- **WAL checkpointing**: Periodic SQLite `PRAGMA wal_checkpoint(TRUNCATE)`
+
+**Client usage:**
+```python
+from ai_db.daemon.client import create_daemon_client
+
+client = create_daemon_client("http://localhost:8080", project="myproj", api_key="mykey")
+results = client.execute("query", {"query": "hello"})
+client.cross_project_query("hello", projects=["proj1", "proj2"])
+client.execute_batch([{"name": "query", "arguments": {"query": "hello"}}, {"name": "status", "arguments": {}}])
+print(client.metrics())  # Prometheus-style metrics
+print(client.templates())  # Project templates
+```
+
+### MCP Server via Daemon
+
+Connect the MCP stdio server to the daemon to share loaded models:
+
+```bash
+# Terminal 1: Start daemon
+ai-db daemon start
+
+# Terminal 2: Launch MCP pointing at daemon
+ai-db mcp --daemon-url http://localhost:8080 --project myproj
+```
+
+Then configure your AI client (Claude Desktop, Cursor, etc.) to use the `ai-db mcp` command as usual. The MCP server will forward tool calls to the daemon, sharing loaded models.
+
+---
 
 ### One-call analysis for agents (`ai-db investigate`)
 
@@ -782,6 +848,33 @@ Add `ai-db` to `~/.gemini/antigravity/mcp_config.json` or project MCP settings:
   }
 }
 ```
+
+### Daemon Mode MCP Configuration (Recommended for Production)
+
+For production use, run the MCP server against the daemon to share loaded models across requests:
+
+```json
+{
+  "mcpServers": {
+    "ai-db": {
+      "command": "ai-db",
+      "args": ["mcp", "--daemon-url", "http://localhost:8080", "--project", "myproject"],
+      "env": {
+        "AI_DB_API_KEY": "mysecretkey"
+      }
+    }
+  }
+}
+```
+
+**Prerequisites:**
+1. Start daemon: `ai-db daemon start`
+2. Register project: `ai-db daemon register myproject --db-path ~/.local/share/ai-db/myproject.db`
+3. Set auth if needed: `export AI_DB_API_KEY=mysecretkey`
+
+This mode shares loaded embedding/rerank models across all requests, eliminating ~200ms model load latency per request.
+
+---
 
 ### MCP Tools Reference
 

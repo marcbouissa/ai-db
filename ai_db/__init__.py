@@ -88,6 +88,8 @@ class VectorDB:
             lambda changed, _projects: self.backend.bump_index_generation() if changed else None)
         # The embedder only exists after _configure_retrieval; skills and contexts
         # embed at write time, so hand it over once it is known.
+        self._ensure_embedder_loaded()
+        self._ensure_reranker_loaded()
         self.skill_router.embedder = self.embedder
         self.context_memory.embedder = self.embedder
         from ai_db.telemetry.tracker import TelemetryTracker
@@ -103,11 +105,64 @@ class VectorDB:
         from ai_db.search.retriever import HybridRetriever, LexicalRetriever
 
         self.reranker = build_reranker(self.config.rerank)
-        self.query_engine.ranker = Ranker(self.backend, self.reranker, doc_weight=self.config.index.doc_weight, rerank_top_n=self.config.rerank.top_n)
+        self._reranker_loaded = self.reranker is not None
+        # Ensure query_engine.ranker has the reranker
+        if self._reranker_loaded:
+            self.query_engine.ranker = Ranker(self.backend, self.reranker, doc_weight=self.config.index.doc_weight, rerank_top_n=self.config.rerank.top_n)
 
-        self.embedder = build_embedder(self.config.embedding)
+        self.embedder = None
+        self._embedder_loaded = False
+
+    def _ensure_embedder_loaded(self):
+        """Lazily load embedder if not already loaded."""
+        if not self._embedder_loaded:
+            from ai_db.embed.registry import build_embedder
+            self.embedder = build_embedder(self.config.embedding)
+            self._embedder_loaded = self.embedder is not None
+            if self._embedder_loaded:
+                if self.config.retrieval_mode == "hybrid":
+                    self.backend.ensure_vector_index(
+                        self.embedder.dim, self.embedder.model_id,
+                        vector_index=self.config.storage.options.get("vector_index", "exact"))
+                    from ai_db.search.retriever import HybridRetriever
+                    self.query_engine.retriever = HybridRetriever(self.backend, self.embedder)
+                    self.indexer.post_sync_hooks.append(
+                        lambda _changed, _projects: self.embed_missing())
+            return self.embedder
+        return self.embedder
+
+    def _ensure_reranker_loaded(self):
+        """Lazily load reranker if not already loaded."""
+        if not self._reranker_loaded:
+            from ai_db.rerank.registry import build_reranker
+            self.reranker = build_reranker(self.config.rerank)
+            self._reranker_loaded = self.reranker is not None
+            if self._reranker_loaded:
+                from ai_db.search.ranking import Ranker
+                self.query_engine.ranker = Ranker(self.backend, self.reranker, doc_weight=self.config.index.doc_weight, rerank_top_n=self.config.rerank.top_n)
+        return self.reranker
+
+    def unload_models(self) -> None:
+        """Unload embedder and reranker from GPU memory."""
+        if self._embedder_loaded and self.embedder is not None:
+            if hasattr(self.embedder, 'model'):
+                import torch
+                self.embedder.model.cpu()
+                del self.embedder.model
+                torch.cuda.empty_cache()
+            self.embedder = None
+            self._embedder_loaded = False
+        if self._reranker_loaded and self.reranker is not None:
+            if hasattr(self.reranker, 'model'):
+                import torch
+                self.reranker.model.cpu()
+                del self.reranker.model
+                torch.cuda.empty_cache()
+            self.reranker = None
+            self._reranker_loaded = False
         if self.config.retrieval_mode == "hybrid":
-            if self.embedder is None:
+            embedder = self._ensure_embedder_loaded()
+            if embedder is None:
                 raise AiDbConfigError("retrieval.mode 'hybrid' requires an embedding provider")
             if "vector" not in self.backend.capabilities():
                 raise AiDbConfigError(
@@ -117,9 +172,9 @@ class VectorDB:
                 raise AiDbConfigError(
                     f"{self.backend.backend_name} declares 'vector' but does not implement VectorCapable")
             self.backend.ensure_vector_index(
-                self.embedder.dim, self.embedder.model_id,
+                embedder.dim, embedder.model_id,
                 vector_index=self.config.storage.options.get("vector_index", "exact"))
-            self.query_engine.retriever = HybridRetriever(self.backend, self.embedder)
+            self.query_engine.retriever = HybridRetriever(self.backend, embedder)
             self.indexer.post_sync_hooks.append(
                 lambda _changed, _projects: self.embed_missing())
         else:
@@ -133,13 +188,14 @@ class VectorDB:
         cross-project policy, different weights -- would otherwise read each
         other's results as hits, and the caller has no way to tell. (TODO 14.3)
         """
+        embedder = self._ensure_embedder_loaded()
         return {
             "mode": self.config.retrieval_mode,
-            "embedding_model": self.embedder.model_id if self.embedder else None,
+            "embedding_model": embedder.model_id if embedder else None,
             "rerank_model": self.reranker.model_id if self.reranker else None,
             "vector_index": self.config.storage.options.get("vector_index", "exact"),
             "cross_project": self.config.cross_project,
-            "embedder_device": getattr(self.embedder, "device", None),
+            "embedder_device": getattr(embedder, "device", None),
         }
 
     def _cached(self, tool: str, query: str, params: dict[str, Any], compute: Any) -> Any:
@@ -186,10 +242,11 @@ class VectorDB:
         """Embed chunks that have no vector yet (hybrid mode only)."""
         from ai_db.embed.indexing import embed_missing
 
-        if self.embedder is None:
+        embedder = self._ensure_embedder_loaded()
+        if embedder is None:
             raise AiDbConfigError("embed_missing needs an embedding provider")
         batch = int(self.config.embedding.options.get("batch_size", 64))
-        return embed_missing(self.backend, self.embedder, batch_size=batch)
+        return embed_missing(self.backend, embedder, batch_size=batch)
 
     # Storage & DB management
     def status(self) -> dict[str, Any]:

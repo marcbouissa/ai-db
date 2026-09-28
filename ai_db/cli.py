@@ -543,7 +543,9 @@ def _main(argv: list[str] | None = None) -> int:
         if not project and args.command not in ("daemon", "init", "config"):
             # Auto-detect project from CWD
             project = detect_project_name(os.getcwd())
-        dispatcher = create_daemon_client(daemon_url, project=project)
+        # Get API key from environment
+        api_key = os.environ.get("AI_DB_API_KEY")
+        dispatcher = create_daemon_client(daemon_url, project=project, api_key=api_key)
     else:
         dispatcher = ServiceDispatcher(db_path=args.db, config=cfg)
 

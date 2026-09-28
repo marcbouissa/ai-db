@@ -16,6 +16,14 @@ class ToolCallResponse(BaseModel):
     isError: bool = False
 
 
+class BatchToolCallRequest(BaseModel):
+    calls: list[ToolCallRequest]
+
+
+class BatchToolCallResponse(BaseModel):
+    results: list[ToolCallResponse]
+
+
 class ToolDefinition(BaseModel):
     name: str
     description: str
@@ -39,6 +47,15 @@ class ProjectStatus(BaseModel):
     loaded: bool = True
 
 
+class ProjectMetricsResponse(BaseModel):
+    requests_total: int = 0
+    requests_errors: int = 0
+    avg_latency_ms: float = 0.0
+    model_load_time_ms: float = 0.0
+    last_access: float = 0.0
+    warmed: bool = False
+
+
 class DaemonHealth(BaseModel):
     status: str
     projects: dict[str, ProjectStatus]
@@ -59,5 +76,19 @@ class ProjectResponse(BaseModel):
     auto_start: bool = True
 
 
+class ProjectTemplate(BaseModel):
+    name: str
+    description: str
+    config: dict[str, Any]
+
+
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class MetricsResponse(BaseModel):
+    global_requests: int = 0
+    global_errors: int = 0
+    global_avg_latency_ms: float = 0.0
+    projects: dict[str, ProjectMetricsResponse]
+    uptime_seconds: float

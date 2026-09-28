@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from ai_db.config import AppConfig, load_config
-from ai_db.daemon.config import DaemonConfig as InternalDaemonConfig, DaemonProjectConfig
+from ai_db.daemon.config import DaemonConfig as InternalDaemonConfig
 
 
 class DaemonManager:

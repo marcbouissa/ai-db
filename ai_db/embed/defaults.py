@@ -10,8 +10,8 @@ MODEL_NOTE = "suggested default; verify on MTEB-Code/CoIR before use"
 
 SUGGESTED_EMBEDDING: dict[str, dict[str, object]] = {
     "sentence_transformers": {
-        "model": "Qwen/Qwen3-Embedding-0.6B",
-        "device": "cpu",
+        "model": "nomic-ai/nomic-embed-code",
+        "device": "cuda",
         "batch_size": 32,
         "query_prompt": "Instruct: Given a code search query, retrieve relevant code\nQuery: ",
     },
