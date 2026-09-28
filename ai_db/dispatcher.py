@@ -1042,4 +1042,5 @@ class ServiceDispatcher:
         db = self._get_db(args)
         skill_dirs = args.get("skill_dirs") or args.get("dir")
         project = args.get("project")
-        return db.sync_skills(skill_dirs=skill_dirs, project=project)
+        return db.sync_skills(skill_dirs=skill_dirs, project=project, verbose=False)
+
