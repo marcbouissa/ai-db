@@ -6,6 +6,7 @@ Exposes code intelligence and vector indexing capabilities to agents via Model C
 Dynamically reflects all registered tools from ServiceDispatcher and routes execution uniformly.
 """
 
+import argparse
 import json
 import os
 import sys
@@ -17,13 +18,25 @@ if CURRENT_DIR not in sys.path:
 
 from ai_db import __version__
 from ai_db.constants import DEFAULT_DB_FILE
+from ai_db.daemon.client import DaemonClient, create_daemon_client
 from ai_db.dispatcher import ServiceDispatcher
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        prog="ai-db mcp",
+        description="Run stdio JSON-RPC MCP server for ai-db"
+    )
+    parser.add_argument("db_file", nargs="?", default=DEFAULT_DB_FILE, help="SQLite database file (default: %(default)s)")
+    parser.add_argument("--daemon-url", default=None, help="Connect to ai-db daemon (http://host:port)")
+    parser.add_argument("--project", default=None, help="Project name (required with --daemon-url)")
+    return parser.parse_args()
 
 
 class StdioMCPServer:
     """Stdio JSON-RPC 2.0 server wrapping ServiceDispatcher."""
 
-    def __init__(self, db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | None = None,
+    def __init__(self, db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | DaemonClient | None = None,
                  stdout: Any = None):
         self.db_path = db_path
         self.dispatcher = dispatcher if dispatcher is not None else ServiceDispatcher(db_path=db_path)
@@ -165,13 +178,16 @@ class StdioMCPServer:
         return None
 
 
-def run_stdio(db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | None = None,
-              config: Any | None = None):
+def run_stdio(db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | DaemonClient | None = None,
+              config: Any | None = None, daemon_url: str | None = None, project: str | None = None):
     if dispatcher is None:
-        from ai_db.config import load_config
-        cfg = config if config is not None else load_config()
-        dispatcher = ServiceDispatcher(db_path=db_path, config=cfg)
-        dispatcher._get_db()  # fail fast on invalid storage/provider config
+        if daemon_url:
+            dispatcher = create_daemon_client(daemon_url, project=project)
+        else:
+            from ai_db.config import load_config
+            cfg = config if config is not None else load_config()
+            dispatcher = ServiceDispatcher(db_path=db_path, config=cfg)
+            dispatcher._get_db()  # fail fast on invalid storage/provider config
     server = StdioMCPServer(db_path=db_path, dispatcher=dispatcher)
     for line in sys.stdin:
         line = line.strip()
@@ -192,5 +208,5 @@ def run_stdio(db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | No
 
 
 if __name__ == "__main__":
-    db_file = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_DB_FILE
-    run_stdio(db_file)
+    args = parse_args()
+    run_stdio(args.db_file, daemon_url=args.daemon_url, project=args.project)

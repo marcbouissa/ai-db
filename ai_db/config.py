@@ -55,7 +55,7 @@ RERANK_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {    "none"
 }
 
 TOP_LEVEL_KEYS = frozenset(
-    {"version", "storage", "retrieval", "embedding", "rerank", "access", "auto_sync_paths", "index", "trace"}
+    {"version", "storage", "retrieval", "embedding", "rerank", "access", "auto_sync_paths", "index", "trace", "daemon"}
 )
 REQUIRED_TOP_LEVEL = frozenset({"version", "storage", "retrieval", "embedding", "rerank"})
 
@@ -100,6 +100,38 @@ class RerankConfig:
 
 
 @dataclass(frozen=True)
+class DaemonProjectConfig:
+    db_path: str
+    config_path: str | None = None
+    auto_start: bool = True
+
+
+@dataclass(frozen=True)
+class DaemonConfig:
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 8080
+    pid_file: str = "~/.config/ai-db/daemon.pid"
+    projects: dict[str, DaemonProjectConfig] = field(default_factory=dict)
+    auto_discover: bool = True
+    shutdown_timeout: float = 30.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "host": self.host,
+            "port": self.port,
+            "pid_file": self.pid_file,
+            "auto_discover": self.auto_discover,
+            "shutdown_timeout": self.shutdown_timeout,
+            "projects": {
+                name: {"db_path": p.db_path, "config_path": p.config_path, "auto_start": p.auto_start}
+                for name, p in self.projects.items()
+            },
+        }
+
+
+@dataclass(frozen=True)
 class AppConfig:
     version: int
     storage: StorageConfig
@@ -111,6 +143,7 @@ class AppConfig:
     index: IndexConfig = field(default_factory=IndexConfig)
     trace_wait_patterns: list[str] | None = None
     trace_wait_patterns_extend: list[str] | None = None
+    daemon: DaemonConfig = field(default_factory=DaemonConfig)
     source_path: str | None = None
 
     @property
@@ -119,6 +152,18 @@ class AppConfig:
         return self.retrieval.mode
 
     def to_dict(self) -> dict[str, Any]:
+        daemon_dict = {
+            "enabled": self.daemon.enabled,
+            "host": self.daemon.host,
+            "port": self.daemon.port,
+            "pid_file": self.daemon.pid_file,
+            "auto_discover": self.daemon.auto_discover,
+            "shutdown_timeout": self.daemon.shutdown_timeout,
+            "projects": {
+                name: {"db_path": p.db_path, "config_path": p.config_path, "auto_start": p.auto_start}
+                for name, p in self.daemon.projects.items()
+            },
+        }
         return {
             "version": self.version,
             "storage": {"provider": self.storage.provider, "options": dict(self.storage.options)},
@@ -132,6 +177,7 @@ class AppConfig:
                 "wait_patterns": self.trace_wait_patterns,
                 "wait_patterns_extend": self.trace_wait_patterns_extend,
             },
+            "daemon": daemon_dict,
         }
 
 
@@ -314,6 +360,50 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         raise AiDbConfigError("'index.ignore' must be a list of strings")
     index = IndexConfig(doc_weight=doc_weight, ignore=ignore)
 
+    # Parse daemon configuration
+    daemon_raw = _require_dict(data.get("daemon", {}), "daemon")
+    _check_keys(daemon_raw, frozenset({"enabled", "host", "port", "pid_file", "projects", "auto_discover", "shutdown_timeout"}), "daemon")
+    daemon_enabled = bool(daemon_raw.get("enabled", False))
+    daemon_host = daemon_raw.get("host", "127.0.0.1")
+    if not isinstance(daemon_host, str):
+        raise AiDbConfigError("'daemon.host' must be a string")
+    daemon_port = daemon_raw.get("port", 8080)
+    if not isinstance(daemon_port, int) or not (1 <= daemon_port <= 65535):
+        raise AiDbConfigError("'daemon.port' must be an integer between 1 and 65535")
+    daemon_pid_file = daemon_raw.get("pid_file", "~/.config/ai-db/daemon.pid")
+    if not isinstance(daemon_pid_file, str):
+        raise AiDbConfigError("'daemon.pid_file' must be a string")
+    daemon_auto_discover = bool(daemon_raw.get("auto_discover", True))
+    daemon_shutdown_timeout = daemon_raw.get("shutdown_timeout", 30.0)
+    if not isinstance(daemon_shutdown_timeout, (int, float)) or daemon_shutdown_timeout < 0:
+        raise AiDbConfigError("'daemon.shutdown_timeout' must be a non-negative number")
+
+    daemon_projects: dict[str, DaemonProjectConfig] = {}
+    projects_raw = _require_dict(daemon_raw.get("projects", {}), "daemon.projects")
+    for proj_name, proj_data in projects_raw.items():
+        if not isinstance(proj_name, str):
+            raise AiDbConfigError("daemon project names must be strings")
+        proj_section = _require_dict(proj_data, f"daemon.projects.{proj_name}")
+        _check_keys(proj_section, frozenset({"db_path", "config_path", "auto_start"}), f"daemon.projects.{proj_name}")
+        db_path = proj_section.get("db_path")
+        if not isinstance(db_path, str):
+            raise AiDbConfigError(f"'daemon.projects.{proj_name}.db_path' must be a string")
+        config_path = proj_section.get("config_path")
+        if config_path is not None and not isinstance(config_path, str):
+            raise AiDbConfigError(f"'daemon.projects.{proj_name}.config_path' must be a string or null")
+        auto_start = bool(proj_section.get("auto_start", True))
+        daemon_projects[proj_name] = DaemonProjectConfig(db_path=db_path, config_path=config_path, auto_start=auto_start)
+
+    daemon = DaemonConfig(
+        enabled=daemon_enabled,
+        host=daemon_host,
+        port=daemon_port,
+        pid_file=daemon_pid_file,
+        projects=daemon_projects,
+        auto_discover=daemon_auto_discover,
+        shutdown_timeout=daemon_shutdown_timeout,
+    )
+
     return AppConfig(
         version=CONFIG_VERSION,
         storage=storage,
@@ -325,6 +415,7 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         index=index,
         trace_wait_patterns=trace_wait_patterns,
         trace_wait_patterns_extend=trace_wait_patterns_extend,
+        daemon=daemon,
         source_path=source_path,
     )
 

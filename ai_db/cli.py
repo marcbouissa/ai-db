@@ -12,6 +12,8 @@ from ai_db import (
 )
 from ai_db.config import AppConfig, config_path, load_config, masked_dict
 from ai_db.constants import TRACE_DEPTH, TRACE_MAX_NODES
+from ai_db.daemon.client import create_daemon_client
+from ai_db.daemon.manager import get_daemon_manager
 from ai_db.dispatcher import ServiceDispatcher
 from ai_db.errors import AiDbConfigError
 
@@ -141,6 +143,58 @@ def _cmd_config(args: argparse.Namespace, cfg: AppConfig) -> int:
     raise AiDbConfigError("usage: ai-db config {show,check}")
 
 
+def _cmd_daemon(args: argparse.Namespace, cfg: AppConfig) -> int:
+    """Handle daemon subcommands."""
+    manager = get_daemon_manager(cfg)
+
+    if args.daemon_action == "start":
+        return manager.start(foreground=args.foreground, host=args.host, port=args.port)
+
+    if args.daemon_action == "stop":
+        return 0 if manager.stop(force=False) else 1
+
+    if args.daemon_action == "status":
+        status = manager.status()
+        print(json.dumps(status, indent=2))
+        return 0 if status["running"] else 1
+
+    if args.daemon_action == "register":
+        try:
+            result = manager.register_project(
+                args.name,
+                args.db_path,
+                args.config_path,
+                auto_start=not args.no_auto_start,
+            )
+            print(json.dumps(result, indent=2))
+            return 0
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    if args.daemon_action == "unregister":
+        try:
+            result = manager.unregister_project(args.name)
+            print(json.dumps(result, indent=2))
+            return 0
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    if args.daemon_action == "reload":
+        try:
+            result = manager.reload_config()
+            print(json.dumps(result, indent=2))
+            return 0
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    # No action provided
+    print("Usage: ai-db daemon {start,stop,status,register,unregister,reload}")
+    return 1
+
+
 def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ai-db",
@@ -148,6 +202,8 @@ def _main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--version", action="version", version=f"ai-db {__version__}")
     parser.add_argument("--config", default=None, help="Config file path (default: $AI_DB_CONFIG or ~/.config/ai-db/config.json)")
+    parser.add_argument("--daemon-url", default=None, help="Connect to ai-db daemon (http://host:port)")
+    parser.add_argument("--project", dest="daemon_project", default=None, help="Project name (for --daemon-url)")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # init
@@ -215,6 +271,27 @@ def _main(argv: list[str] | None = None) -> int:
     watch_p.add_argument("--daemon", action="store_true", help="Run watcher in background daemon mode")
     watch_p.add_argument("--debounce-ms", type=int, default=300, help="Group file events arriving within this window (default: 300)")
     watch_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
+
+    # daemon
+    daemon_p = subparsers.add_parser("daemon", help="Manage ai-db daemon server")
+    daemon_sub = daemon_p.add_subparsers(dest="daemon_action", help="Daemon action")
+
+    daemon_start = daemon_sub.add_parser("start", help="Start daemon in background")
+    daemon_start.add_argument("--foreground", action="store_true", help="Run in foreground (don't daemonize)")
+    daemon_start.add_argument("--host", default=None, help="Bind host (default: from config)")
+    daemon_start.add_argument("--port", type=int, default=None, help="Bind port (default: from config)")
+
+    daemon_sub.add_parser("stop", help="Stop daemon")
+    daemon_sub.add_parser("status", help="Show daemon status")
+
+    register_p = daemon_sub.add_parser("register", help="Register project with daemon")
+    register_p.add_argument("name", help="Project name")
+    register_p.add_argument("--db-path", required=True, help="Database path for project")
+    register_p.add_argument("--config-path", default=None, help="Optional per-project config file")
+    register_p.add_argument("--no-auto-start", action="store_true", help="Don't auto-start project on daemon restart")
+
+    daemon_sub.add_parser("unregister", help="Unregister project from daemon")
+    daemon_sub.add_parser("reload", help="Reload daemon configuration")
 
     # sync-all
     syncall_p = subparsers.add_parser("sync-all", help="Sync all repositories registered in config.json")
@@ -416,6 +493,11 @@ def _main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return _cmd_init(args)
 
+    # Handle daemon command
+    if args.command == "daemon":
+        cfg = load_config(args.config)
+        return _cmd_daemon(args, cfg)
+
     cfg = load_config(args.config)
     # Every downstream component resolves the same file.
     os.environ["AI_DB_CONFIG"] = cfg.source_path or config_path(args.config)
@@ -432,7 +514,7 @@ def _main(argv: list[str] | None = None) -> int:
     # Transport and long-running server/daemon commands
     if args.command == "mcp":
         import mcp_server
-        mcp_server.run_stdio(args.db, config=cfg)
+        mcp_server.run_stdio(args.db, config=cfg, daemon_url=args.daemon_url, project=args.daemon_project)
         return 0
 
     if args.command == "watch":
@@ -453,8 +535,17 @@ def _main(argv: list[str] | None = None) -> int:
         run_watch(args.db, args.path, debounce_ms=args.debounce_ms)
         return 0
 
-    # Initialize unified ServiceDispatcher for all domain service commands
-    dispatcher = ServiceDispatcher(db_path=args.db, config=cfg)
+    # Initialize dispatcher - use daemon client if --daemon-url provided
+    daemon_url = args.daemon_url or os.environ.get("AI_DB_DAEMON_URL")
+    if daemon_url:
+        # Use global --project (daemon_project) for daemon client, fall back to subcommand's --project
+        project = getattr(args, "daemon_project", None) or getattr(args, "project", None)
+        if not project and args.command not in ("daemon", "init", "config"):
+            # Auto-detect project from CWD
+            project = detect_project_name(os.getcwd())
+        dispatcher = create_daemon_client(daemon_url, project=project)
+    else:
+        dispatcher = ServiceDispatcher(db_path=args.db, config=cfg)
 
     # Handle sync-all
     if args.command == "sync-all":
@@ -483,7 +574,11 @@ def _main(argv: list[str] | None = None) -> int:
         return 0
 
     # Auto-detect project scope from CWD if not provided
-    active_proj = getattr(args, "project", None) or detect_project_name(os.getcwd())
+    # For daemon client, use the global --project (daemon_project) if provided
+    if daemon_url:
+        active_proj = getattr(args, "daemon_project", None) or getattr(args, "project", None) or detect_project_name(os.getcwd())
+    else:
+        active_proj = getattr(args, "project", None) or detect_project_name(os.getcwd())
     allowed_projs = getattr(args, "allow_project", []) or []
 
     if args.command == "sync":
@@ -505,25 +600,35 @@ def _main(argv: list[str] | None = None) -> int:
                 print(f"{ts} {e['tool']:<11} {e['total_ms']:8.1f}ms{hit} [{stages}] {e['query'][:60]}")
 
     elif args.command in ("investigate", "inv"):
-        pack = dispatcher.execute("investigate", {
-            "query": args.query, "mode": args.mode, "budget_tokens": args.budget,
-            "project": active_proj, "allow_project": allowed_projs, "languages": args.lang,
-            "since": args.since, "root": args.root, "format": args.format,
-        })
+        investigate_args = {
+            "query": args.query,
+            "mode": args.mode,
+            "budget_tokens": args.budget,
+            "allow_project": allowed_projs,
+            "languages": args.lang,
+            "since": args.since,
+            "root": args.root,
+            "format": args.format,
+        }
+        if not daemon_url:
+            investigate_args["project"] = active_proj
+        pack = dispatcher.execute("investigate", investigate_args)
         # A non-default style comes back pre-rendered from the dispatcher.
         print(pack if isinstance(pack, str)
               else json.dumps(pack, indent=2, ensure_ascii=False))
 
     elif args.command == "query":
-        hits = dispatcher.execute("query", {
+        query_args = {
             "query": args.search,
             "top": args.top,
-            "project": active_proj,
             "allow_project": allowed_projs,
             "languages": args.lang,
             "chunk_types": args.chunk_type,
             "modified_since": args.since,
-        })
+        }
+        if not daemon_url:
+            query_args["project"] = active_proj
+        hits = dispatcher.execute("query", query_args)
         if not hits:
             print("NO_HITS")
         else:
@@ -536,9 +641,10 @@ def _main(argv: list[str] | None = None) -> int:
         check_args = {
             "path": args.path,
             "index": getattr(args, "index", False),
-            "project": active_proj,
             "allow_project": allowed_projs,
         }
+        if not daemon_url:
+            check_args["project"] = active_proj
         if getattr(args, "watch", False):
             # Watch means "tell me when the file on disk changes", so it always
             # validates files. Watching the index would only re-read a snapshot.
@@ -582,11 +688,13 @@ def _main(argv: list[str] | None = None) -> int:
                 sys.exit(1)
 
     elif args.command == "symbol":
-        symbols = dispatcher.execute("symbol", {
+        symbol_args = {
             "name": args.name,
-            "project": active_proj,
-            "allow_project": allowed_projs
-        })
+            "allow_project": allowed_projs,
+        }
+        if not daemon_url:
+            symbol_args["project"] = active_proj
+        symbols = dispatcher.execute("symbol", symbol_args)
         if not symbols:
             print(f"NO_SYMBOLS_FOUND: {args.name}")
         else:
@@ -607,13 +715,15 @@ def _main(argv: list[str] | None = None) -> int:
 
     elif args.command in ("route-skill", "suggest-skills", "route"):
         min_conf = getattr(args, "min_confidence", None)
-        matches = dispatcher.execute("route_skill", {
+        route_args = {
             "prompt": args.prompt,
             "top": args.top,
             "min_confidence": min_conf if min_conf is not None else 0.0,
-            "project": active_proj,
-            "allow_project": allowed_projs
-        })
+            "allow_project": allowed_projs,
+        }
+        if not daemon_url:
+            route_args["project"] = active_proj
+        matches = dispatcher.execute("route_skill", route_args)
         if not matches:
             if args.format == "json":
                 print("[]")
@@ -636,7 +746,10 @@ def _main(argv: list[str] | None = None) -> int:
                         print(f"  Desc: {m['description'][:140]}...")
 
     elif args.command == "sync-skills":
-        res = dispatcher.execute("sync_skills", {"skill_dirs": args.dir, "project": args.project})
+        sync_skills_args = {"skill_dirs": args.dir}
+        if not daemon_url:
+            sync_skills_args["project"] = args.project
+        res = dispatcher.execute("sync_skills", sync_skills_args)
         print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
 
     elif args.command in ("context", "ctx"):
@@ -648,23 +761,27 @@ def _main(argv: list[str] | None = None) -> int:
             for t in args.tasks:
                 tasks_list.extend([x.strip() for x in t.split(",") if x.strip()])
 
-            res = dispatcher.execute("context_save", {
+            context_save_args = {
                 "session_id": args.session_id,
                 "summary": args.summary,
-                "project": active_proj,
                 "title": args.title,
                 "active_files": files_list,
                 "open_tasks": tasks_list,
-                "notes": args.notes
-            })
+                "notes": args.notes,
+            }
+            if not daemon_url:
+                context_save_args["project"] = active_proj
+            res = dispatcher.execute("context_save", context_save_args)
             print(f"[ai-db context] Saved session '{res['session_id']}' for project '{res['project']}'")
 
         elif args.ctx_action == "get":
-            ctx = dispatcher.execute("context_recall", {
+            context_get_args = {
                 "session_id": args.session_id,
-                "project": active_proj,
-                "allow_project": allowed_projs
-            })
+                "allow_project": allowed_projs,
+            }
+            if not daemon_url:
+                context_get_args["project"] = active_proj
+            ctx = dispatcher.execute("context_recall", context_get_args)
             if not ctx or not ctx.get("summary"):
                 print("NO_CONTEXT_FOUND")
             else:
