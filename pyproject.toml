@@ -55,6 +55,13 @@ ext = [
     "numpy>=2.0",
     "opencv-python>=4.8",
 ]
+# Video processor extras
+video-base = ["opencv-python-headless>=4.8", "pillow>=10.0"]
+video-vlm = ["openai>=1.0", "anthropic>=0.7"]
+video-depth = ["torch>=2.0", "transformers>=4.30", "accelerate>=0.20"]
+video-sfm = ["pycolmap>=0.6"]
+video-gs = ["torch>=2.0", "gsplat>=0.1"]
+video-full = ["ai-db[video-base,video-vlm,video-depth,video-sfm,video-gs]"]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
@@ -76,6 +83,13 @@ sqlite = "ai_db.storage.sqlite_backend:SQLiteBackend.from_options"
 markdown = "ai_db.ext.markdown:MarkdownChunker"
 usd = "ai_db.ext.usd:USDChunker"
 segmentation = "ai_db.ext.segmentation:SegmentationChunker"
+
+[project.entry-points."ai_db.video_processors"]
+frame_extractor = "ai_db.video.processors.frame_extractor:FrameExtractor"
+vlm_analyzer = "ai_db.video.processors.vlm_analyzer:VLMAnalyzer"
+depth_estimator = "ai_db.video.processors.depth_estimator:DepthEstimator"
+# colmap_sfm = "ai_db.video.processors.colmap_sfm:ColmapSfM"
+# gaussian_splat = "ai_db.video.processors.gaussian_splat:GaussianSplat"
 
 [tool.setuptools.packages.find]
 where = ["."]
