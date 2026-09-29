@@ -58,24 +58,33 @@ def test_probe_uses_real_matrices_not_vectors(monkeypatch):
 
 
 def test_probe_is_best_of_n_not_mean(monkeypatch):
-    """A single slow repeat must not decide the dtype for the process lifetime."""
+    """A single slow repeat must not decide the dtype for the process lifetime.
+
+    The clock is scripted rather than the matmul. Regression: this used to patch
+    ``torch.matmul``, but the probe times ``a @ b``, which never routes through
+    that Python function -- nor through ``Tensor.__matmul__``, which is not
+    interceptable from Python. The injected stall never fired, so the test
+    silently measured the host's real matmul speed and failed on any CPU slower
+    than the hardcoded bound.
+    """
     import time
 
-    import torch
+    # One stalled repeat (~0.50 s) among fast ones. Best-of-N must report the
+    # fastest; a mean would land at ~0.17 s.
+    durations = [0.50, 0.01, 0.02][:constants.DTYPE_PROBE_REPEATS]
+    assert len(durations) == constants.DTYPE_PROBE_REPEATS
 
-    real = torch.matmul
-    calls = {"n": 0}
+    readings = []
+    t = 0.0
+    for d in durations:
+        readings.extend([t, t + d])  # perf_counter() at start, then at end
+        t += 10.0
+    script = iter(readings)
 
-    def flaky(a, b):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            time.sleep(0.05)  # a scheduler hiccup on the first repeat
-        return real(a, b)
+    monkeypatch.setattr(time, "perf_counter", lambda: next(script))
 
-    monkeypatch.setattr(torch, "matmul", flaky, raising=False)
-    timings = device_mod._probe_cpu_dtypes(("float32", "bfloat16"))
-    # The best-of must be far below the mean that includes the 50 ms stall.
-    assert timings["float32"] < 0.05 / constants.DTYPE_PROBE_REPEATS
+    timings = device_mod._probe_cpu_dtypes(("float32",))
+    assert timings["float32"] == pytest.approx(min(durations))
 
 
 # ==============================================================================
