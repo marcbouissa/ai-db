@@ -8,6 +8,8 @@ Covers:
   - stdio JSON-RPC 2.0 MCP server (initialize, ping, tools/list, tools/call)
   - Cross-transport parity (MCP vs CLI)
 """
+import io
+import json
 import subprocess
 import sys
 
@@ -427,3 +429,146 @@ class TestTransportsTier4Workflows:
         })
         assert analyze_res["result"]["isError"] is False
         assert "OrderService" in analyze_res["result"]["content"][0]["text"]
+
+
+# ==============================================================================
+# Tier 5: Daemon-backed MCP wiring
+# ==============================================================================
+
+class TestTransportsDaemonBackedMCP:
+    """`ai-db mcp --daemon-url` must boot without touching local tool registration.
+
+    A DaemonClient serves its tool list from the daemon and rejects
+    register_tool, so the local scene/video registration must be skipped
+    instead of crashing the server at startup.
+    """
+
+    def test_run_stdio_does_not_register_local_tools_on_daemon_client(self, monkeypatch):
+        from ai_db.daemon.client import DaemonClient
+        import mcp_server
+
+        dispatcher = DaemonClient("http://127.0.0.1:59999", default_project="test")
+        monkeypatch.setattr(mcp_server.sys, "stdin", io.StringIO(""))
+
+        # Regression: used to raise NotImplementedError before reading stdin.
+        mcp_server.run_stdio(dispatcher=dispatcher)
+
+    def test_run_stdio_emits_only_json_on_stdout(self, monkeypatch, tmp_path):
+        """Every stdout line from the stdio server must be parseable JSON-RPC.
+
+        stdout is the transport. A single stray print() from an imported module
+        (e.g. video processor entry-point loading) makes the client fail its
+        parse with "invalid character ... looking for beginning of value" and
+        drop the connection, even though the server itself is fine.
+        """
+        import json
+        import mcp_server
+
+        dispatcher = ServiceDispatcher(db_path=str(tmp_path / "json.db"))
+        requests = "".join(
+            json.dumps({"jsonrpc": "2.0", "id": i, "method": m, "params": {}}) + "\n"
+            for i, m in ((1, "initialize"), (2, "ping"))
+        )
+        captured = io.StringIO()
+        monkeypatch.setattr(mcp_server.sys, "stdin", io.StringIO(requests))
+        monkeypatch.setattr(mcp_server.sys, "stdout", captured)
+
+        mcp_server.run_stdio(dispatcher=dispatcher)
+
+        lines = [ln for ln in captured.getvalue().splitlines() if ln.strip()]
+        assert lines, "server produced no output"
+        for line in lines:
+            # Raises on the first non-JSON byte, naming the offending line.
+            json.loads(line)
+        assert [json.loads(ln)["id"] for ln in lines] == [1, 2]
+
+    def test_tools_list_failure_returns_error_not_eof(self, tmp_path):
+        """An unreachable dispatcher must not kill the process.
+
+        Regression: tools/list had no error handling, so an httpx.ConnectError
+        unwound run_stdio and the client saw only "EOF" with no cause.
+        """
+        import mcp_server
+
+        class BrokenDispatcher(ServiceDispatcher):
+            def list_tools(self):
+                raise ConnectionError("All connection attempts failed")
+
+        dispatcher = BrokenDispatcher(db_path=str(tmp_path / "broken.db"))
+        server = mcp_server.StdioMCPServer(dispatcher=dispatcher)
+
+        resp = server.handle_request(
+            {"jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": {}}
+        )
+        assert resp["id"] == 7
+        assert resp["result"]["isError"] is True
+        assert "All connection attempts failed" in resp["result"]["content"][0]["text"]
+
+    def test_run_stdio_outer_guard_reports_escaping_error(self, monkeypatch, tmp_path):
+        """An error raised *outside* handle_request's own handling must not kill the
+        transport, and must name the real method rather than raising NameError."""
+        import mcp_server
+
+        class BadShapeDispatcher(ServiceDispatcher):
+            def list_tools(self):
+                # Not a mapping: blows up in the schema-normalization loop,
+                # which is outside the try/except around list_tools().
+                return ["not-a-dict"]
+
+        dispatcher = BadShapeDispatcher(db_path=str(tmp_path / "shape.db"))
+        requests = "".join(
+            json.dumps({"jsonrpc": "2.0", "id": i, "method": m, "params": {}}) + "\n"
+            for i, m in ((1, "initialize"), (2, "tools/list"), (3, "ping"))
+        )
+        captured, errors = io.StringIO(), io.StringIO()
+        monkeypatch.setattr(mcp_server.sys, "stdin", io.StringIO(requests))
+        monkeypatch.setattr(mcp_server.sys, "stdout", captured)
+        monkeypatch.setattr(mcp_server.sys, "stderr", errors)
+
+        mcp_server.run_stdio(dispatcher=dispatcher)
+
+        parsed = [json.loads(ln) for ln in captured.getvalue().splitlines() if ln.strip()]
+        assert [p["id"] for p in parsed] == [1, 2, 3]
+        # JSON-RPC internal error, not a silent drop.
+        assert parsed[1]["error"]["code"] == -32603
+        # The guard itself must not blow up (regression: referenced a name that
+        # only existed inside handle_request).
+        assert "tools/list" in errors.getvalue()
+        assert "NameError" not in errors.getvalue()
+
+    def test_run_stdio_survives_handler_exception(self, monkeypatch, tmp_path):
+        """run_stdio must keep serving after a handler raises."""
+        import mcp_server
+
+        class ExplodingDispatcher(ServiceDispatcher):
+            def list_tools(self):
+                raise RuntimeError("boom")
+
+        dispatcher = ExplodingDispatcher(db_path=str(tmp_path / "boom.db"))
+        requests = "".join(
+            json.dumps({"jsonrpc": "2.0", "id": i, "method": m, "params": {}}) + "\n"
+            for i, m in ((1, "initialize"), (2, "tools/list"), (3, "ping"))
+        )
+        captured = io.StringIO()
+        monkeypatch.setattr(mcp_server.sys, "stdin", io.StringIO(requests))
+        monkeypatch.setattr(mcp_server.sys, "stdout", captured)
+
+        mcp_server.run_stdio(dispatcher=dispatcher)
+
+        lines = [ln for ln in captured.getvalue().splitlines() if ln.strip()]
+        parsed = [json.loads(ln) for ln in lines]
+        # All three requests answered: the transport outlived the exception.
+        assert [p["id"] for p in parsed] == [1, 2, 3]
+        assert parsed[2]["result"] == {}
+
+    def test_run_stdio_still_registers_local_tools_for_service_dispatcher(self, monkeypatch, tmp_path):
+        import mcp_server
+
+        dispatcher = ServiceDispatcher(db_path=str(tmp_path / "local.db"))
+        registered_before = set(dispatcher._tools)
+        monkeypatch.setattr(mcp_server.sys, "stdin", io.StringIO(""))
+
+        mcp_server.run_stdio(dispatcher=dispatcher)
+
+        assert {"snapshot_scene", "video_to_scene"} <= set(dispatcher._tools)
+        assert registered_before <= set(dispatcher._tools)

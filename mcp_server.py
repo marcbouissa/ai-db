@@ -20,6 +20,9 @@ from ai_db import __version__
 from ai_db.constants import DEFAULT_DB_FILE
 from ai_db.daemon.client import DaemonClient, create_daemon_client
 from ai_db.dispatcher import ServiceDispatcher
+from ai_db.mcp_tools.scene_tools import register_scene_tools
+from ai_db.mcp_tools.video_tools import register_video_tools
+from ai_db.video.factory import load_video_processors
 
 
 def parse_args():
@@ -74,6 +77,22 @@ class StdioMCPServer:
 
         return report
 
+    @staticmethod
+    def _tool_error(req_id: Any, message: str) -> dict[str, Any]:
+        """Build a JSON-RPC tool-error result so failures reach the client as data.
+
+        Handlers must not raise: an exception unwinds run_stdio, the process
+        exits, and the client reports only "EOF" with no cause attached.
+        """
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "content": [{"type": "text", "text": message}],
+                "isError": True,
+            },
+        }
+
     def handle_request(self, req: dict[str, Any]) -> dict[str, Any] | None:
         req_id = req.get("id")
         method = req.get("method")
@@ -102,7 +121,12 @@ class StdioMCPServer:
             return {"jsonrpc": "2.0", "id": req_id, "result": {}}
 
         if method == "tools/list":
-            raw_tools = self.dispatcher.list_tools()
+            try:
+                raw_tools = self.dispatcher.list_tools()
+            except Exception as err:  # noqa: BLE001 - JSON-RPC boundary: report to client
+                # An unreachable daemon raises here (httpx.ConnectError). Letting
+                # it escape kills the process and the client sees a bare EOF.
+                return self._tool_error(req_id, f"Error listing tools: {err!s}")
             tools = []
             for t in raw_tools:
                 td = dict(t)
@@ -138,33 +162,11 @@ class StdioMCPServer:
                     }
                 }
             except KeyError:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "result": {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"Unknown tool: {tool_name}"
-                            }
-                        ],
-                        "isError": True
-                    }
-                }
+                return self._tool_error(req_id, f"Unknown tool: {tool_name}")
             except Exception as err:  # noqa: BLE001 - JSON-RPC boundary: report to client
-                return {
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "result": {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"Error executing tool '{tool_name}': {err!s}"
-                            }
-                        ],
-                        "isError": True
-                    }
-                }
+                return self._tool_error(
+                    req_id, f"Error executing tool '{tool_name}': {err!s}"
+                )
 
         if req_id is not None:
             return {
@@ -188,6 +190,19 @@ def run_stdio(db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | Da
             cfg = config if config is not None else load_config()
             dispatcher = ServiceDispatcher(db_path=db_path, config=cfg)
             dispatcher._get_db()  # fail fast on invalid storage/provider config
+
+    # Register scene memory and video tools.
+    # Only for the local dispatcher: a DaemonClient proxies every tool call to the
+    # daemon and serves its tool list from the daemon, so local registration is
+    # both impossible (register_tool raises) and wrong (it would shadow the daemon's
+    # tool set).
+    if isinstance(dispatcher, ServiceDispatcher):
+        register_scene_tools(dispatcher)
+        register_video_tools(dispatcher)
+
+    # Load video processors from entry points
+    load_video_processors()
+
     server = StdioMCPServer(db_path=db_path, dispatcher=dispatcher)
     for line in sys.stdin:
         line = line.strip()
@@ -201,7 +216,23 @@ def run_stdio(db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | Da
             sys.stdout.flush()
             continue
 
-        resp = server.handle_request(req)
+        try:
+            resp = server.handle_request(req)
+        except Exception as err:  # noqa: BLE001 - last-resort guard for the transport
+            # Without this, any escaping exception (a handler that forgot to
+            # catch, a bug in schema normalization) terminates the process and
+            # the client reports only "EOF". Keep the session alive and say why.
+            sys.stderr.write(
+                f"[ai-db] unhandled error in {req.get('method')!r}: {err!r}\n"
+            )
+            sys.stderr.flush()
+            if req.get("id") is None:
+                continue
+            resp = {
+                "jsonrpc": "2.0",
+                "id": req["id"],
+                "error": {"code": -32603, "message": f"Internal error: {err!s}"},
+            }
         if resp is not None:
             sys.stdout.write(json.dumps(resp) + "\n")
             sys.stdout.flush()
