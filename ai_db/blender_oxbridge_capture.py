@@ -5,7 +5,7 @@ Run this instead of `ai-db mcp` to start the MCP server with Blender integration
 
     python -m ai_db.blender_oxbridge_capture
 
-This connects to ox-bridge on localhost:8978 (MCP over HTTP)
+This connects to ox-bridge on localhost:9878 (MCP over HTTP)
 and injects a capture function that fetches the current Blender scene.
 """
 
@@ -25,9 +25,9 @@ from ai_db.mcp_tools import scene_tools
 
 
 class OxBridgeMCPClient:
-    """Minimal MCP client to talk to ox-bridge on port 8978."""
+    """Minimal MCP client to talk to ox-bridge on port 9878."""
 
-    def __init__(self, url: str = "http://localhost:8978/mcp"):
+    def __init__(self, url: str = "http://localhost:9878/mcp"):
         self.url = url
         self.client = httpx.AsyncClient(timeout=30.0)
         self.request_id = 0
@@ -92,7 +92,7 @@ class OxBridgeMCPClient:
         await self.client.aclose()
 
 
-async def create_blender_capture(oxbridge_url: str = "http://localhost:8978/mcp"):
+async def create_blender_capture(oxbridge_url: str = "http://localhost:9878/mcp"):
     """
     Create a capture function that fetches scene from ox-bridge.
 
@@ -179,7 +179,7 @@ async def create_blender_capture(oxbridge_url: str = "http://localhost:8978/mcp"
 def setup_blender_capture(oxbridge_url: str = None):
     """Set up the blender capture function on the global scene memory."""
     if oxbridge_url is None:
-        oxbridge_url = os.environ.get("OXBRIDGE_URL", "http://localhost:8978/mcp")
+        oxbridge_url = os.environ.get("OXBRIDGE_URL", "http://localhost:9878/mcp")
 
     print(f"[ai-db] Connecting to ox-bridge at {oxbridge_url}...")
 
@@ -199,8 +199,8 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Start ai-db MCP server with Blender ox-bridge integration")
-    parser.add_argument("--oxbridge-url", default=os.environ.get("OXBRIDGE_URL", "http://localhost:8978/mcp"),
-                        help="ox-bridge MCP server URL (default: http://localhost:8978/mcp)")
+    parser.add_argument("--oxbridge-url", default=os.environ.get("OXBRIDGE_URL", "http://localhost:9878/mcp"),
+                        help="ox-bridge MCP server URL (default: http://localhost:9878/mcp)")
     parser.add_argument("--daemon-url", help="Connect to ai-db daemon instead of local storage")
     parser.add_argument("--project", help="Project name for daemon mode")
     args = parser.parse_args()
