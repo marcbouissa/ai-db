@@ -5,8 +5,9 @@ Run this instead of `ai-db mcp` to start the MCP server with Blender integration
 
     python -m ai_db.blender_oxbridge_capture
 
-This connects to ox-bridge on localhost:9878 (MCP over HTTP)
-and injects a capture function that fetches the current Blender scene.
+This connects to ox-bridge (blender_mcp) on localhost:9878 (MCP streamable HTTP)
+and injects a capture function that fetches the current Blender scene via
+the `get_scene_info` tool.
 """
 
 import asyncio
@@ -25,9 +26,12 @@ from ai_db.mcp_tools import scene_tools
 
 
 class OxBridgeMCPClient:
-    """Minimal MCP client to talk to ox-bridge on port 9878."""
+    """Minimal MCP client to talk to ox-bridge (blender_mcp) on port 9878."""
 
-    def __init__(self, url: str = "http://localhost:9878/mcp"):
+    def __init__(self, url: str = "http://localhost:9878/"):
+        # Ensure trailing slash for streamable HTTP
+        if not url.endswith("/"):
+            url += "/"
         self.url = url
         self.client = httpx.AsyncClient(timeout=30.0)
         self.request_id = 0
@@ -84,7 +88,10 @@ class OxBridgeMCPClient:
             if "result" in data:
                 content = data["result"].get("content", [])
                 if content and content[0].get("type") == "text":
-                    return json.loads(content[0]["text"])
+                    try:
+                        return json.loads(content[0]["text"])
+                    except json.JSONDecodeError:
+                        return {"raw": content[0]["text"]}
             return data.get("result")
         return None
 
@@ -92,11 +99,9 @@ class OxBridgeMCPClient:
         await self.client.aclose()
 
 
-async def create_blender_capture(oxbridge_url: str = "http://localhost:9878/mcp"):
+async def create_blender_capture(oxbridge_url: str = "http://localhost:9878/"):
     """
-    Create a capture function that fetches scene from ox-bridge.
-
-    Returns a callable that returns a SceneState compatible dict.
+    Create a capture function that fetches scene from ox-bridge using get_scene_info.
     """
     client = OxBridgeMCPClient(oxbridge_url)
 
@@ -107,69 +112,68 @@ async def create_blender_capture(oxbridge_url: str = "http://localhost:9878/mcp"
     for t in tools:
         print(f"  - {t['name']}: {t.get('description', '')[:60]}")
 
-    # Look for a scene capture tool (common names)
-    scene_tool_names = [
-        "get_scene",
-        "get_scene_info",
-        "blender_get_scene",
-        "scene_get",
-        "capture_scene",
-        "get_current_scene",
-    ]
-    scene_tool = None
-    for t in tools:
-        if t["name"] in scene_tool_names:
-            scene_tool = t["name"]
-            break
-
-    if not scene_tool:
-        # Try to find any tool that looks like it returns scene data
-        for t in tools:
-            desc = t.get("description", "").lower()
-            if "scene" in desc and ("get" in desc or "capture" in desc or "export" in desc):
-                scene_tool = t["name"]
-                break
-
-    if not scene_tool:
+    # The ox-bridge tool for scene capture is `get_scene_info`
+    scene_tool = "get_scene_info"
+    if not any(t["name"] == scene_tool for t in tools):
         await client.close()
         raise RuntimeError(
-            f"No scene capture tool found on ox-bridge. Available: {[t['name'] for t in tools]}"
+            f"Expected tool 'get_scene_info' not found on ox-bridge. Available: {[t['name'] for t in tools]}"
         )
 
     print(f"[ai-db] Using scene tool: {scene_tool}")
 
     async def capture() -> dict:
-        """Capture current Blender scene via ox-bridge."""
+        """Capture current Blender scene via ox-bridge get_scene_info."""
         result = await client.call_tool(scene_tool, {})
         if result is None:
             raise RuntimeError(f"Tool {scene_tool} returned no result")
 
-        # The ox-bridge tool should return a dict compatible with SceneState
-        # If it returns a different format, adapt here
+        # result should be the scene info dict from blender_mcp
+        # Convert to SceneState compatible format
         if isinstance(result, str):
             result = json.loads(result)
 
-        # Ensure it has the required fields for SceneState
-        if "scene_id" not in result:
-            import uuid
-            result["scene_id"] = str(uuid.uuid4())
-        if "project" not in result:
-            result["project"] = "blender"
-        if "name" not in result:
-            result["name"] = "Blender Scene"
-        if "timestamp" not in result:
-            import time
-            result["timestamp"] = time.time()
-        if "objects" not in result:
-            result["objects"] = {}
-        if "materials" not in result:
-            result["materials"] = {}
-        if "collections" not in result:
-            result["collections"] = {}
-        if "camera" not in result:
-            result["camera"] = None
+        # blender_mcp get_scene_info returns:
+        # {"status": "success", "objects": [...], "object_count": N, ...}
+        # We need to adapt to our SceneState format
+        if result.get("status") != "success" and result.get("ok") != 1:
+            raise RuntimeError(f"get_scene_info failed: {result}")
 
-        return result
+        objects = result.get("objects", [])
+        scene_data = {
+            "scene_id": f"blender-{int(result.get('timestamp', 0)) or __import__('time').time()}",
+            "project": "blender",
+            "name": "Blender Scene",
+            "timestamp": result.get("timestamp", __import__('time').time()),
+            "objects": {},
+            "materials": {},
+            "collections": {},
+            "camera": result.get("camera"),
+            "prompt_context": None,
+        }
+
+        for obj in objects:
+            obj_uuid = f"blender-{obj.get('name', 'unnamed')}"
+            scene_data["objects"][obj_uuid] = {
+                "uuid": obj_uuid,
+                "name": obj.get("name", "unnamed"),
+                "type": obj.get("type", "MESH"),
+                "collection": obj.get("collection", "Collection"),
+                "location": obj.get("location", [0, 0, 0]),
+                "rotation": obj.get("rotation", [0, 0, 0]),
+                "scale": obj.get("scale", [1, 1, 1]),
+                "vertices": obj.get("vertices", 0),
+                "faces": obj.get("faces", 0),
+                "materials": obj.get("materials", []),
+                "modifiers": obj.get("modifiers", []),
+            }
+
+            # Collect materials
+            for mat_name in obj.get("materials", []):
+                if mat_name not in scene_data["materials"]:
+                    scene_data["materials"][mat_name] = {"name": mat_name}
+
+        return scene_data
 
     # Store client for cleanup
     capture._client = client
@@ -179,7 +183,7 @@ async def create_blender_capture(oxbridge_url: str = "http://localhost:9878/mcp"
 def setup_blender_capture(oxbridge_url: str = None):
     """Set up the blender capture function on the global scene memory."""
     if oxbridge_url is None:
-        oxbridge_url = os.environ.get("OXBRIDGE_URL", "http://localhost:9878/mcp")
+        oxbridge_url = os.environ.get("OXBRIDGE_URL", "http://localhost:9878/")
 
     print(f"[ai-db] Connecting to ox-bridge at {oxbridge_url}...")
 
@@ -199,8 +203,8 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Start ai-db MCP server with Blender ox-bridge integration")
-    parser.add_argument("--oxbridge-url", default=os.environ.get("OXBRIDGE_URL", "http://localhost:9878/mcp"),
-                        help="ox-bridge MCP server URL (default: http://localhost:9878/mcp)")
+    parser.add_argument("--oxbridge-url", default=os.environ.get("OXBRIDGE_URL", "http://localhost:9878/"),
+                        help="ox-bridge MCP server URL (default: http://localhost:9878/)")
     parser.add_argument("--daemon-url", help="Connect to ai-db daemon instead of local storage")
     parser.add_argument("--project", help="Project name for daemon mode")
     args = parser.parse_args()
