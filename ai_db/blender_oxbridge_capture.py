@@ -220,7 +220,7 @@ def main():
     # Now start the MCP server
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from mcp_server import main as mcp_main
+    from mcp_server import run_stdio
     # Override sys.argv for mcp_server.main
     sys.argv = ["ai-db", "mcp"]
     if args.daemon_url:
@@ -228,7 +228,9 @@ def main():
     if args.project:
         sys.argv.extend(["--project", args.project])
 
-    mcp_main()
+    from mcp_server import parse_args
+    parsed = parse_args()
+    run_stdio(parsed.db_file, daemon_url=parsed.daemon_url, project=parsed.project)
 
 
 if __name__ == "__main__":
