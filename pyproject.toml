@@ -112,7 +112,7 @@ markers = [
     "sanitization: repository sanitization tests",
     "storage: storage layer tests",
     "transports: communication and transport tests",
-    "blender: needs a local Blender + blender_ox addon",
+    "blender: needs a local Blender with the socket addon running",
     "telemetry: telemetry tests",
     "bench: performance benchmarks (run with -m bench)",
     "slow: long-running tests (full-size corpora, large downloads)",

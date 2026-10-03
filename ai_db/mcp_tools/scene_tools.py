@@ -1,4 +1,4 @@
-"""MCP tools for 3D scenes: scene memory + thin forwards to the Blender (blender_ox) socket.
+"""MCP tools for 3D scenes: scene memory + thin forwards to the Blender addon socket.
 
 Registration is table-driven: (name, description, schema) rows plus a handler.
 Spatial / build / render tools are forwarded verbatim to the Blender client.

@@ -1,4 +1,4 @@
-"""Single client for the blender_ox socket server (TCP, newline-delimited JSON).
+"""Single client for the Blender addon socket server (TCP, newline-delimited JSON).
 
 Protocol: see blender_mcp/PROTOCOL.md. One request per connection; supports
 single commands and ``{"batch": [...]}``. Zero cost when Blender is inactive.
@@ -54,7 +54,7 @@ def _error_from(res: dict[str, Any]) -> BlenderError:
 
 
 class BlenderClient:
-    """TCP client for the blender_ox addon."""
+    """TCP client for the Blender addon socket server."""
 
     def __init__(
         self,

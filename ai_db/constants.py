@@ -171,7 +171,7 @@ LAYOUT_MAX_COUNT = 50  # max instances per ObjectSpec
 LAYOUT_MAX_BOUND_M = 500.0
 LAYOUT_RESTARTS = 4  # greedy passes (fresh random draws) before reporting a conflict
 
-# --- Blender (blender_ox socket server) ---
+# --- Blender (addon socket server) ---
 BLENDER_OX_HOST = "127.0.0.1"
 BLENDER_OX_PORT = 9877  # override: AI_DB_BLENDER_PORT
 BLENDER_OX_TIMEOUT_S = 15.0
