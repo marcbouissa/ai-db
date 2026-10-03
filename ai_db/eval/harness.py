@@ -132,6 +132,93 @@ def compare_pack_to_baseline(result: dict[str, Any], baseline: dict[str, Any],
     return None
 
 
+
+def load_refs_golden(golden_path: str) -> list[dict[str, Any]]:
+    """Golden set for ``--symbols`` / ``--callers``: ``{"name", "expected": [{"filepath", "line", "kind"?}]}``."""
+    items: list[dict[str, Any]] = []
+    with open(golden_path, "r", encoding="utf-8") as f:
+        for lineno, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            item = json.loads(line)
+            if not isinstance(item.get("name"), str) or not item["name"].strip():
+                raise ValueError(f"{golden_path}:{lineno}: 'name' must be a non-empty string")
+            expected = item.get("expected")
+            if not isinstance(expected, list) or not expected:
+                raise ValueError(f"{golden_path}:{lineno}: 'expected' must be a non-empty list")
+            for exp in expected:
+                if not isinstance(exp.get("filepath"), str) or not isinstance(exp.get("line"), int):
+                    raise TypeError(f"{golden_path}:{lineno}: expected entries need filepath (str) and line (int)")
+            items.append(item)
+    return items
+
+
+def _score_sets(per_query: list[dict[str, Any]]) -> dict[str, Any]:
+    """Micro-averaged precision/recall over (filepath, line[, kind]) sets."""
+    tp = sum(len(q["hits"]) for q in per_query)
+    fp = sum(len(q["wrong"]) for q in per_query)
+    fn = sum(len(q["missed"]) for q in per_query)
+    return {
+        "queries": len(per_query),
+        "precision": round(tp / (tp + fp), 4) if tp + fp else 0.0,
+        "recall": round(tp / (tp + fn), 4) if tp + fn else 0.0,
+        "exact_queries": sum(1 for q in per_query if not q["wrong"] and not q["missed"]),
+    }
+
+
+def _diff(expected: set[tuple[Any, ...]], got: set[tuple[Any, ...]], name: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "hits": sorted(expected & got),
+        "missed": sorted(expected - got),
+        "wrong": sorted(got - expected),
+    }
+
+
+def run_symbols(golden_path: str, root: str, db: Any, sync: bool = True) -> dict[str, Any]:
+    """Exact symbol lookup: each name must return exactly its definitions, with the right kind."""
+    root = os.path.abspath(root)
+    golden = load_refs_golden(golden_path)
+    if sync:
+        db.sync(root, project=EVAL_PROJECT, verbose=False)
+    per_query = []
+    for item in golden:
+        hits = db.query_symbol(item["name"], project=EVAL_PROJECT)
+        got = {(os.path.relpath(h["abs_path"], root), h["line"], h["symbol_type"]) for h in hits}
+        expected = {(e["filepath"], e["line"], e.get("kind")) for e in item["expected"]}
+        per_query.append(_diff(expected, got, item["name"]))
+    return {"suite": "symbols", **_score_sets(per_query), "per_query": per_query}
+
+
+def run_callers(golden_path: str, root: str, db: Any, sync: bool = True) -> dict[str, Any]:
+    """Qualified caller lookup: ``Class.method`` must return exactly its call sites."""
+    root = os.path.abspath(root)
+    golden = load_refs_golden(golden_path)
+    if sync:
+        db.sync(root, project=EVAL_PROJECT, verbose=False)
+    per_query = []
+    for item in golden:
+        res = db.query_callers(item["name"], relative_to=root, project=EVAL_PROJECT, top_k=1000)
+        if res["truncated"]:
+            raise AssertionError(f"callers {item['name']}: truncated at top_k=1000")
+        got = {(r["file"], r["line"]) for r in res["results"]}
+        expected = {(e["filepath"], e["line"]) for e in item["expected"]}
+        per_query.append(_diff(expected, got, item["name"]))
+    return {"suite": "callers", **_score_sets(per_query), "per_query": per_query}
+
+
+def compare_refs_to_baseline(result: dict[str, Any], baseline: dict[str, Any],
+                             tolerance: float = 0.0) -> str | None:
+    """Precision and recall may not drop at all by default: these are exact lookups."""
+    for key in ("precision", "recall"):
+        if key not in baseline:
+            raise ValueError(f"baseline has no '{key}' entry")
+        drop = baseline[key] - result[key]
+        if drop > tolerance:
+            return f"{result['suite']} {key} regressed by {drop:.4f} (baseline {baseline[key]}, now {result[key]})"
+    return None
+
 def run_pack(golden_path: str, root: str, db: Any, budget_tokens: int = 8000,
              sync: bool = True) -> dict[str, Any]:
     """Pack recall: fraction of expected symbols present in ``investigate`` evidence.

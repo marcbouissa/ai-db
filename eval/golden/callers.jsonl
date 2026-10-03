@@ -1,0 +1,4 @@
+{"name": "Database.execute", "expected": [{"filepath": "shop/db.py", "line": 10}, {"filepath": "shop/orders.py", "line": 16}, {"filepath": "shop/orders.py", "line": 23}, {"filepath": "shop/orders.py", "line": 25}]}
+{"name": "Dispatcher.execute", "expected": [{"filepath": "shop/orders.py", "line": 19}, {"filepath": "shop/orders.py", "line": 31}]}
+{"name": "Database.execute_many", "expected": [{"filepath": "shop/orders.py", "line": 24}]}
+{"name": "Dispatcher.describe", "expected": [{"filepath": "shop/orders.py", "line": 33}]}

@@ -1,0 +1,7 @@
+{"name": "execute", "expected": [{"filepath": "shop/db.py", "line": 5, "kind": "method"}, {"filepath": "shop/dispatcher.py", "line": 5, "kind": "method"}]}
+{"name": "Order", "expected": [{"filepath": "shop/orders.py", "line": 5, "kind": "class"}]}
+{"name": "OrderProcessor", "expected": [{"filepath": "shop/orders.py", "line": 10, "kind": "class"}]}
+{"name": "connect", "expected": [{"filepath": "shop/db.py", "line": 14, "kind": "function"}]}
+{"name": "bulk_load", "expected": [{"filepath": "shop/orders.py", "line": 22, "kind": "function"}]}
+{"name": "save", "expected": [{"filepath": "shop/orders.py", "line": 15, "kind": "method"}]}
+{"name": "describe", "expected": [{"filepath": "shop/dispatcher.py", "line": 9, "kind": "method"}]}

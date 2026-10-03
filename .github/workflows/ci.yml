@@ -66,3 +66,11 @@ jobs:
         run: |
           ai-db --config ci.json eval --pack --golden eval/golden/polyglot_pack.jsonl \
             --root tests/fixtures/polyglot --all-files --baseline eval/baseline_pack_polyglot.json
+      - name: Eval exact lookups (symbols, callers)
+        env:
+          AI_DB_PATH: ${{ runner.temp }}/refs.db
+        run: |
+          ai-db --config ci.json eval --symbols --golden eval/golden/symbols.jsonl \
+            --root tests/fixtures/refs_py --all-files --baseline eval/baseline_symbols.json
+          ai-db --config ci.json eval --callers --golden eval/golden/callers.jsonl \
+            --root tests/fixtures/refs_py --all-files --baseline eval/baseline_callers.json

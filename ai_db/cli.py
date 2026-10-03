@@ -23,11 +23,14 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
 
     from ai_db.eval.harness import (
         compare_pack_to_baseline,
+        compare_refs_to_baseline,
         compare_to_baseline,
         materialize_tracked,
         run,
+        run_callers,
         run_pack,
         run_skills,
+        run_symbols,
     )
 
     with tempfile.TemporaryDirectory(prefix="ai_db_eval_") as tmp:
@@ -48,6 +51,10 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
             try:
                 if args.pack:
                     result = run_pack(args.golden, root, db, budget_tokens=args.budget)
+                elif args.symbols:
+                    result = run_symbols(args.golden, root, db)
+                elif args.callers:
+                    result = run_callers(args.golden, root, db)
                 else:
                     result = run(args.golden, root, db, k=args.k)
             finally:
@@ -63,6 +70,8 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
             baseline = json.load(f)
         if args.pack:
             err = compare_pack_to_baseline(result, baseline)
+        elif args.symbols or args.callers:
+            err = compare_refs_to_baseline(result, baseline)
         else:
             err = compare_to_baseline(result, baseline)
         if err:
@@ -514,6 +523,10 @@ def _main(argv: list[str] | None = None) -> int:
     eval_p.add_argument("--budget", type=int, default=8000, help="Pack token budget for --pack")
     eval_p.add_argument("--skills", action="store_true",
                         help="Score skill routing (top-1 accuracy) over a prompt golden set")
+    eval_p.add_argument("--symbols", action="store_true",
+                        help="Score exact symbol lookup (precision/recall of file:line:kind)")
+    eval_p.add_argument("--callers", action="store_true",
+                        help="Score qualified caller lookup (precision/recall of call-site file:line)")
     eval_p.add_argument("--min-confidence", type=float, default=None,
                         help="min_confidence passed to route_skills (--skills only)")
     eval_p.add_argument("--all-files", action="store_true",
