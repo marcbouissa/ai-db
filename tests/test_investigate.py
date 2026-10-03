@@ -128,5 +128,8 @@ def test_dispatcher_tool(db):
     disp = ServiceDispatcher(db=db)
     tool = disp.get_tool("investigate")
     assert "INSTEAD" in tool.description
-    pack = disp.execute("investigate", {"query": "compute tax", "project": "p", "mode": "locate"})
+    pack = disp.execute("investigate", {"query": "compute tax", "project": "p", "mode": "locate", "format": "json"})
     assert pack["mode"] == "locate" and pack["evidence"]
+    # Agents get the token-cheap stub unless they ask otherwise (or a session default is set).
+    stub = disp.execute("investigate", {"query": "compute tax", "project": "p", "mode": "locate"})
+    assert isinstance(stub, str) and stub.startswith("# investigate locate")

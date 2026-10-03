@@ -514,7 +514,7 @@ class ServiceDispatcher:
                 "properties": {
                     "query": {"type": "string", "description": "The question or concept. Optional in diff mode, where it only breaks ties."},
                     "mode": {"type": "string", "enum": ["locate", "explain", "impact", "flow", "diff"], "default": "explain"},
-                    "format": {"type": "string", "enum": ["json", "compact", "stub", "sexp"], "default": "json",
+                    "format": {"type": "string", "enum": ["json", "compact", "stub", "sexp"], "default": "stub",
                                "description": "Output style. 'json' is indented and parseable; 'compact' is the same data on one line (~20% smaller); 'stub' drops bodies and scaffolding for an agent (~5x smaller), with bodies still one 'expand' away by ref; 'sexp' is a navigable tree."},
                     "since": {"type": "string", "description": "diff mode only: git ref to diff against, e.g. 'HEAD~1', 'main'"},
                     "root": {"type": "string", "description": "diff mode only: repository root to diff in (default '.')"},
@@ -1040,7 +1040,7 @@ class ServiceDispatcher:
         # Check session default if no format given. Default to "json" for backward compat
         # with direct dispatcher calls; CLI layer ensures effective_fmt is always passed.
         default_fmt = db.get_session_state("default_format") if hasattr(db, "get_session_state") else None
-        style = args.get("format") or default_fmt or "json"
+        style = args.get("format") or default_fmt or "stub"
         if style == "json":
             return pack
         from ai_db.analyzer.formatters import format_pack
