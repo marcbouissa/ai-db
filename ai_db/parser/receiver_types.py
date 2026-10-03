@@ -109,6 +109,41 @@ def _param_types(func: Node, source: bytes) -> dict[str, str]:
     return types
 
 
+def _self_attrs_from_params(cls: Node, source: bytes) -> dict[str, str]:
+    """``self.db = db`` where ``db: Database`` is a parameter of that method -> ``{"self.db": "Database"}``."""
+    found: dict[str, str] = {}
+    stack = [cls]
+    while stack:
+        n = stack.pop()
+        for child in n.children:
+            if child.type == "function_definition":
+                params = _param_types(child, source)
+                if params:
+                    for target, value in _plain_assignments(child, source):
+                        if target.startswith("self.") and value in params:
+                            found.setdefault(target, params[value])
+                continue  # nested defs are handled when reached, not via stack
+            stack.append(child)
+    return found
+
+
+def _plain_assignments(func: Node, source: bytes) -> list[tuple[str, str]]:
+    """(target_text, value_text) for ``a = b`` statements in ``func`` (not in nested defs)."""
+    out: list[tuple[str, str]] = []
+    stack = [func]
+    while stack:
+        n = stack.pop()
+        for child in n.children:
+            if child.type in ("function_definition", "class_definition") and child is not func:
+                continue
+            if child.type == "assignment":
+                left, right = child.child_by_field_name("left"), child.child_by_field_name("right")
+                if left is not None and right is not None and right.type == "identifier":
+                    out.append((_text(left, source), _text(right, source)))
+            stack.append(child)
+    return out
+
+
 def resolve_receiver_class(call_node: Node, receiver: str | None, source: bytes) -> str | None:
     """Class name the receiver of ``call_node`` denotes, or None when unknown."""
     if not receiver:
@@ -123,7 +158,8 @@ def resolve_receiver_class(call_node: Node, receiver: str | None, source: bytes)
     if receiver.startswith("self."):
         if cls is None:
             return None
-        return _walk_assignments(cls, source, skip_nested_defs=False).get(receiver)
+        return (_walk_assignments(cls, source, skip_nested_defs=False).get(receiver)
+                or _self_attrs_from_params(cls, source).get(receiver))
     if "." in receiver or not _IDENT.match(receiver):
         return None
     if func is not None:
