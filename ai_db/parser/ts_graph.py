@@ -370,8 +370,21 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                         # Determine guard condition
                         guard = _get_guard(node)
                         
-                        # Determine receiver
+                        # Determine receiver and (python only) the class it denotes
                         receiver = _get_receiver(node)
+                        # `receiver` is the dotted call target ("self.bar"); the qualifier is
+                        # the object part alone ("self").
+                        qualifier = receiver.rsplit(".", 1)[0] if receiver and "." in receiver else None
+                        callee_resolved = None
+                        if lang == "python" and qualifier:
+                            from ai_db.parser.receiver_types import resolve_receiver_class
+                            recv_cls = resolve_receiver_class(node, qualifier, source)
+                            if recv_cls:
+                                callee_resolved = f"{recv_cls}.{callee_name}"
+
+                        # Call-site position: the callee identifier (unique per call, even
+                        # for chained ``a.f().g()`` where both calls start at the same byte).
+                        site = callee_nodes[i] if callee_nodes and i < len(callee_nodes) else node
                         
                         # Determine sequence number
                         seq = _get_call_seq(caller_name, line)
@@ -380,13 +393,16 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                             refs.append({
                                 "caller_name": caller_name,
                                 "caller_line": caller_line,
-                                "call_col": node.start_point[1] + 1,
+                                "call_line": site.start_point[0] + 1,
+                                "call_col": site.start_point[1] + 1,
                                 "seq": seq,
                                 "callee_name": callee_name,
                                 "ref_type": "call",
                                 "await_kind": await_kind,
                                 "guard": guard,
                                 "receiver": receiver,
+                                "callee_qualifier": qualifier,
+                                "callee_resolved": callee_resolved,
                             })
                     elif ref_type == "import":
                         # Get module name from captures (for import_statement, require calls, etc.)

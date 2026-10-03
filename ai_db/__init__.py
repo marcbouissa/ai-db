@@ -411,9 +411,11 @@ class VectorDB:
     # F2: Cross-reference / callers
     def query_callers(self, symbol_name: str, relative_to: str | None = None,
                       project: str | None = None,
-                      allowed_projects: list[str] | None = None) -> list[dict[str, Any]]:
+                      allowed_projects: list[str] | None = None,
+                      top_k: int = 100) -> dict[str, Any]:
         return self.query_engine.query_callers(symbol_name, relative_to=relative_to,
-                                               project=project, allowed_projects=allowed_projects)
+                                               project=project, allowed_projects=allowed_projects,
+                                               top_k=top_k)
 
     # F5: File diff against stored snapshot or git ref
     def diff_file(self, filepath: str, since: str | None = "last") -> dict[str, Any]:

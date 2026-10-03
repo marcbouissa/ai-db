@@ -119,7 +119,7 @@ class Resolver:
         limit: int = 100,
     ) -> list[ChunkRecord]:
         """Resolve callers of a given symbol name."""
-        refs = self.db.query_symbol_callers(
+        refs, _total = self.db.query_symbol_callers(
             callee_name=name, allowed_projects=allowed_projects, limit=limit
         )
         callers: list[ChunkRecord] = []
@@ -144,7 +144,7 @@ class Resolver:
         limit: int = 100,
     ) -> list[ChunkRecord]:
         """Resolve test callers of a given symbol name."""
-        refs = self.db.query_symbol_callers(
+        refs, _total = self.db.query_symbol_callers(
             callee_name=name, allowed_projects=allowed_projects, limit=limit
         )
         callers: list[ChunkRecord] = []

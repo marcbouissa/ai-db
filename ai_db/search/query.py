@@ -120,10 +120,15 @@ class QueryEngine:
         project: str | None = None,
         allowed_projects: list[str] | None = None,
         top_k: int = 100
-    ) -> list[dict[str, Any]]:
-        """F2: Find all call sites, imports, and inheritance refs to a given symbol name."""
+    ) -> dict[str, Any]:
+        """F2: Find call sites, imports, and inheritance refs to a symbol.
+
+        ``symbol_name`` may be qualified (``Class.method``: only call sites whose receiver
+        resolved to that class) or bare (every call of that name; ``groups`` then shows the
+        per-class breakdown). Returns ``{"total", "returned", "truncated", "results", "groups"?}``.
+        """
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
-        callers = self.db.query_symbol_callers(callee_name=symbol_name, allowed_projects=allowed, limit=top_k)
+        callers, total = self.db.query_symbol_callers(callee_name=symbol_name, allowed_projects=allowed, limit=top_k)
 
         results = []
         for r in callers:
@@ -131,11 +136,22 @@ class QueryEngine:
             results.append({
                 "file": path,
                 "caller": r.caller_name,
-                "line": r.caller_line,
+                "line": r.call_line if r.call_line else r.caller_line,
+                "caller_line": r.caller_line,
+                "col": r.call_col,
                 "ref_type": r.ref_type,
+                "qualifier": r.callee_qualifier,
+                "resolved": r.callee_resolved,
                 "project": r.project,
             })
-        return results
+        out: dict[str, Any] = {
+            "total": total, "returned": len(results), "truncated": total > len(results), "results": results,
+        }
+        if "." not in symbol_name:
+            counts = self.db.count_symbol_callers_by_resolved(symbol_name, allowed)
+            out["groups"] = {(k if k is not None else "unresolved"): v for k, v in sorted(
+                counts.items(), key=lambda kv: (kv[0] is None, kv[0] or ""))}
+        return out
 
     def query_annotations(
         self, kind: str | None = None,

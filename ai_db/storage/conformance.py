@@ -89,6 +89,23 @@ class BackendConformance:
         assert backend.query_symbols(name="alpha", allowed_projects=["p"]) == []
         assert backend.search_chunks(["needle"], allowed_projects=["p"], top_k=5) == []
 
+    def test_symbol_callers_dedupe_total_and_qualified(self, backend):
+        from ai_db.storage import SymbolRefRecord
+        self._seed(backend)
+
+        def ref(line: int, col: int, resolved: str | None) -> SymbolRefRecord:
+            return SymbolRefRecord("/r/a.py", "module.f", 1, "execute", "call", "p",
+                                   call_line=line, call_col=col, callee_resolved=resolved)
+
+        backend.insert_symbol_refs([ref(5, 3, "A.execute"), ref(5, 3, "A.execute"),  # duplicate site
+                                    ref(6, 3, "B.execute"), ref(7, 3, None)])
+        recs, total = backend.query_symbol_callers("execute", allowed_projects=["p"], limit=2)
+        assert total == 3 and len(recs) == 2
+        recs, total = backend.query_symbol_callers("A.execute", allowed_projects=["p"])
+        assert total == 1 and recs[0].call_line == 5
+        assert backend.count_symbol_callers_by_resolved("execute", allowed_projects=["p"]) == {
+            "A.execute": 1, "B.execute": 1, None: 1}
+
     def test_transaction_rollback(self, backend):
         with pytest.raises(RuntimeError), backend.transaction():
             backend.upsert_file(FileRecord("/r/t.py", "h", 1.0, 0, "p"))

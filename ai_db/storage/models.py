@@ -75,7 +75,10 @@ class SymbolRefRecord:
     seq: int | None = None
     await_kind: str | None = None  # 'sync', 'await', 'spawn', 'callback', 'deferred'
     guard: str | None = None
-    receiver: str | None = None
+    receiver: str | None = None  # call receiver text, e.g. 'cur', 'self', 'self.db'
+    call_line: int | None = None  # line of the call site (caller_line is the enclosing def line)
+    callee_qualifier: str | None = None  # object part of the call target: 'cur' in cur.execute()
+    callee_resolved: str | None = None  # 'Class.method' when the receiver's class is known
 
 
 @dataclass(slots=True)

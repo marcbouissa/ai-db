@@ -103,8 +103,8 @@ def test_rebuild_symbol_centrality_subset(tmp_path):
         for _ in range(n):
             db.conn.execute(
                 "INSERT INTO symbol_refs (caller_filepath, caller_name, caller_line, "
-                "callee_name, ref_type, project) VALUES (?,?,?,?,?,?)",
-                (f"/{project}/c.py", f"module.caller{_}", 1, callee, "call", project))
+                "callee_name, ref_type, project, call_line) VALUES (?,?,?,?,?,?,?)",
+                (f"/{project}/c.py", f"module.caller{_}", 1, callee, "call", project, _ + 1))
     db.conn.commit()
 
     db.rebuild_symbol_centrality()  # all projects

@@ -373,7 +373,7 @@ class TestAtomicTransactionRollback:
         assert len(backend.get_chunks_for_file("src/atomic.py")) == 0
         assert len(backend.search_chunks(["secret_needle_alpha"])) == 0
         assert len(backend.query_symbols("alpha")) == 0
-        assert len(backend.query_symbol_callers("external_api")) == 0
+        assert backend.query_symbol_callers("external_api") == ([], 0)
         assert len(backend.query_annotations(filepath="src/atomic.py")) == 0
         assert len(backend.get_syntax_errors("src/atomic.py")) == 0
         assert backend.get_analysis_ref("ref_atomic_1") is None

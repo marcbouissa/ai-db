@@ -189,8 +189,20 @@ class StorageBackend(ABC):
         callee_name: str,
         allowed_projects: list[str] | None = None,
         limit: int = 100,
-    ) -> list[SymbolRefRecord]:
-        """Query all call sites referencing callee_name within project scopes."""
+    ) -> tuple[list[SymbolRefRecord], int]:
+        """Call sites referencing ``callee_name`` within project scopes, with the total match
+        count before ``limit`` (so callers can report truncation). A dotted name
+        (``Class.method``) matches only refs whose receiver resolved to that class; a bare
+        name matches every ref to that attribute name."""
+
+    @abstractmethod
+    def count_symbol_callers_by_resolved(
+        self,
+        callee_name: str,
+        allowed_projects: list[str] | None = None,
+    ) -> dict[str | None, int]:
+        """Match counts for ``callee_name`` grouped by resolved ``Class.method`` (None key =
+        receiver class unknown)."""
 
     # =========================================================================
     # Diagnostics & Annotations

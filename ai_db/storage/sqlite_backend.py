@@ -41,7 +41,7 @@ from ai_db.storage.models import (
 )
 
 ZLIB_LEVEL = 6
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 
 # Process-wide write mutex (TODO 13.6).
 #
@@ -443,9 +443,19 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 caller_line INTEGER NOT NULL,
                 callee_name TEXT NOT NULL,
                 ref_type TEXT NOT NULL,
-                project TEXT DEFAULT 'global'
+                project TEXT DEFAULT 'global',
+                call_line INTEGER NOT NULL DEFAULT 0,
+                call_col INTEGER NOT NULL DEFAULT 0,
+                callee_qualifier TEXT,
+                callee_resolved TEXT
             )
         """)
+        # One row per call site; INSERT OR IGNORE in insert_symbol_refs relies on this.
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_symrefs_site
+            ON symbol_refs(caller_filepath, call_line, call_col, callee_name, ref_type)
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_symrefs_resolved ON symbol_refs(callee_resolved)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_symrefs_callee ON symbol_refs(callee_name)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_symrefs_caller ON symbol_refs(caller_filepath, caller_name)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_symrefs_project ON symbol_refs(project)")
@@ -1438,43 +1448,52 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         cur = self.conn.cursor()
         cur.executemany(
             """
-            INSERT INTO symbol_refs (caller_filepath, caller_name, caller_line, callee_name, ref_type, project)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO symbol_refs
+                (caller_filepath, caller_name, caller_line, callee_name, ref_type, project,
+                 call_line, call_col, callee_qualifier, callee_resolved)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            [(r.caller_filepath, r.caller_name, r.caller_line, r.callee_name, r.ref_type, r.project) for r in refs]
+            [(r.caller_filepath, r.caller_name, r.caller_line, r.callee_name, r.ref_type, r.project,
+              r.call_line if r.call_line is not None else r.caller_line, r.call_col or 0,
+              r.callee_qualifier, r.callee_resolved) for r in refs]
         )
         self._auto_commit()
+
+    @staticmethod
+    def _callers_where(callee_name: str, allowed_projects: list[str] | None) -> tuple[str, list[Any]]:
+        # A dotted name ('Class.method') matches the resolved callee; a bare name matches
+        # every call of that attribute name, whatever the receiver.
+        if "." in callee_name:
+            clauses, params = ["callee_resolved = ?"], [callee_name]
+        else:
+            clauses, params = ["callee_name = ?"], [callee_name]
+        if allowed_projects is not None:
+            clauses.append(f"project IN ({','.join('?' for _ in allowed_projects)})")
+            params.extend(allowed_projects)
+        return " AND ".join(clauses), params
 
     def query_symbol_callers(
         self,
         callee_name: str,
         allowed_projects: list[str] | None = None,
         limit: int = 100,
-    ) -> list[SymbolRefRecord]:
+    ) -> tuple[list[SymbolRefRecord], int]:
+        """Call sites of ``callee_name`` plus the total match count (before ``limit``)."""
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
-            return []
-        cur = self.conn.cursor()
-        clauses = ["callee_name = ?"]
-        params: list[Any] = [callee_name]
-
-        if allowed_projects is not None:
-            placeholders = ",".join("?" for _ in allowed_projects)
-            clauses.append(f"project IN ({placeholders})")
-            params.extend(allowed_projects)
-
-        where = " AND ".join(clauses)
-        params.append(limit)
-
-        cur.execute(
+            return [], 0
+        where, params = self._callers_where(callee_name, allowed_projects)
+        total = self.conn.execute(f"SELECT COUNT(*) FROM symbol_refs WHERE {where}", params).fetchone()[0]
+        cur = self.conn.execute(
             f"""
-            SELECT id, caller_filepath, caller_name, caller_line, callee_name, ref_type, project
+            SELECT id, caller_filepath, caller_name, caller_line, callee_name, ref_type, project,
+                   call_line, call_col, callee_qualifier, callee_resolved
             FROM symbol_refs
             WHERE {where}
-            ORDER BY caller_filepath ASC, caller_line ASC
+            ORDER BY callee_resolved IS NULL, callee_resolved, caller_filepath, call_line, call_col
             LIMIT ?
             """,
-            params
+            [*params, limit]
         )
         return [
             SymbolRefRecord(
@@ -1484,10 +1503,29 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 caller_line=r["caller_line"],
                 callee_name=r["callee_name"],
                 ref_type=r["ref_type"],
-                project=r["project"]
+                project=r["project"],
+                call_line=r["call_line"],
+                call_col=r["call_col"],
+                callee_qualifier=r["callee_qualifier"],
+                callee_resolved=r["callee_resolved"],
             )
             for r in cur.fetchall()
-        ]
+        ], int(total)
+
+    def count_symbol_callers_by_resolved(
+        self,
+        callee_name: str,
+        allowed_projects: list[str] | None = None,
+    ) -> dict[str | None, int]:
+        """Call-site counts per ``callee_resolved`` (None = receiver class unknown)."""
+        self._check_closed()
+        if allowed_projects is not None and len(allowed_projects) == 0:
+            return {}
+        where, params = self._callers_where(callee_name, allowed_projects)
+        cur = self.conn.execute(
+            f"SELECT callee_resolved AS r, COUNT(*) AS n FROM symbol_refs WHERE {where} GROUP BY callee_resolved",
+            params)
+        return {r["r"]: int(r["n"]) for r in cur.fetchall()}
 
     # =========================================================================
     # Diagnostics & Annotations

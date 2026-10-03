@@ -429,6 +429,7 @@ def _main(argv: list[str] | None = None) -> int:
     # callers
     callers_p = subparsers.add_parser("callers", help="Find all callers/references to a symbol")
     callers_p.add_argument("name", help="Symbol name to find callers of")
+    callers_p.add_argument("--limit", type=int, default=100, help="Max call sites to list (default 100)")
     callers_p.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
     callers_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
     callers_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
@@ -1044,14 +1045,21 @@ def _main(argv: list[str] | None = None) -> int:
     elif args.command == "callers":
         hits = dispatcher.execute("callers", {
             "name": args.name,
+            "limit": args.limit,
             "project": active_proj,
             "allow_project": allowed_projs
         })
-        if not hits:
+        if not hits["results"]:
             print(f"NO_CALLERS_FOUND: {args.name}")
         else:
-            for h in hits:
-                print(f"@{h['file']}:L{h['line']} ({h['ref_type']} in {h['caller']}) [{h['project']}]")
+            groups = hits.get("groups") or {}
+            if len(groups) > 1:
+                print("# receivers: " + ", ".join(f"{k} ({n})" for k, n in groups.items()))
+            for h in hits["results"]:
+                via = f" via {h['resolved']}" if h.get("resolved") else ""
+                print(f"@{h['file']}:L{h['line']} ({h['ref_type']} in {h['caller']}{via}) [{h['project']}]")
+            if hits["truncated"]:
+                print(f"... {hits['total'] - hits['returned']} more (use --limit)")
 
     elif args.command == "todos":
         hits = dispatcher.execute("todos", {

@@ -149,7 +149,7 @@ class TestSearchTier1FeatureCoverage:
         )
         vdb.sync(str(src), project="app_proj", verbose=False)
 
-        callers = vdb.query_callers("emit_log", project="app_proj")
+        callers = vdb.query_callers("emit_log", project="app_proj")["results"]
         assert len(callers) >= 1
         c = callers[0]
         assert "app.py" in c["file"]
@@ -439,7 +439,7 @@ class TestSearchTier3Combinations:
         vdb.sync(str(app_dir), project="app_proj", verbose=False)
 
         # Looking up callers for compute_checksum across projects
-        callers = vdb.query_callers("compute_checksum", project="app_proj", allowed_projects=["lib_proj"])
+        callers = vdb.query_callers("compute_checksum", project="app_proj", allowed_projects=["lib_proj"])["results"]
         assert len(callers) >= 1
         assert any("main.py" in c["file"] for c in callers)
 
@@ -506,7 +506,7 @@ class TestSearchTier4Workflows:
         assert syms[0]["symbol_type"] == "class"
 
         # 4. Check callers
-        callers = vdb.query_callers("execute_payment", project="ecommerce")
+        callers = vdb.query_callers("execute_payment", project="ecommerce")["results"]
         assert len(callers) >= 1
         assert "checkout.py" in callers[0]["file"]
 

@@ -361,7 +361,8 @@ class ServiceDispatcher:
             parameters_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Symbol name to find callers of"},
+                    "name": {"type": "string", "description": "Symbol name to find callers of. Use 'Class.method' to match only calls whose receiver resolved to that class; a bare name matches every call of that name and reports a per-class breakdown in 'groups'."},
+                    "limit": {"type": "integer", "default": 100, "description": "Max call sites returned; the result's 'truncated' flag and 'total' say when more exist"},
                     "project": {"type": "string", "description": "Project scope"},
                     "allow_project": {"type": "array", "items": {"type": "string"}, "description": "Allowed projects"},
                 },
@@ -838,7 +839,9 @@ class ServiceDispatcher:
         name = args.get("name", "")
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
-        return db.query_callers(name, relative_to=os.getcwd(), project=project, allowed_projects=allow_projects)
+        limit = int(args.get("limit") or 100)
+        return db.query_callers(name, relative_to=os.getcwd(), project=project,
+                                allowed_projects=allow_projects, top_k=limit)
 
     def _handle_trace(self, args: dict[str, Any]) -> Any:
         from ai_db.analysis.trace import TraceEngine
