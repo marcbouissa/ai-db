@@ -449,6 +449,22 @@ class ServiceDispatcher:
             category="memory",
         )
 
+        # 13b. context_forget
+        self.register_tool(
+            name="context_forget",
+            description="Delete a saved session context by session ID and project.",
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "Session ID to delete"},
+                    "project": {"type": "string", "description": "Project scope (default: global)"},
+                },
+                "required": ["session_id"],
+            },
+            handler=self._handle_context_forget,
+            category="memory",
+        )
+
         # 14. optimize
         self.register_tool(
             name="optimize",
@@ -924,6 +940,20 @@ class ServiceDispatcher:
             return db.list_contexts(project=project, allowed_projects=allow_projects)
         ctx = db.get_context(session_id=session_id, project=project, allowed_projects=allow_projects)
         return ctx or {}
+
+    def _handle_context_forget(self, args: dict[str, Any]) -> Any:
+        db = self._get_db(args)
+        session_id = args.get("session_id")
+        project = args.get("project")
+        if not session_id:
+            raise ValueError("session_id is required for context_forget")
+        deleted = db.delete_context(session_id=session_id, project=project or "global")
+        return {
+            "deleted": deleted,
+            "session_id": session_id,
+            "project": project or "global",
+            "message": f"Context deleted for session '{session_id}'" if deleted else f"No context found for session '{session_id}'"
+        }
 
     def _handle_optimize(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
