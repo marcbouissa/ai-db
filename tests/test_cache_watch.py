@@ -67,6 +67,16 @@ def test_sync_paths_only_touches_given_files(tmp_path, repo):
 
 
 def test_watcher_reindexes_on_change(tmp_path, repo):
+    try:
+        from watchfiles import watch
+        _stop = threading.Event()
+        _stop.set()
+        for _ in watch(str(repo), stop_event=_stop):
+            pass
+    except Exception as e:
+        if "Too many open files" in str(e) or "os error 24" in str(e):
+            pytest.skip(f"System inotify limit reached: {e}")
+
     db_path = str(tmp_path / "w.db")
     stop = threading.Event()
     t = threading.Thread(target=watcher.run_watch, args=(VectorDB, db_path, str(repo), 50, stop),

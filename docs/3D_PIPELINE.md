@@ -144,7 +144,7 @@ and wall time. Then:
 | Spatial tools (`raycast`, `check_collision`, `get_bounds`, `measure_distance`, `get_spatial_context`, …: 9 tools) | **Registered, not implemented**. MCP server fails to start (NameError) | Implement first; `validate_scene` is built on them |
 | `plan_3d_scene` | Fixed template: every hero is the same box, objects overlap, always indoor | Replace with SceneSpec + solver |
 | `plan_3d_asset` | LOD budgets + questions only | Replace with recipe parameter schemas |
-| Blender transport | **Two paths**: ox-bridge HTTP MCP (`blender_oxbridge_capture.py`, :9878) and raw socket (`ext/blender_client.py`, :9877/9878) | Pick one (decision D1) |
+| Blender transport | **Two paths**: ox-bridge HTTP MCP (`oxbridge_capture.py`, :9878) and raw socket (`ext/blender_client.py`, :9877/9878) | Pick one (decision D1) |
 | Quality measurement | None | 3D eval suite (Phase 6) |
 
 ---
@@ -230,7 +230,7 @@ recipes so every recipe is checked from day one.
 
 ## 4. Decisions taken (2026-10-03)
 
-- **D1:** the only transport is the `blender_ox` addon socket (port 9877, ITC main-thread queue)
+- **D1:** the only transport is the Blender addon socket (port 9877, ITC main-thread queue)
   from `~/GitRepos/blender_mcp`. ai-db's ox-bridge HTTP path (:9878) is removed.
 - **D2:** the judge model is configurable (`scene.judge_model`) and injected as a client, so
   tests use a fake judge.
@@ -240,7 +240,7 @@ recipes so every recipe is checked from day one.
 ### Repo split
 | `~/GitRepos/blender_mcp` (runs inside Blender) | `ai-db` (orchestration) |
 |---|---|
-| One handler registry (`blender_ox/registry.py`), socket → ITC → main thread | Blender client (:9877 only), MCP scene tools |
+| One handler registry (`registry.py`), socket → ITC → main thread | Blender client (:9877 only), MCP scene tools |
 | Spatial queries + geometric validators (`verify.py`) | SceneSpec, priors, layout solver |
 | Shape-operation library, asset builder, recipes (`geometry.py`, `shapes.py`) | Asset spec authoring, retrieval, RunRecord, exemplars |
 | Materials, cheap renders (`materials.py`, `render.py`) | Judge, fix loop orchestration, 3D eval, teacher |

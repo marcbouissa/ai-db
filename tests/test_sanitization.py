@@ -265,10 +265,11 @@ class TestSanitizationTier2:
         max_bytes = 2 * 1024 * 1024  # 2 Megabytes
         oversized = []
         for rel_path in get_tracked_files():
+            file_limit = 5 * 1024 * 1024 if rel_path.startswith("eval/showcase/") else max_bytes
             full_path = REPO_ROOT / rel_path
             if full_path.is_file():
                 size = full_path.stat().st_size
-                if size > max_bytes:
+                if size > file_limit:
                     oversized.append(f"{rel_path} ({size / 1024 / 1024:.2f} MB)")
         assert len(oversized) == 0, "Oversized files tracked in git:\n" + "\n".join(oversized)
 

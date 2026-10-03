@@ -1,0 +1,13 @@
+{
+ "validation": [
+  {
+   "iteration": 0,
+   "blocking": 0,
+   "warnings": 0,
+   "issues": []
+  }
+ ],
+ "handler_calls": 113,
+ "objects": 458,
+ "failed_calls": []
+}

@@ -1,11 +1,12 @@
 """Oval Office FRONTIER BASELINE v2 (authored by the lead model, Opus; NOT a small-model run).
 
-Purpose: the strongest reference a big model achieves with the blender_ox tools, against which small-model
+Purpose: the strongest reference a big model achieves with the addon tools, against which small-model
 runs (Sonnet/Haiku/Qwen via build_scene) are compared. Every call goes through the registry, as an agent
 would call it over the socket.
 
 Run:  ~/bin/blender -b --factory-startup --python eval/showcase/oval_office_v2.py -- <addon_root> <out_dir> [final]
 """
+import importlib
 import json
 import math
 import os
@@ -19,7 +20,8 @@ sys.path.insert(0, ADDON_ROOT)
 
 import bpy  # noqa: E402
 
-from blender_ox import registry  # noqa: E402
+_pkg = next(d for d in os.listdir(ADDON_ROOT) if os.path.isfile(os.path.join(ADDON_ROOT, d, "registry.py")))
+registry = importlib.import_module(f"{_pkg}.registry")
 
 W, D, H = 8.8, 10.9, 5.6           # interior oval (x, y) and ceiling height; desk end = +Y
 A, B = W / 2, D / 2
@@ -75,12 +77,13 @@ FIRE = -UP
 openings = ([{"kind": "window", "t": t_of(a), "width": 1.3, "height": 2.9, "sill": 0.75} for a in WIN]
             + [{"kind": "niche", "t": t_of(a), "width": 1.2, "height": 2.5, "sill": 0.95, "depth": 0.22}
                for a in NICHE]
-            + [{"kind": "door", "t": t_of(a), "width": 1.1, "height": 2.65} for a in DOOR])
+            + [{"kind": "door", "t": t_of(a), "width": 1.3, "height": 2.8} for a in DOOR]
+            + [{"kind": "niche", "t": t_of(FIRE), "width": 2.4, "height": 1.6, "sill": 0.0, "depth": 0.05, "arch": False}])
 room = run("room_shell", shape="ellipse", size=[W, D], height=H, wall_thickness=0.35, openings=openings,
            trim={"baseboard": 0.22, "chair_rail": 0.92}, name="Oval", segments=192)
 ops = room["openings"]
 win_ops = [o for o in ops if o["kind"] == "window"]
-niche_ops = [o for o in ops if o["kind"] == "niche"]
+niche_ops = [o for o in ops if o["kind"] == "niche" and o["sill"] > 0.5]
 door_ops = [o for o in ops if o["kind"] == "door"]
 
 run("apply_material", name=room["walls"], material="damask:wallpaper:#ece2c6:#ddd0ad")
@@ -100,14 +103,14 @@ crown = asset({"asset": "Crown_Moulding", "category": "trim", "support": "wall",
                "parts": [{"id": "crown", "shape": "cornice", "plan": "ellipse", "width": W - 0.02,
                           "length": D - 0.02, "profile": "crown_classic", "profile_width": 0.32,
                           "profile_height": 0.42, "dentil": True, "material": "plaster:#f7f4ee"}]},
-              0, 0, 0, H - 0.43)
+              0, 0, 0, H - 0.46)
 
 # ceiling: plaster relief border ring + central stylised seal relief
 seal_png = os.path.join(OUT, "seal.png")
 run("make_stylised_seal", path=seal_png, size_px=1024)
 asset({"asset": "Ceiling_Medallion", "category": "trim", "support": "ceiling",
        "parts": [{"id": "disc", "shape": "cylinder", "size": [2.6, 2.1, 0.04], "material": "plaster:#f4f1ea"}]},
-      0, 0, 0, H - 0.042)
+      0, 0, 0, H - 0.058)
 run("plaster_relief", name="Ceiling_Medallion_disc", pattern="seal_stylised", depth=0.018)
 
 # ---------------------------------------------------------------- windows, curtains, doors, niches
@@ -129,8 +132,8 @@ for i, o in enumerate(win_ops):
     yaw = math.radians(o["yaw"])
     fx, fy = math.sin(yaw), -math.cos(yaw)                   # front (into room)
     curtain = recipe("swag_curtain_set")
-    asset(curtain, cx + fx * 0.32, cy + fy * 0.32, o["yaw"], 0.0, asset=f"Curtains_{i}",
-          bbox_m=[2.1, 0.35, H - 1.25],
+    asset(curtain, cx + fx * 0.38, cy + fy * 0.38, o["yaw"], 0.0, asset=f"Curtains_{i}",
+          bbox_m=[1.50, 0.16, H - 1.25],
           materials={"drape": GOLD_DAMASK, "valance": GOLD_DAMASK, "rod": "brass", "finial": "brass"})
 # exterior garden backdrop beyond the windows
 asset({"asset": "Garden", "category": "backdrop", "support": "ground",
@@ -147,13 +150,14 @@ DOORS = {"asset": "door", "category": "door", "support": "wall",
                     "offset": [0.42, -0.03, 0], "material": "brass"}]}
 for i, o in enumerate(door_ops):
     cx, cy, _ = o["center"]
-    yaw = math.radians(o["yaw"])
-    asset({**DOORS, "asset": f"Door_{i}"}, cx + math.sin(yaw) * 0.12, cy - math.cos(yaw) * 0.12, o["yaw"])
+    asset({**DOORS, "asset": f"Door_{i}"}, cx, cy, o["yaw"])
 
 for i, o in enumerate(niche_ops):
     cx, cy, _ = o["center"]
-    asset(recipe("bookshelf_niche_unit"), cx, cy, o["yaw"], o["sill"], asset=f"Niche_Shelves_{i}",
-          bbox_m=[1.1, 0.2, 2.4], default_material="plaster:#f7f4ee",
+    yaw = math.radians(o["yaw"])
+    fx, fy = math.sin(yaw), -math.cos(yaw)
+    asset(recipe("bookshelf_niche_unit"), cx - fx * 0.02, cy - fy * 0.02, o["yaw"], o["sill"],
+          asset=f"Niche_Shelves_{i}", bbox_m=[0.95, 0.16, 2.05], default_material="plaster:#f7f4ee",
           materials={"books0": "leather:#6b1f1f", "books2": "leather:#203a5a"})
 
 # ---------------------------------------------------------------- fireplace + portrait above
@@ -164,24 +168,25 @@ FIREPLACE = {"asset": "Fireplace", "category": "fireplace", "support": "floor",
                         "material": "marble:carrara"},
                        {"id": "firebox", "shape": "box", "size": [1.1, 0.28, 1.12], "at": [0, 0.03, 0],
                         "material": "color:#141110"},
-                       {"id": "mantel", "shape": "extrude_profile", "profile": "ogee", "size": [2.5, 0.42, 0.12],
+                       {"id": "mantel", "shape": "extrude_profile", "profile": "ogee", "size": [2.1, 0.32, 0.12],
                         "attach": "lintel.top", "material": "marble:carrara"},
-                       {"id": "hearth", "shape": "box", "size": [2.3, 0.65, 0.04], "at": [0, -0.3, 0],
+                       {"id": "hearth", "shape": "box", "size": [2.1, 0.48, 0.04], "at": [0, -0.15, 0],
                         "material": "marble:verde"}]}
-fx, fy = ellipse_pt(FIRE, 0.18)
+fx, fy = ellipse_pt(FIRE, 0.45)
 asset(FIREPLACE, fx, fy, yaw_facing(fx, fy, 0, 0))
-px, py = ellipse_pt(FIRE, 0.06)
+px, py = ellipse_pt(FIRE, 0.08)
 asset(recipe("framed_portrait"), px, py, yaw_facing(px, py, 0, 0), 2.0, asset="Portrait_Fireplace",
       bbox_m=[1.0, 0.08, 1.3], materials={"canvas": "color:#3b2d22"})
 for k, ang in enumerate([UP - 0.95 + 0.0, UP + 0.95]):
     pass  # side portraits are hung beside the niches below
 for k, ang in enumerate([0.15, math.pi - 0.15]):
-    px, py = ellipse_pt(ang, 0.06)
+    px, py = ellipse_pt(ang, 0.08)
     asset(recipe("framed_portrait"), px, py, yaw_facing(px, py, 0, 0), 1.75, asset=f"Portrait_{k}",
           bbox_m=[0.9, 0.08, 1.15], materials={"canvas": "color:#2e2a24"})
 
 # ---------------------------------------------------------------- desk group
-desk = asset(recipe("resolute_desk"), 0.0, 3.55, 0.0, 0.0, asset="Resolute_Desk", bbox_m=[1.83, 1.22, 0.78],
+RUG_Z = 0.016
+desk = asset(recipe("resolute_desk"), 0.0, 3.55, 0.0, RUG_Z, asset="Resolute_Desk", bbox_m=[1.83, 1.22, 0.78],
              default_material="wood:mahogany")
 run("decal", name="Resolute_Desk_medallion", image_path=seal_png, size=1.0)
 DESK_CHAIR = {"asset": "Desk_Chair", "category": "office_chair", "support": "floor",
@@ -192,9 +197,9 @@ DESK_CHAIR = {"asset": "Desk_Chair", "category": "office_chair", "support": "flo
                          "material": "leather:#5a1a14"},
                         {"id": "back", "shape": "tufted_panel", "size": [0.62, 0.14, 0.82],
                          "attach": "seat.back_edge", "material": "leather:#5a1a14"}]}
-asset(DESK_CHAIR, 0.0, 4.45, 0.0)
+asset(DESK_CHAIR, 0.0, 4.40, 0.0, RUG_Z)
 for k, (x, y) in enumerate([(-0.55, 2.35), (0.55, 2.35), (-1.45, 2.65), (1.45, 2.65)]):
-    asset(recipe("chippendale_armchair"), x, y, yaw_facing(x, y, x * 0.6, 3.55), asset=f"Guest_Chair_{k}",
+    asset(recipe("chippendale_armchair"), x, y, yaw_facing(x, y, x * 0.6, 3.55), RUG_Z, asset=f"Guest_Chair_{k}",
           materials={"seat": "stripes:#b8862f:#f0dfb0"})
 
 # flags between the windows: US (stripes + canton), presidential (navy + seal), two service flags
@@ -218,7 +223,7 @@ FLAGS = [("Flag_US", "stripes:#b22234:#f4f1ea:dir=u", UP + 0.21),
          ("Flag_Army", "color:#f2efe6", UP + 0.6),
          ("Flag_Marines", "color:#b5202e", UP - 0.6)]
 for name, mat, ang in FLAGS:
-    x, y = ellipse_pt(ang, 0.75)
+    x, y = ellipse_pt(ang, 0.45)
     asset(flag_spec(name, mat), x, y, yaw_facing(x, y, 0, 0))
 run("decal", name="Flag_President_cloth", image_path=seal_png, size=0.55)
 
@@ -233,7 +238,6 @@ asset({"asset": "Oval_Rug", "category": "rug", "support": "floor",
       0.0, 0.15, 0.0, 0.001)
 run("decal", name="Oval_Rug_seal", image_path=seal_png, size=1.0)
 run("carpet_pile", name="Oval_Rug_rug", height=0.008, density=2500.0, tint="#e7cfa8")
-RUG_Z = 0.016
 
 # ---------------------------------------------------------------- seating group (faces inward)
 CREAM_DAMASK = "damask:fabric:#eee2c2:#e1d1a6"
@@ -242,7 +246,7 @@ for side in (-1, 1):
     asset(recipe("roll_arm_sofa"), sx, -0.55, yaw_facing(sx, -0.55, 0, -0.55), RUG_Z,
           asset=f"Sofa_{'W' if side < 0 else 'E'}", bbox_m=[2.25, 0.95, 0.88],
           materials={k: CREAM_DAMASK for k in ("arm", "back", "back_cushion", "deck", "seat_cushion", "skirt")})
-    for k, ty in enumerate((0.85, -1.95)):
+    for k, ty in enumerate((0.90, -2.00)):
         tx = side * 1.55
         asset(recipe("drum_side_table"), tx, ty, yaw_facing(tx, ty, 0, ty), RUG_Z,
               asset=f"Side_Table_{'W' if side < 0 else 'E'}{k}", default_material="wood:mahogany")
@@ -252,9 +256,9 @@ for side in (-1, 1):
                        "material": "ceramic:#e9e3d3"},
                       {"id": "shade", "shape": "tapered_cylinder", "radius": 0.24, "radius_top": 0.16, "height": 0.34,
                        "at": [0, 0, 0.48], "material": "fabric:linen:#f3ead8"}]}
-    asset(LAMP, side * 1.55, 0.85, 0.0, RUG_Z + 0.66)
+    asset(LAMP, side * 1.55, 0.90, 0.0, RUG_Z + 0.66)
     run("add_light", light_type="POINT", name=f"Lamp_Light_{side}", energy=25.0, color=[1.0, 0.82, 0.6],
-        location=[side * 1.55, 0.85, RUG_Z + 1.25])
+        location=[side * 1.55, 0.90, RUG_Z + 1.25])
 
 COFFEE = {"asset": "Coffee_Table", "category": "coffee_table", "support": "floor", "default_material": "wood:mahogany",
           "parts": [{"id": "top", "shape": "rounded_slab", "size": [1.25, 0.7, 0.05], "corner_radius": 0.03, "at": [0, 0, 0.42]},
@@ -287,8 +291,8 @@ for side in (-1, 1):
 # ---------------------------------------------------------------- light + camera
 run("daylight_rig", sun_elevation=28.0, sun_azimuth=95.0, strength=3.5, sky="nishita", window_portals=True,
     sky_strength=0.5, exposure=0.3)
-run("add_light", light_type="AREA", name="Ceiling_Bounce", energy=350.0, location=[0, 0, H - 0.3],
-    color=[1.0, 0.95, 0.88])
+run("add_light", light_type="AREA", name="Ceiling_Bounce", energy=90.0, location=[0, 0, H - 0.3],
+    color=[1.0, 0.95, 0.88], rotation=[180, 0, 0])
 CAM = {"photo_match": ([0.0, -4.85, 1.15], [87, 0, 0], 16),
        "desk_close": ([0.0, -0.4, 1.45], [86, 0, 0], 22),
        "fireplace": ([0.0, 2.2, 1.55], [84, 0, 180], 18),

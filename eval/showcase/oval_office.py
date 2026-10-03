@@ -1,10 +1,11 @@
-"""Showcase: the Oval Office, built through the blender_ox registry (the same handlers agents call).
+"""Showcase: the Oval Office, built through the addon registry (the same handlers agents call).
 
 Run:  ~/bin/blender -b --factory-startup --python eval/showcase/oval_office.py -- <addon_root> <out_dir>
 Furniture is declarative build_asset specs (no hand-written bpy); only the elliptical room shell is
 custom geometry, since the layout solver handles rectangular rooms only.
 Approximate public dimensions: oval 10.9 m x 8.8 m, ceiling 5.6 m. Long axis = Y; desk end = +Y.
 """
+import importlib
 import json
 import math
 import os
@@ -18,7 +19,8 @@ sys.path.insert(0, ADDON_ROOT)
 import bmesh  # noqa: E402
 import bpy  # noqa: E402
 
-from blender_ox import registry  # noqa: E402
+_pkg = next(d for d in os.listdir(ADDON_ROOT) if os.path.isfile(os.path.join(ADDON_ROOT, d, "registry.py")))
+registry = importlib.import_module(f"{_pkg}.registry")
 
 A, B, H = 8.8 / 2, 10.9 / 2, 5.6   # semi-axes x, y; ceiling height
 LOG = []
