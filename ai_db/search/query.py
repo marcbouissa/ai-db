@@ -72,10 +72,15 @@ class QueryEngine:
 
     def query_symbol(
         self, name: str, relative_to: str | None = None,
-        project: str | None = None, allowed_projects: list[str] | None = None
+        project: str | None = None, allowed_projects: list[str] | None = None,
+        prefix: bool = False,
     ) -> list[dict[str, Any]]:
+        """Symbols named ``name`` (``match: "exact"``). Prefix matches (``match: "prefix"``)
+        are included only when nothing matches exactly, or when ``prefix`` is set."""
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
-        symbols = self.db.query_symbols(name=name, allowed_projects=allowed, limit=50)
+        symbols = self.db.query_symbols(name=name, allowed_projects=allowed, limit=50, include_prefix=prefix)
+        if not symbols and not prefix:
+            symbols = self.db.query_symbols(name=name, allowed_projects=allowed, limit=50, include_prefix=True)
 
         results = []
         for s in symbols:
@@ -89,7 +94,8 @@ class QueryEngine:
                 "abs_path": s.filepath,
                 "line": s.line,
                 "signature": s.signature,
-                "project": s.project
+                "project": s.project,
+                "match": "exact" if s.name == name else "prefix",
             })
         return results
 

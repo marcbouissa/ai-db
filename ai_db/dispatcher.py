@@ -236,6 +236,7 @@ class ServiceDispatcher:
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Symbol name to look up"},
+                    "prefix": {"type": "boolean", "default": False, "description": "Also include names that start with 'name' (each result carries match: exact|prefix). Without it, prefix matches are returned only when nothing matches exactly."},
                     "project": {"type": "string", "description": "Project scope (default: auto-detected)"},
                     "allow_project": {"type": "array", "items": {"type": "string"}, "description": "Allowed projects for read-only access"},
                 },
@@ -633,7 +634,8 @@ class ServiceDispatcher:
         name = args.get("name", "")
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
-        return db.query_symbol(name, relative_to=os.getcwd(), project=project, allowed_projects=allow_projects)
+        return db.query_symbol(name, relative_to=os.getcwd(), project=project,
+                               allowed_projects=allow_projects, prefix=bool(args.get("prefix")))
 
     def _handle_analyze(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)

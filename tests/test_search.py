@@ -102,12 +102,18 @@ class TestSearchTier1FeatureCoverage:
         )
         vdb.sync(str(src), project="orders", verbose=False)
 
-        results = vdb.query_symbol("Order", project="orders")
+        # Exact hit exists: prefix matches are hidden unless asked for
+        exact_only = vdb.query_symbol("Order", project="orders")
+        assert [(r["name"], r["match"]) for r in exact_only] == [("Order", "exact")]
+        results = vdb.query_symbol("Order", project="orders", prefix=True)
         assert len(results) >= 2
         # Exact match 'Order' should be ranked first
-        assert results[0]["name"] == "Order"
-        names = [r["name"] for r in results]
-        assert "OrderProcessor" in names
+        assert results[0]["name"] == "Order" and results[0]["match"] == "exact"
+        by_name = {r["name"]: r["match"] for r in results}
+        assert by_name["OrderProcessor"] == "prefix"
+        # No exact hit: prefix matches are the fallback, labelled as such
+        fallback = vdb.query_symbol("OrderProc", project="orders")
+        assert [(r["name"], r["match"]) for r in fallback] == [("OrderProcessor", "prefix")]
 
     def test_check_syntax_clean(self, search_env):
         """Clean repository reports zero syntax errors."""

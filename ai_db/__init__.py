@@ -308,9 +308,11 @@ class VectorDB:
         return hits
 
     def query_symbol(self, name: str, relative_to: str | None = None,
-                     project: str | None = None, allowed_projects: list[str] | None = None) -> list[dict[str, Any]]:
+                     project: str | None = None, allowed_projects: list[str] | None = None,
+                     prefix: bool = False) -> list[dict[str, Any]]:
         return self.query_engine.query_symbol(name, relative_to=relative_to,
-                                              project=project, allowed_projects=allowed_projects)
+                                              project=project, allowed_projects=allowed_projects,
+                                              prefix=prefix)
 
     def check_syntax(self, target_path: str | None = None, relative_to: str | None = None,
                      project: str | None = None, allowed_projects: list[str] | None = None) -> list[dict[str, Any]]:

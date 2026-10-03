@@ -76,6 +76,15 @@ def _read_query(lang: str) -> str:
     return query_path.read_text(encoding="utf-8")
 
 
+def _python_in_class_body(func: Node) -> bool:
+    """True when a Python function_definition is a direct member of a class body."""
+    parent = func.parent
+    if parent is not None and parent.type == "decorated_definition":
+        parent = parent.parent
+    return (parent is not None and parent.type == "block"
+            and parent.parent is not None and parent.parent.type == "class_definition")
+
+
 def _get_qualified_name(base_name: str, node: Node, source: bytes, lang: str, symbols_by_line: dict[int, str]) -> str:
     """Build a qualified name for a symbol node by prepending containing class names."""
     # Find the containing class/struct/interface
@@ -248,6 +257,8 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                         else:
                             name = ""
                     sym_type = capture_name[4:]  # remove "def."
+                    if lang == "python" and sym_type == "function" and _python_in_class_body(node):
+                        continue  # emitted by the method pattern; one symbol per def
                     signature = None
                     if node.type in ("function_definition", "function_declaration", "function_item",
                                      "method_declaration", "constructor_declaration", "async_item"):

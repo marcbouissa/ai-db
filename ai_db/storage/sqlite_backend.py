@@ -41,7 +41,7 @@ from ai_db.storage.models import (
 )
 
 ZLIB_LEVEL = 6
-SCHEMA_VERSION = "10"
+SCHEMA_VERSION = "11"
 
 # Process-wide write mutex (TODO 13.6).
 #
@@ -326,6 +326,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                 FOREIGN KEY (filepath) REFERENCES files(filepath) ON DELETE CASCADE
             )
         """)
+        # Safety net against the same def being indexed twice (insert uses OR IGNORE).
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_symbol_site ON symbols(filepath, line, name)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_symbol_name ON symbols(name)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_symbol_filepath ON symbols(filepath)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_symbol_project ON symbols(project)")
@@ -1392,7 +1394,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         cur = self.conn.cursor()
         cur.executemany(
             """
-            INSERT INTO symbols (name, symbol_type, filepath, line, signature, project)
+            INSERT OR IGNORE INTO symbols (name, symbol_type, filepath, line, signature, project)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
             [(s.name, s.symbol_type, s.filepath, s.line, s.signature, s.project) for s in symbols]
@@ -1404,13 +1406,19 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         name: str,
         allowed_projects: list[str] | None = None,
         limit: int = 50,
+        include_prefix: bool = False,
     ) -> list[SymbolRecord]:
         self._check_closed()
         if allowed_projects is not None and len(allowed_projects) == 0:
             return []
         cur = self.conn.cursor()
-        clauses = ["(name = ? OR name LIKE ?)"]
-        params: list[Any] = [name, f"{name}%"]
+        if include_prefix:
+            escaped = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            clauses = ["(name = ? OR name LIKE ? ESCAPE '\\')"]
+            params: list[Any] = [name, f"{escaped}%"]
+        else:
+            clauses = ["name = ?"]
+            params = [name]
 
         if allowed_projects is not None:
             placeholders = ",".join("?" for _ in allowed_projects)

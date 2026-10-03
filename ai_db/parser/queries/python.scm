@@ -12,11 +12,22 @@
   body: (block) @body
   (argument_list) @bases?) @def.class
 
-; Method definitions inside classes
-(function_definition
-  name: (identifier) @name
-  parameters: (parameters) @params
-  body: (block) @body) @def.method
+; Method definitions: direct children of a class body (also when decorated).
+; The function pattern above matches every function_definition (tree-sitter queries
+; cannot express "not inside a class"), so extract_graph drops its class-body matches.
+(class_definition
+  body: (block
+    [
+      (function_definition
+        name: (identifier) @name
+        parameters: (parameters) @params
+        body: (block) @body) @def.method
+      (decorated_definition
+        definition: (function_definition
+          name: (identifier) @name
+          parameters: (parameters) @params
+          body: (block) @body) @def.method)
+    ]))
 
 ; Import statements
 (import_statement

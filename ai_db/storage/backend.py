@@ -176,8 +176,10 @@ class StorageBackend(ABC):
         name: str,
         allowed_projects: list[str] | None = None,
         limit: int = 50,
+        include_prefix: bool = False,
     ) -> list[SymbolRecord]:
-        """Query symbols matching name (exact first, then substring) within project scopes."""
+        """Query symbols named ``name`` within project scopes. With ``include_prefix``, names
+        that merely start with ``name`` are returned too, after the exact matches."""
 
     @abstractmethod
     def insert_symbol_refs(self, refs: list[SymbolRefRecord]) -> None:

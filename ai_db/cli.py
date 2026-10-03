@@ -256,6 +256,7 @@ def _main(argv: list[str] | None = None) -> int:
     # symbol
     symbol_p = subparsers.add_parser("symbol", help="Exact symbol resolution (class, def, interface)")
     symbol_p.add_argument("name", help="Symbol name to find")
+    symbol_p.add_argument("--prefix", action="store_true", help="Also list symbols whose name starts with NAME")
     symbol_p.add_argument("--project", default=None, help="Active project scope (default: auto-detected)")
     symbol_p.add_argument("--allow-project", action="append", default=[], help="Allowed project for read-only access (repeatable)")
     symbol_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
@@ -694,6 +695,7 @@ def _main(argv: list[str] | None = None) -> int:
         symbol_args = {
             "name": args.name,
             "allow_project": allowed_projs,
+            "prefix": args.prefix,
         }
         if not daemon_url:
             symbol_args["project"] = active_proj
@@ -702,7 +704,8 @@ def _main(argv: list[str] | None = None) -> int:
             print(f"NO_SYMBOLS_FOUND: {args.name}")
         else:
             for s in symbols:
-                print(f"@{s['file']}:L{s['line']} ({s['symbol_type']} {s['name']}) [{s['project']}]")
+                tag = " ~prefix" if s.get("match") == "prefix" else ""
+                print(f"@{s['file']}:L{s['line']} ({s['symbol_type']} {s['name']}{tag}) [{s['project']}]")
 
     elif args.command == "outline":
         target_path = os.path.abspath(args.path)
