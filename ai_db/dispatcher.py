@@ -482,6 +482,33 @@ class ServiceDispatcher:
             category="storage",
         )
 
+        # session_state / query_log: read-only accessors so remote (daemon) clients
+        # need no direct DB handle.
+        self.register_tool(
+            name="session_state",
+            description="Read a persisted session-state value (e.g. default_format, last_analysis).",
+            parameters_schema={
+                "type": "object",
+                "properties": {"key": {"type": "string", "description": "Session state key"}},
+                "required": ["key"],
+            },
+            handler=self._handle_session_state,
+            category="storage",
+        )
+        self.register_tool(
+            name="query_log",
+            description="Return recent logged queries with per-stage timings.",
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "min_total_ms": {"type": "number", "default": 0.0},
+                    "limit": {"type": "integer", "default": 50},
+                },
+            },
+            handler=self._handle_query_log,
+            category="telemetry",
+        )
+
         # 15. telemetry
         self.register_tool(
             name="telemetry",
@@ -852,6 +879,18 @@ class ServiceDispatcher:
                 "source": "file",
             })
         return results
+
+    def _handle_session_state(self, args: dict[str, Any]) -> Any:
+        db = self._get_db(args)
+        getter = getattr(db, "get_session_state", None)
+        return {"key": args["key"], "value": getter(args["key"]) if getter else None}
+
+    def _handle_query_log(self, args: dict[str, Any]) -> Any:
+        db = self._get_db(args)
+        return db.backend.get_query_log(
+            min_total_ms=float(args.get("min_total_ms") or 0.0),
+            limit=int(args.get("limit") or 50),
+        )
 
     def _handle_status(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)

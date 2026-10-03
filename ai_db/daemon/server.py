@@ -387,15 +387,6 @@ async def _idle_ttl_cleanup():
         await _pool.cleanup_idle(ttl_seconds=300)  # 5 min default TTL
 
 
-async def _idle_ttl_cleanup():
-    """Periodically unload idle projects."""
-    while True:
-        await asyncio.sleep(60)  # Check every minute
-        if _pool is None:
-            break
-        await _pool.cleanup_idle(ttl_seconds=300)  # 5 min default TTL
-
-
 async def _wal_checkpoint_loop():
     """Periodically checkpoint SQLite WAL files."""
     while True:

@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import time
+from typing import Any, Protocol
 
 from ai_db import (
     VectorDB,
@@ -16,6 +17,19 @@ from ai_db.daemon.client import create_daemon_client
 from ai_db.daemon.manager import get_daemon_manager
 from ai_db.dispatcher import ServiceDispatcher
 from ai_db.errors import AiDbConfigError
+
+
+class _Dispatcher(Protocol):
+    """Surface shared by ServiceDispatcher and DaemonClient used by the CLI."""
+
+    def execute(self, tool_name: str, args: dict[str, Any], *a: Any, **kw: Any) -> Any: ...
+    def close(self) -> None: ...
+
+
+def _session_state(dispatcher: _Dispatcher, db: str | None, key: str) -> Any:
+    """Read a session-state value via the tool surface (works in daemon mode)."""
+    res = dispatcher.execute("session_state", {"db": db, "key": key})
+    return res.get("value") if isinstance(res, dict) else None
 
 
 def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
@@ -594,6 +608,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     # Initialize dispatcher - use daemon client if --daemon-url provided
     daemon_url = args.daemon_url or os.environ.get("AI_DB_DAEMON_URL")
+    dispatcher: _Dispatcher
     if daemon_url:
         # Use global --project (daemon_project) for daemon client, fall back to subcommand's --project
         project = getattr(args, "daemon_project", None) or getattr(args, "project", None)
@@ -647,8 +662,7 @@ def _main(argv: list[str] | None = None) -> int:
         print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
 
     elif args.command == "log":
-        db_inst = dispatcher._get_db({"db": args.db})
-        entries = db_inst.backend.get_query_log(min_total_ms=args.slow, limit=args.limit)
+        entries = dispatcher.execute("query_log", {"db": args.db, "min_total_ms": args.slow, "limit": args.limit})
         if args.format == "json":
             print(json.dumps(entries, indent=2))
         else:
@@ -660,8 +674,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     elif args.command in ("investigate", "inv"):
         # Get effective format: explicit arg > session default > "stub"
-        db_inst = dispatcher._get_db({"db": args.db})
-        default_fmt = db_inst.get_session_state("default_format") if hasattr(db_inst, "get_session_state") else None
+        default_fmt = _session_state(dispatcher, args.db, "default_format")
         effective_fmt = args.format or default_fmt or "stub"
 
         investigate_args = {
@@ -962,8 +975,7 @@ def _main(argv: list[str] | None = None) -> int:
 
         targets = args.targets
         if not targets:
-            db_inst = dispatcher._get_db({"db": args.db})
-            last_analysis = db_inst.get_session_state("last_analysis") if hasattr(db_inst, "get_session_state") else None
+            last_analysis = _session_state(dispatcher, args.db, "last_analysis")
             if last_analysis and "targets" in last_analysis:
                 targets = last_analysis["targets"]
             else:
@@ -983,8 +995,7 @@ def _main(argv: list[str] | None = None) -> int:
             "format": args.format
         })
 
-        db_inst = dispatcher._get_db({"db": args.db})
-        default_fmt = db_inst.get_session_state("default_format") if hasattr(db_inst, "get_session_state") else None
+        default_fmt = _session_state(dispatcher, args.db, "default_format")
         effective_fmt = args.format or default_fmt or "stub"
 
         if isinstance(output_data, str):
@@ -1038,8 +1049,7 @@ def _main(argv: list[str] | None = None) -> int:
         elif isinstance(hits, str):
             print(hits)
         else:
-            db_inst = dispatcher._get_db({"db": args.db})
-            default_fmt = db_inst.get_session_state("default_format") if hasattr(db_inst, "get_session_state") else None
+            default_fmt = _session_state(dispatcher, args.db, "default_format")
             effective_fmt = args.format or default_fmt or "stub"
             if effective_fmt == "stub":
                 for h in hits:
@@ -1063,8 +1073,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     elif args.command == "status":
         s = dispatcher.execute("status", {})
-        db_inst = dispatcher._get_db({"db": args.db})
-        active_fmt = db_inst.get_session_state("default_format") if hasattr(db_inst, "get_session_state") else "stub"
+        active_fmt = _session_state(dispatcher, args.db, "default_format") or "stub"
         skills_str = f" | skills:{s.get('skills', 0)}" if "skills" in s else ""
         contexts_str = f" | contexts:{s.get('contexts', 0)}" if "contexts" in s else ""
         print(f"db:{s['db']} | files:{s['files']} | chunks:{s['chunks']} | symbols:{s['symbols']} | syntax_errors:{s['syntax_errors']}{skills_str}{contexts_str} | size:{s['kb']}KB | default_format:{active_fmt}")
@@ -1105,32 +1114,20 @@ def _main(argv: list[str] | None = None) -> int:
                     print(f"- L{span[0]}-{span[1]}")
 
     elif args.command == "trace":
-        from ai_db.analysis.trace import TraceEngine
-        from ai_db.analysis.trace_format import format_json, format_mermaid, format_tree
-
         depth = args.depth if args.depth is not None else TRACE_DEPTH
         max_nodes = args.max_nodes if args.max_nodes is not None else TRACE_MAX_NODES
-
-        trace_engine = TraceEngine(
-            dispatcher._get_db({"db": args.db}).backend,
-            allowed_projects=[active_proj] + allowed_projs if allowed_projs else [active_proj],
-            trace_wait_patterns=cfg.trace_wait_patterns,
-            trace_wait_patterns_extend=cfg.trace_wait_patterns_extend,
-        )
-        result = trace_engine.trace(
-            entry=args.entry,
-            depth=depth,
-            max_nodes=max_nodes,
-            direction=args.direction,
-            include_tests=args.include_tests,
-        )
-
-        if args.format == "json":
-            print(format_json(result))
-        elif args.format == "mermaid":
-            print(format_mermaid(result))
-        else:
-            print(format_tree(result, with_code=args.with_code, context_lines=3))
+        print(dispatcher.execute("trace", {
+            "db": args.db,
+            "entry": args.entry,
+            "depth": depth,
+            "max_nodes": max_nodes,
+            "direction": args.direction,
+            "include_tests": args.include_tests,
+            "format": args.format,
+            "with_code": args.with_code,
+            "project": active_proj,
+            "allow_project": allowed_projs,
+        }))
 
     elif args.command == "callers":
         hits = dispatcher.execute("callers", {
