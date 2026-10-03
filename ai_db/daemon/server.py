@@ -243,8 +243,8 @@ class ProjectPool:
             db = self.projects[name]
             # Access embedder and reranker to trigger loading
             start = time.time()
-            _ = db.embedder
-            _ = db.reranker
+            db._ensure_embedder_loaded()
+            db._ensure_reranker_loaded()
             self._metrics[name] = self._metrics.get(name, ProjectMetrics())
             self._metrics[name].model_load_time_ms = (time.time() - start) * 1000
             self._warmed.add(name)

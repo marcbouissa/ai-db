@@ -60,10 +60,10 @@ def test_hybrid_sync_embeds_and_finds_semantic_match(tmp_path, repo):
 def test_resync_keeps_vectors_for_unchanged_chunks(tmp_path, repo):
     db = VectorDB(str(tmp_path / "h.db"), config=hybrid_cfg())
     db.sync(str(repo), project="p", verbose=False)
-    calls = db.embedder.calls
+    calls = db.embedder.load().calls
     (repo / "shop.py").write_text("def buy_item(item):\n    return pay(item)\n\ndef refund():\n    pass\n")
     db.sync(str(repo), project="p", verbose=False)
-    assert db.embedder.calls == calls + 1  # only the new chunk batch
+    assert db.embedder.load().calls == calls + 1  # only the new chunk batch
     db.close()
 
 
@@ -73,7 +73,8 @@ def test_model_change_requires_reindex(tmp_path, repo, monkeypatch, capsys):
     db.sync(str(repo), project="p", verbose=False)
     db.close()
     with pytest.raises(AiDbConfigError, match="reindex --embeddings"):
-        VectorDB(path, config=hybrid_cfg("other"))
+        # The model guard fires on first vector use: construction no longer loads models.
+        VectorDB(path, config=hybrid_cfg("other")).embedder.load()
 
     cfg_file = tmp_path / "cfg.json"
     data = hybrid_cfg("other").to_dict()

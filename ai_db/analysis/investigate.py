@@ -238,8 +238,8 @@ class Investigator:
         pack = InvestigationPack(query=query, mode=mode, budget_tokens=budget_tokens)
         pack.retrieval = {
             "mode": self.vdb.config.retrieval_mode,
-            "embedding_model": self.vdb.embedder.model_id if self.vdb.embedder else None,
-            "rerank_model": self.vdb.reranker.model_id if self.vdb.reranker else None,
+            "embedding_model": self.vdb.retrieval_signature()["embedding_model"],
+            "rerank_model": self.vdb.retrieval_signature()["rerank_model"],
         }
         pack.entry_points = [
             EntryPoint(it.chunk.qualified_name, self._display(it.chunk.filepath, relative_to),
