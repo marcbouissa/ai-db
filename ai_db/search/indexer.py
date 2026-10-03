@@ -100,6 +100,22 @@ def _parse_job(job: tuple[str, str, str]) -> ParsedFile:
     return parse_file(*job)
 
 
+
+def _is_nested_checkout(dirpath: str) -> bool:
+    """A subdirectory with its own ``.git`` (a nested repo or a git worktree, e.g.
+    agent worktrees under ``.claude/worktrees/``) is a separate project. Indexing it
+    would duplicate every symbol of the parent repo."""
+    return os.path.exists(os.path.join(dirpath, ".git"))
+
+
+def _inside_nested_checkout(root_dir: str, path: str) -> bool:
+    parent = os.path.dirname(path)
+    while len(parent) > len(root_dir) and parent.startswith(root_dir):
+        if _is_nested_checkout(parent):
+            return True
+        parent = os.path.dirname(parent)
+    return False
+
 class Indexer:
     def __init__(self, db: Any):
         self.db = db
@@ -119,7 +135,8 @@ class Indexer:
         root_dir = os.path.abspath(root_dir)
         ignorer = AidbIgnore(root_dir, self._ignore_patterns)
         for root, dirs, files in os.walk(root_dir):
-            dirs[:] = [d for d in dirs if d not in HARD_IGNORE_DIRS]
+            dirs[:] = [d for d in dirs
+                       if d not in HARD_IGNORE_DIRS and not _is_nested_checkout(os.path.join(root, d))]
             for f in files:
                 full_path = os.path.join(root, f)
                 rel_path = os.path.relpath(full_path, root_dir)
@@ -216,6 +233,8 @@ class Indexer:
             if rel.startswith("..") or ignorer.should_ignore(rel):
                 continue
             if any(part in HARD_IGNORE_DIRS for part in rel.split(os.sep)[:-1]):
+                continue
+            if _inside_nested_checkout(root_dir, path):
                 continue
             if not should_index_path(rel, os.path.basename(path)):
                 continue
