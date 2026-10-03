@@ -85,6 +85,26 @@ def _python_in_class_body(func: Node) -> bool:
             and parent.parent is not None and parent.parent.type == "class_definition")
 
 
+_CLASS_NODES = ("class_definition", "class_declaration", "class_specifier", "struct_item",
+                "struct_specifier", "interface_declaration", "enum_declaration", "impl_item")
+_FUNCTION_NODES = ("function_definition", "function_declaration", "function_item",
+                   "method_declaration", "constructor_declaration", "arrow_function",
+                   "function_expression", "lambda")
+
+
+def _scope_of(node: Node) -> tuple[int, bool]:
+    """(number of enclosing classes, defined inside a function body)."""
+    depth, local = 0, False
+    parent = node.parent
+    while parent is not None:
+        if parent.type in _CLASS_NODES:
+            depth += 1
+        elif parent.type in _FUNCTION_NODES:
+            local = True
+        parent = parent.parent
+    return depth, local
+
+
 def _get_qualified_name(base_name: str, node: Node, source: bytes, lang: str, symbols_by_line: dict[int, str]) -> str:
     """Build a qualified name for a symbol node by prepending containing class names."""
     # Find the containing class/struct/interface
@@ -259,6 +279,9 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                     sym_type = capture_name[4:]  # remove "def."
                     if lang == "python" and sym_type == "function" and _python_in_class_body(node):
                         continue  # emitted by the method pattern; one symbol per def
+                    class_depth, is_local = _scope_of(node)
+                    if lang == "python" and sym_type == "type" and is_local:
+                        continue  # function-local annotated/typed assignment, not a type alias
                     signature = None
                     if node.type in ("function_definition", "function_declaration", "function_item",
                                      "method_declaration", "constructor_declaration", "async_item"):
@@ -283,6 +306,8 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                                 "filepath": filepath,
                                 "line": line,
                                 "signature": signature,
+                                "class_depth": class_depth,
+                                "local": is_local,
                             })
 
     # Second pass: collect cross-references

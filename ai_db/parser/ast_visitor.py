@@ -16,7 +16,10 @@ def extract_file_outline(filepath: str, content: str) -> list[tuple[int, str]]:
 
     symbols, _, _ = extract_graph(filepath, content)
     outline = []
+    seen: set[tuple[int, str]] = set()
     for s in symbols:
+        if s.get("local"):
+            continue  # defs/assignments inside function bodies are noise in an outline
         label = f"{s['symbol_type']} {s['name']}"
         if s.get("signature"):
             sig = s["signature"]
@@ -24,7 +27,10 @@ def extract_file_outline(filepath: str, content: str) -> list[tuple[int, str]]:
                 label = f"async {label}"
             elif not label.startswith(("class ", "interface ", "struct ", "enum ", "type ")):
                 label = f"def {s['name']}"
-        outline.append((s["line"], label))
+        label = "  " * int(s.get("class_depth", 0)) + label
+        if (s["line"], label) not in seen:
+            seen.add((s["line"], label))
+            outline.append((s["line"], label))
 
     outline.sort(key=lambda x: x[0])
     return outline
