@@ -109,6 +109,26 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_init_agent(args: argparse.Namespace) -> int:
+    from ai_db.mcp_config import get_claude_md_snippet, write_mcp_config
+
+    try:
+        config_path = write_mcp_config(
+            root=args.root,
+            client=args.client,
+            daemon_url=args.daemon_url,
+        )
+    except AiDbConfigError as exc:
+        raise AiDbConfigError(str(exc)) from exc
+
+    print(f"[ai-db init-agent] wrote {config_path}")
+    print()
+    print("CLAUDE.md snippet to add to your project:")
+    print(get_claude_md_snippet())
+    print()
+    return 0
+
+
 def _cmd_reindex(args: argparse.Namespace, cfg: AppConfig) -> int:
     from ai_db.storage.backend import VectorCapable
     from ai_db.storage.factory import StorageBackendFactory
@@ -201,6 +221,8 @@ def _main(argv: list[str] | None = None) -> int:
         description="ai-db: Token-Optimized Vector DB & Code Index"
     )
     parser.add_argument("--version", action="version", version=f"ai-db {__version__}")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Show Hugging Face / model-loading logs and progress bars")
     parser.add_argument("--config", default=None, help="Config file path (default: $AI_DB_CONFIG or ~/.config/ai-db/config.json)")
     parser.add_argument("--daemon-url", default=None, help="Connect to ai-db daemon (http://host:port)")
     parser.add_argument("--project", dest="daemon_project", default=None, help="Project name (for --daemon-url)")
@@ -272,6 +294,12 @@ def _main(argv: list[str] | None = None) -> int:
     watch_p.add_argument("--daemon", action="store_true", help="Run watcher in background daemon mode")
     watch_p.add_argument("--debounce-ms", type=int, default=300, help="Group file events arriving within this window (default: 300)")
     watch_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
+
+    # init-agent
+    init_agent_p = subparsers.add_parser("init-agent", help="Configure MCP integration for ai-db (claude-code or cursor)")
+    init_agent_p.add_argument("--client", choices=["claude-code", "cursor"], default="claude-code", help="Target client (default: claude-code)")
+    init_agent_p.add_argument("--root", default=".", help="Project root directory (default: current directory)")
+    init_agent_p.add_argument("--daemon-url", default=None, help="Optional daemon URL for MCP server args")
 
     # daemon
     daemon_p = subparsers.add_parser("daemon", help="Manage ai-db daemon server")
@@ -347,6 +375,11 @@ def _main(argv: list[str] | None = None) -> int:
     ctx_query.add_argument("--allow-project", action="append", default=[], help="Allowed project (repeatable)")
     ctx_query.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
 
+    ctx_forget = ctx_sub.add_parser("forget", help="Delete a saved session context")
+    ctx_forget.add_argument("session_id", help="Session ID to delete")
+    ctx_forget.add_argument("--project", default=None, help="Project scope (default: global)")
+    ctx_forget.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
+
     # remember shortcut command
     remember_p = subparsers.add_parser("remember", help="Recall current project context memory")
     remember_p.add_argument("session_id", nargs="?", default=None, help="Optional session ID")
@@ -386,10 +419,10 @@ def _main(argv: list[str] | None = None) -> int:
     inv_p.add_argument("--allow-project", action="append", default=[], help="Allowed project (repeatable)")
     inv_p.add_argument("--lang", action="append", default=None, help="Only this language (repeatable)")
     inv_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
-    inv_p.add_argument("--since", default=None, help="diff mode only: git ref to diff against (e.g. HEAD~1)")
+    inv_p.add_argument("--since", default=None, help="diff mode only: git ref to diff against (default: HEAD; untracked files are included)")
     inv_p.add_argument("--root", default=None, help="diff mode only: repository root to diff in (default: .)")
     inv_p.add_argument("--format", "--fmt", dest="format",
-                       choices=["json", "compact", "stub", "sexp"], default="json",
+                       choices=["json", "compact", "stub", "sexp"], default=None,
                        help="json (indented, default) | compact (one line, ~20%% smaller) | "
                             "stub (no bodies, ~5x smaller; expand refs for bodies) | sexp")
 
@@ -487,6 +520,8 @@ def _main(argv: list[str] | None = None) -> int:
                         help="Index every file under --root (default: only git-tracked files)")
 
     args = parser.parse_args(argv)
+    from ai_db.quiet import set_verbose
+    set_verbose(args.verbose)
 
     if not args.command:
         parser.print_help()
@@ -494,6 +529,9 @@ def _main(argv: list[str] | None = None) -> int:
 
     if args.command == "init":
         return _cmd_init(args)
+
+    if args.command == "init-agent":
+        return _cmd_init_agent(args)
 
     # Handle daemon command
     if args.command == "daemon":
@@ -604,6 +642,11 @@ def _main(argv: list[str] | None = None) -> int:
                 print(f"{ts} {e['tool']:<11} {e['total_ms']:8.1f}ms{hit} [{stages}] {e['query'][:60]}")
 
     elif args.command in ("investigate", "inv"):
+        # Get effective format: explicit arg > session default > "stub"
+        db_inst = dispatcher._get_db({"db": args.db})
+        default_fmt = db_inst.get_session_state("default_format") if hasattr(db_inst, "get_session_state") else None
+        effective_fmt = args.format or default_fmt or "stub"
+
         investigate_args = {
             "query": args.query,
             "mode": args.mode,
@@ -612,7 +655,7 @@ def _main(argv: list[str] | None = None) -> int:
             "languages": args.lang,
             "since": args.since,
             "root": args.root,
-            "format": args.format,
+            "format": effective_fmt,
         }
         if not daemon_url:
             investigate_args["project"] = active_proj
@@ -797,13 +840,21 @@ def _main(argv: list[str] | None = None) -> int:
                     print(f"[{ctx['project']}:{ctx['session_id']}] {ctx['title']} | Files: {len(ctx.get('active_files', []))} | Tasks: {len(ctx.get('open_tasks', []))}")
                     print(f"Summary: {ctx['summary']}")
                 else:
+                    saved_at = ctx.get("saved_at", "unknown")
                     print(f"### [Context Memory: {ctx['project']} / {ctx['session_id']}]")
                     print(f"**Title**: {ctx['title']}")
+                    print(f"**Saved**: {saved_at}")
                     print(f"**Summary**: {ctx['summary']}")
                     if ctx.get('active_files'):
                         print("\n**Active Files**:")
                         for f in ctx['active_files']:
-                            print(f"- {f}")
+                            if isinstance(f, dict):
+                                # New format with path and missing flag
+                                status = " (missing)" if f.get("missing") else ""
+                                print(f"- {f['path']}{status}")
+                            else:
+                                # Legacy format: just a string
+                                print(f"- {f}")
                     if ctx.get('open_tasks'):
                         print("\n**Pending Tasks**:")
                         for idx, t in enumerate(ctx['open_tasks'], 1):
@@ -836,6 +887,17 @@ def _main(argv: list[str] | None = None) -> int:
                 for h in hits:
                     print(f"[{h['project']}:{h['session_id']}] {h['title']}")
                     print(f"  {h['summary']}")
+
+        elif args.ctx_action == "forget":
+            result = dispatcher.execute("context_forget", {
+                "session_id": args.session_id,
+                "project": args.project or "global",
+                "db": args.db
+            })
+            if result.get("deleted"):
+                print(f"✓ Deleted context for session '{args.session_id}' (project: {result['project']})")
+            else:
+                print(f"✗ No context found for session '{args.session_id}' (project: {result['project']})")
         else:
             ctx_p.print_help()
 
@@ -848,13 +910,21 @@ def _main(argv: list[str] | None = None) -> int:
         if not ctx or not ctx.get("summary"):
             print("NO_CONTEXT_FOUND")
         else:
+            saved_at = ctx.get("saved_at", "unknown")
             print(f"### [ai-db Context Memory: {ctx['project']} / {ctx['session_id']}]")
             print(f"**Title**: {ctx['title']}")
+            print(f"**Saved**: {saved_at}")
             print(f"**Summary**: {ctx['summary']}")
             if ctx.get('active_files'):
                 print("\n**Active Files**:")
                 for f in ctx['active_files']:
-                    print(f"- {f}")
+                    if isinstance(f, dict):
+                        # New format with path and missing flag
+                        status = " (missing)" if f.get("missing") else ""
+                        print(f"- {f['path']}{status}")
+                    else:
+                        # Legacy format: just a string
+                        print(f"- {f}")
             if ctx.get('open_tasks'):
                 print("\n**Pending Tasks**:")
                 for idx, t in enumerate(ctx['open_tasks'], 1):
