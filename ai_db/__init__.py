@@ -349,6 +349,9 @@ class VectorDB:
                        allowed_projects: list[str] | None = None, top_k: int = 3) -> list[dict[str, Any]]:
         return self.context_memory.query_contexts(query_text, project=project, allowed_projects=allowed_projects, top_k=top_k)
 
+    def delete_context(self, session_id: str, project: str | None = None) -> bool:
+        return self.context_memory.delete_context(session_id=session_id, project=project)
+
     # Output Formatters
     @staticmethod
     def format_as_stub(data: dict[str, Any]) -> str:
