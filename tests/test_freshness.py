@@ -5,7 +5,6 @@ import subprocess
 
 import pytest
 
-
 from ai_db import VectorDB
 from ai_db.dispatcher import ServiceDispatcher
 from ai_db.errors import AiDbConfigError

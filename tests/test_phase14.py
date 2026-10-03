@@ -130,11 +130,11 @@ def test_diff_is_a_valid_mode():
     assert "diff" in MODES
 
 
-def test_diff_requires_since(tmp_path, lexical_config, monkeypatch):
+def test_diff_defaults_since_to_head_and_needs_git(tmp_path, lexical_config, monkeypatch):
     monkeypatch.setenv("AI_DB_CONFIG", lexical_config)
     db = VectorDB(str(tmp_path / "d.db"))
-    with pytest.raises(AiDbConfigError, match="requires 'since'"):
-        db.investigate("", mode="diff")
+    with pytest.raises(AiDbConfigError, match="git repository"):
+        db.investigate("", mode="diff", root=str(tmp_path))
     db.close()
 
 

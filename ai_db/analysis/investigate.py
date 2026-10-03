@@ -29,6 +29,7 @@ from ai_db.analysis.pack import EntryPoint, Evidence, InvestigationPack
 from ai_db.analysis.resolve import Resolver, scope_of
 from ai_db.constants import (
     DELEGATE_MAX_TOKENS,
+    DIFF_DEFAULT_SINCE,
     DIFF_QUERY_BOOST,
     DIFF_SEEDS_PER_FILE,
     EXPLAIN_CALLER_SEEDS,
@@ -126,6 +127,29 @@ def _git_changed_spans(since: str, root: str) -> dict[str, list[int]]:
         start = int(m.group(1))
         count = int(m.group(2) or 1)
         spans.setdefault(current, []).extend(range(start, start + count))
+
+    # `git diff` never lists untracked files; a new file is a change that is
+    # entirely additions, so every line of it counts as changed.
+    try:
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            capture_output=True, text=True, timeout=GIT_TIMEOUT_S, cwd=repo_root, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as err:
+        raise AiDbConfigError(f"git ls-files failed: {err}") from err
+    if untracked.returncode != 0:
+        raise AiDbConfigError(f"git ls-files failed: {untracked.stderr.strip()}")
+    for rel in untracked.stdout.split("\0"):
+        if not rel:
+            continue
+        path = os.path.join(repo_root, rel)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                count = sum(1 for _ in fh)
+        except (OSError, UnicodeDecodeError):
+            continue  # unreadable or binary: nothing line-based to report
+        if count:
+            spans[path] = list(range(1, count + 1))
     return spans
 
 
@@ -197,7 +221,7 @@ class Investigator:
         if not query.strip() and mode != "diff":
             raise ValueError("query must not be empty")
         if mode == "diff" and not since:
-            raise AiDbConfigError("mode 'diff' requires 'since' (a git ref to diff against)")
+            since = DIFF_DEFAULT_SINCE
 
         allowed = get_allowed_projects(project or "global", allowed_projects,
                                        self.vdb.query_engine.cross_project)
