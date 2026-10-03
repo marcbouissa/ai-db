@@ -386,6 +386,11 @@ class VectorDB:
                     **kwargs: Any) -> dict[str, Any]:
         from ai_db.analysis.investigate import Investigator
         params = {"budget_tokens": budget_tokens, "mode": mode, **kwargs}
+        if mode == "diff":
+            # The answer depends on git state, which the index generation does not track.
+            direct: dict[str, Any] = Investigator(self).investigate(
+                query, budget_tokens=budget_tokens, mode=mode, **kwargs).to_dict()
+            return direct
         pack: dict[str, Any] = self._cached("investigate", query, params, lambda: Investigator(self).investigate(
             query, budget_tokens=budget_tokens, mode=mode, **kwargs).to_dict())
         return pack

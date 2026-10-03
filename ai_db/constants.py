@@ -122,7 +122,9 @@ PACK_STUB_MAX_ITEMS = 20
 # Truncate a `why` provenance string. These are one short clause in practice;
 # the cap only stops a pathological one.
 PACK_STUB_WHY_CHARS = 160
+DIFF_DEFAULT_SINCE = "HEAD"  # diff mode compares the working tree against this unless told otherwise
 GIT_TIMEOUT_S = 10  # git invocations from investigate/trace must not stall a request
+STALE_RESYNC_MAX_FILES = 20  # stale result files re-synced inline per read; above this they are flagged
 DELEGATE_MAX_TOKENS = 120  # seeds this small also get their callees' callees
 
 # Skill router

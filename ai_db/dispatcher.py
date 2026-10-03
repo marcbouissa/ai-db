@@ -9,6 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ai_db.search import freshness
+
 
 @dataclass
 class ToolDefinition:
@@ -607,7 +609,14 @@ class ServiceDispatcher:
         path_prefix = args.get("path_prefix")
         k = int(args.get("k", 5))
         fmt = args.get("format")
-        hits = db.locate_targets(q=query, scope=scope, k=k, path_prefix=path_prefix)
+        hits, stale = freshness.resolve(
+            db, lambda: db.locate_targets(q=query, scope=scope, k=k, path_prefix=path_prefix))
+        if fmt in ("stub", "sexp"):
+            return freshness.annotate(self._format_locate(hits, query, fmt), stale)
+        return freshness.annotate(hits, stale)
+
+    @staticmethod
+    def _format_locate(hits: list[dict[str, Any]], query: str, fmt: str) -> str:
         if fmt == "stub":
             lines = []
             for h in hits:
@@ -627,7 +636,7 @@ class ServiceDispatcher:
                 span_s = f"({h['span'][0]} {h['span'][1]})" if h.get("span") else "nil"
                 hit_sexps.append(f"(:hit :file {sexp_esc(h['file'])} :name {sexp_esc(h.get('name'))} :span {span_s} :score {h.get('score', 0)})")
             return f"(:locate :query {sexp_esc(query)} :hits ({' '.join(hit_sexps)}))"
-        return hits
+        raise ValueError(f"unsupported locate format {fmt!r}")
 
     def _handle_outline(self, args: dict[str, Any]) -> Any:
         raw_path = args.get("path", "")
@@ -650,8 +659,10 @@ class ServiceDispatcher:
         name = args.get("name", "")
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
-        return db.query_symbol(name, relative_to=os.getcwd(), project=project,
-                               allowed_projects=allow_projects, prefix=bool(args.get("prefix")))
+        result, stale = freshness.resolve(db, lambda: db.query_symbol(
+            name, relative_to=os.getcwd(), project=project,
+            allowed_projects=allow_projects, prefix=bool(args.get("prefix"))))
+        return freshness.annotate(result, stale)
 
     def _handle_analyze(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
@@ -733,10 +744,10 @@ class ServiceDispatcher:
         else:
             span_tuple = None
 
-        exp = db.expand_ref(ref, depth=depth, span=span_tuple)
+        exp, stale = freshness.resolve(db, lambda: db.expand_ref(ref, depth=depth, span=span_tuple))
         if not exp:
             raise ValueError(f"Ref handle '{ref}' not found or expired.")
-        return exp
+        return freshness.annotate(exp, stale)
 
     def _handle_sync(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
@@ -858,8 +869,10 @@ class ServiceDispatcher:
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
         limit = int(args.get("limit") or 100)
-        return db.query_callers(name, relative_to=os.getcwd(), project=project,
-                                allowed_projects=allow_projects, top_k=limit)
+        result, stale = freshness.resolve(db, lambda: db.query_callers(
+            name, relative_to=os.getcwd(), project=project,
+            allowed_projects=allow_projects, top_k=limit))
+        return freshness.annotate(result, stale)
 
     def _handle_trace(self, args: dict[str, Any]) -> Any:
         from ai_db.analysis.trace import TraceEngine
@@ -1019,20 +1032,23 @@ class ServiceDispatcher:
         top_k = int(args.get("top", 5))
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
-        return db.query(search_str, top=top_k, project=project, allowed_projects=allow_projects,
-                        languages=args.get("languages"), chunk_types=args.get("chunk_types"),
-                        modified_since=args.get("modified_since"))
+        result, stale = freshness.resolve(db, lambda: db.query(
+            search_str, top=top_k, project=project, allowed_projects=allow_projects,
+            languages=args.get("languages"), chunk_types=args.get("chunk_types"),
+            modified_since=args.get("modified_since")))
+        return freshness.annotate(result, stale)
 
     def _handle_investigate(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
-        pack = db.investigate(
+        pack, stale = freshness.resolve(db, lambda: db.investigate(
             args["query"], budget_tokens=int(args.get("budget_tokens", 8000)),
             mode=args.get("mode", "explain"), project=args.get("project"),
             allowed_projects=args.get("allow_project") or args.get("allowed_projects"),
             languages=args.get("languages"), chunk_types=args.get("chunk_types"),
             modified_since=args.get("modified_since"),
             since=args.get("since"), root=args.get("root"),
-        )
+        ))
+        pack = freshness.annotate(pack, stale)
         # Default stays a dict so every existing caller keeps parsing JSON.
         # A non-default style returns a rendered string, which the MCP and HTTP
         # transports already pass through verbatim, so one renderer serves all
@@ -1044,7 +1060,10 @@ class ServiceDispatcher:
         if style == "json":
             return pack
         from ai_db.analyzer.formatters import format_pack
-        return format_pack(pack, style)
+        rendered = format_pack(pack, style)
+        if stale and isinstance(rendered, str):
+            return freshness.annotate(rendered, stale)
+        return rendered
 
     def _handle_prune(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
