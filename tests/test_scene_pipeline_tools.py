@@ -70,9 +70,9 @@ def test_build_commands_placeholder_and_mapped():
     spec, _ = sp._parse_spec(SPEC)
     pls = sp.parse_placements(sp._handle_solve_layout({"spec": SPEC})["placements"])
     cmds, names = sp.build_layout_commands(spec, pls)
-    assert names[:5] == ["floor", "wall_north", "wall_south", "wall_east", "wall_west"]
-    assert names[5:] == [p.id for p in pls]
-    assert sum(c["type"] == "create_primitive" for c in cmds) == 5 + 3
+    assert names[0] == "room_shell" and cmds[0]["type"] == "room_shell"
+    assert names[1:] == [p.id for p in pls]
+    assert sum(c["type"] == "create_primitive" for c in cmds) == 3
     assert cmds[-1]["type"] == "run_code" and '"hero": true' in cmds[-1]["params"]["code"]
     compile(cmds[-1]["params"]["code"], "<fin>", "exec")
     cmds2, _ = sp.build_layout_commands(spec, pls, {"sofa": {"filepath": "/l.blend", "asset_name": "Sofa1"}})
@@ -97,7 +97,7 @@ def test_apply_layout_one_batch(monkeypatch):
     monkeypatch.setattr(sp, "BlenderClient", FakeClient)
     pls = sp._handle_solve_layout({"spec": SPEC})["placements"]
     out = sp._handle_apply_layout({"spec": SPEC, "placements": pls})
-    assert out["status"] == "partial" and out["created"][0] == "floor"
+    assert out["status"] == "partial" and out["created"][0] == "room_shell"
     assert out["failed"][0]["type"] == "run_code" and len(FakeClient.sent) == out["commands"]
     assert sp._handle_apply_layout({"spec": {}, "placements": []})["status"] == "invalid"
 

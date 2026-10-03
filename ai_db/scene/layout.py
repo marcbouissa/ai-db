@@ -5,8 +5,11 @@ Conventions
 * Room: x in [0, W] (east-west), y in [0, D] (north-south), z up. wall_south is y=0,
   wall_north y=D, wall_west x=0, wall_east x=W. Only ``indoor`` settings have walls.
 * Object dims are [w, d, h]: w along the local x axis, d along local y. The *front* of an
-  object is its local +y side. ``rotation_deg_z`` is the yaw (counter-clockwise, 0 = front
-  faces +y). ``location`` is the center of the bounding box (z included).
+  object is its local -Y side (shared asset convention). ``rotation_deg_z`` is the yaw
+  (counter-clockwise, 0 = front faces -y; front vector = (sin yaw, -cos yaw)).
+* Room shape ``rect`` (default) | ``ellipse`` | ``polygon`` inside the box [0,W]x[0,D]. Rect walls
+  are the four named walls; ellipse has ``wall`` (+ ``at_deg`` = ellipse parameter angle);
+  polygons have ``wall_<n>`` (edge n, 1-based) and ``wall`` with ``at_deg`` (ray from the center). ``location`` is the center of the bounding box (z included).
 * ``count > 1`` expands an object into instances ``<id>_1 .. <id>_n``. Relations of the
   object apply to every instance; a target with several instances is paired by index.
 """
@@ -36,6 +39,7 @@ from ai_db.constants import (
     LAYOUT_SEED,
 )
 from ai_db.scene.priors import CategoryPrior, load_priors
+from ai_db.scene.shapes import RoomShape
 from ai_db.scene.spec import ROOM, SceneSpec
 
 Dims = tuple[float, float, float]
@@ -43,6 +47,9 @@ _HALF_PI = math.pi / 2
 _GAP_RELS = ("in_front_of", "beside", "around")
 _PRIMARY_ORDER = ("on", "under", "centered_in", "around", "in_front_of", "beside")
 _DEP_RELS = ("on", "under", "centered_in", "around", "in_front_of", "beside")
+_ORIENT_RELS = ("against_wall", "facing", "in_front_of", "beside", "on", "under", "centered_in", "around")
+_CURVED_WALL_GAP_M = 0.25  # max back-face gap to a curved wall (sagitta of a flat back on a curve)
+_LATERAL_TOL_M = 0.05
 
 
 @dataclass(frozen=True)
@@ -52,6 +59,11 @@ class Placement:
     rotation_deg_z: float
     dims: Dims  # [w, d, h] meters
     category: str = ""
+    facing_target: str | None = None  # instance id this object was oriented toward, if any
+
+    @property
+    def yaw_deg(self) -> float:
+        return self.rotation_deg_z
 
 
 class LayoutError(Exception):
@@ -87,6 +99,7 @@ class _Rel:
     ring_i: int
     ring_n: int
     label: str
+    at_deg: float | None = None
 
 
 @dataclass
@@ -98,7 +111,7 @@ class _Pose:
 
 
 def _axes(yaw: float) -> tuple[tuple[float, float], tuple[float, float]]:
-    return (math.cos(yaw), math.sin(yaw)), (-math.sin(yaw), math.cos(yaw))
+    return (math.cos(yaw), math.sin(yaw)), (math.sin(yaw), -math.cos(yaw))  # (right, front); front = -Y at yaw 0
 
 
 def _ext(dims: Dims, yaw: float, u: tuple[float, float]) -> float:
@@ -136,7 +149,7 @@ def _inside(p: _Pose, d: Dims, outer: _Pose, od: Dims, eps: float) -> bool:
 
 
 def _face_yaw(ax: float, ay: float, bx: float, by: float) -> float:
-    return math.atan2(-(bx - ax), by - ay)
+    return math.atan2(bx - ax, -(by - ay))
 
 
 def _angdiff(a: float, b: float) -> float:
@@ -150,6 +163,8 @@ class _Problem:
         self.spec = spec
         self.kind = spec.setting.kind
         self.W, self.D, self.H = spec.setting.bounds_m
+        st = spec.setting
+        self.shape = RoomShape(st.shape, self.W, self.D, st.points)
         self.insts: dict[str, _Inst] = {}
         by_base: dict[str, list[str]] = {}
         for o in spec.objects:
@@ -173,7 +188,7 @@ class _Problem:
                 default = {"in_front_of": LAYOUT_DEFAULT_IN_FRONT_GAP_M, "beside": LAYOUT_DEFAULT_BESIDE_GAP_M, "around": LAYOUT_DEFAULT_AROUND_GAP_M}.get(r.rel, 0.0)
                 gap = default if r.gap_m is None else r.gap_m
                 label = f"{ai} {r.rel} {bi}" + (f" (gap {gap:g} m)" if r.rel in _GAP_RELS else "")
-                self.rels.append(_Rel(ai, r.rel, bi, gap, a.idx, a.n, label))
+                self.rels.append(_Rel(ai, r.rel, bi, gap, a.idx, a.n, label, r.at_deg))
         self.by_a: dict[str, list[_Rel]] = {}
         self.by_b: dict[str, list[_Rel]] = {}
         for rl in self.rels:
@@ -185,6 +200,8 @@ class _Problem:
             if rl.rel in _GAP_RELS and rl.b in self.insts:
                 k = frozenset((rl.a, rl.b))
                 self.pair_gap[k] = min(self.pair_gap.get(k, 1e9), rl.gap)
+        focus = spec.camera.get("focus")
+        self.focus = by_base[focus][0] if focus in by_base else None
         self.under_pairs = {frozenset((r.a, r.b)) for r in self.rels if r.rel == "under"}
         self._static_checks()
 
@@ -215,25 +232,48 @@ class _Problem:
                 raise LayoutError(f"relation '{r.label}': '{r.a}' is as tall as or taller than '{r.b}'", [r.label])
 
     # ---- walls ---------------------------------------------------------------------------
-    def wall(self, name: str) -> tuple[tuple[float, float], tuple[float, float], float]:
-        """(inward normal, point on wall, yaw whose front faces inward)."""
+    def wall(self, name: str, at_deg: float | None = None, x: float = 0.0, y: float = 0.0) -> tuple[tuple[float, float], tuple[float, float], float]:
+        """(inward normal, point on wall, yaw whose front faces inward). (x, y) = object center."""
+        if self.shape.kind != "rect":
+            p, n = self.shape.wall_ref(name, at_deg, x, y)
+            return n, p, math.atan2(n[0], -n[1])
         return {
-            "wall_north": ((0.0, -1.0), (0.0, self.D), math.pi),
-            "wall_south": ((0.0, 1.0), (0.0, 0.0), 0.0),
-            "wall_east": ((-1.0, 0.0), (self.W, 0.0), _HALF_PI),
-            "wall_west": ((1.0, 0.0), (0.0, 0.0), 3 * _HALF_PI),
+            "wall_north": ((0.0, -1.0), (0.0, self.D), 0.0),
+            "wall_south": ((0.0, 1.0), (0.0, 0.0), math.pi),
+            "wall_east": ((-1.0, 0.0), (self.W, 0.0), 3 * _HALF_PI),
+            "wall_west": ((1.0, 0.0), (0.0, 0.0), _HALF_PI),
         }[name]
+
+    def in_room(self, inst: _Inst, pose: _Pose, eps: float) -> bool:
+        return all(self.shape.contains(cx, cy, eps) if self.shape.kind != "rect" else (-eps <= cx <= self.W + eps and -eps <= cy <= self.D + eps)
+                   for cx, cy in _corners(pose, inst.dims))
 
     def snap_walls(self, inst: _Inst, pose: _Pose, set_yaw: bool) -> None:
         walls = [r for r in self.by_a.get(inst.id, []) if r.rel == "against_wall"]
         for k, r in enumerate(walls):
-            n, p, wyaw = self.wall(r.b)
+            n, p, wyaw = self.wall(r.b, r.at_deg, pose.x, pose.y)
             if k == 0 and set_yaw:
                 pose.yaw = wyaw
+            if r.at_deg is not None and self.shape.kind != "rect":
+                pose.x, pose.y = p
             s = (pose.x - p[0]) * n[0] + (pose.y - p[1]) * n[1]
             delta = _ext(inst.dims, pose.yaw, n) - s
             pose.x += delta * n[0]
             pose.y += delta * n[1]
+            if k == 0 and self.shape.curved:  # a flat back on a curve: slide in until the corners fit
+                for _ in range(int(_CURVED_WALL_GAP_M / 0.005)):
+                    if self.in_room(inst, pose, LAYOUT_EPS_M):
+                        break
+                    pose.x += 0.005 * n[0]
+                    pose.y += 0.005 * n[1]
+
+    def default_face(self, inst: _Inst, poses: dict[str, _Pose]) -> tuple[float, float] | None:
+        """Point an object with no orienting relation faces: the camera focus, else the room center (indoor)."""
+        if any(r.rel in _ORIENT_RELS for r in self.by_a.get(inst.id, [])):
+            return None
+        if self.focus and self.focus != inst.id and self.focus in poses:
+            return poses[self.focus].x, poses[self.focus].y
+        return (self.shape.cx, self.shape.cy) if self.kind == "indoor" else None
 
     def base_z(self, inst: _Inst, poses: dict[str, _Pose]) -> float:
         sup = inst.prior.support
@@ -252,15 +292,20 @@ class _Problem:
         a = self.insts[r.a]
         tol = LAYOUT_REL_TOL_M
         if r.rel == "against_wall":
-            n, p, _ = self.wall(r.b)
+            n, p, _ = self.wall(r.b, r.at_deg, pa.x, pa.y)
             gap = (pa.x - p[0]) * n[0] + (pa.y - p[1]) * n[1] - _ext(a.dims, pa.yaw, n)
             f = _axes(pa.yaw)[1]
-            if abs(gap) > 1e-3 or f[0] * n[0] + f[1] * n[1] < 0.99:
+            lo, hi = (-1e-3, _CURVED_WALL_GAP_M) if self.shape.curved else (-1e-3, 1e-3)
+            if not lo <= gap <= hi or f[0] * n[0] + f[1] * n[1] < 0.99:
                 return f"'{r.label}': not flush against the wall (gap {gap:.3f} m)"
+            if r.at_deg is not None and self.shape.kind != "rect":
+                lat = math.hypot(pa.x - p[0] - (gap + _ext(a.dims, pa.yaw, n)) * n[0], pa.y - p[1] - (gap + _ext(a.dims, pa.yaw, n)) * n[1])
+                if lat > _LATERAL_TOL_M:
+                    return f"'{r.label}': {lat:.2f} m away from the requested at_deg position"
             return None
         if r.rel == "centered_in":
             if pb is None:
-                tx, ty = self.W / 2, self.D / 2
+                tx, ty = self.shape.cx, self.shape.cy
             else:
                 tx, ty = pb.x, pb.y
             if math.hypot(pa.x - tx, pa.y - ty) > tol:
@@ -322,9 +367,8 @@ class _Problem:
     def hard_violation(self, inst: _Inst, pose: _Pose, poses: dict[str, _Pose]) -> str | None:
         """First hard-constraint violation of `inst` at `pose` against already-placed poses."""
         e = LAYOUT_EPS_M
-        for cx, cy in _corners(pose, inst.dims):
-            if cx < -e or cx > self.W + e or cy < -e or cy > self.D + e:
-                return "out of bounds"
+        if not self.in_room(inst, pose, e):
+            return "out of bounds"
         if self.kind == "indoor" and (pose.zb < -e or pose.zb + inst.dims[2] > self.H + e):
             return "out of bounds (height)"
         for r in self.by_a.get(inst.id, []):
@@ -355,8 +399,13 @@ class _Problem:
                 continue
             if r.rel == "facing":
                 cost += self.facing_error_deg(r, pose, pb) / 180.0
-            elif r.rel in ("in_front_of", "beside"):
-                cost += 0.05 * _angdiff(pose.yaw, pb.yaw) / math.pi
+            elif r.rel == "in_front_of" and not any(q.rel == "facing" for q in self.by_a[inst.id]):
+                cost += 0.3 * _angdiff(pose.yaw, pb.yaw + math.pi) / math.pi  # A faces B
+            elif r.rel == "beside":
+                cost += 0.3 * _angdiff(pose.yaw, pb.yaw) / math.pi
+        dt = self.default_face(inst, poses)
+        if dt is not None:
+            cost += 0.3 * _angdiff(pose.yaw, _face_yaw(pose.x, pose.y, dt[0], dt[1])) / math.pi
         for oid, op in poses.items():
             if oid == inst.id:
                 continue
@@ -425,13 +474,16 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
             yaws = [(t.yaw + k * _HALF_PI) % (2 * math.pi) for k in range(4)] + yaws
     facing_targets = [poses[r.b] for r in rels if r.rel == "facing" and r.b in poses]
     out: list[_Pose] = []
+    dface = pr.default_face(inst, poses)
     for k in range(n):
         yaw = rng.choice(yaws[: 4 if k % 2 == 0 else len(yaws)]) if yaws else 0.0
+        if prim is not None and pb is not None and prim.rel in ("in_front_of", "beside") and k % 5 != 4:
+            yaw = pb.yaw + (math.pi if prim.rel == "in_front_of" else 0.0)  # A faces B / matches its neighbour
         if prim is None or pb is None and prim.rel != "centered_in":
             x = rng.uniform(0, pr.W)
             y = rng.uniform(0, pr.D)
         elif prim.rel == "centered_in":
-            x, y = (pr.W / 2, pr.D / 2) if pb is None else (pb.x, pb.y)
+            x, y = (pr.shape.cx, pr.shape.cy) if pb is None else (pb.x, pb.y)
         else:
             assert b is not None and pb is not None
             rb, fb = _axes(pb.yaw)
@@ -453,9 +505,11 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
                 span = _ext(b.dims, pb.yaw, tg)
                 off = 0.0 if k < len(dirs) else rng.uniform(-span, span)
                 x, y = pb.x + u[0] * dist + tg[0] * off, pb.y + u[1] * dist + tg[1] * off
-        if facing_targets and not walls and prim is None and k % 2 == 1:
+        if facing_targets and not walls and (prim is None or prim.rel in ("on", "under", "centered_in")) and k % 4 != 3:
             ft = facing_targets[k % len(facing_targets)]
             yaw = _face_yaw(x, y, ft.x, ft.y)
+        elif dface is not None and not walls and k % 4 != 3:
+            yaw = _face_yaw(x, y, dface[0], dface[1])
         p = _Pose(x, y, yaw, 0.0)
         pr.snap_walls(inst, p, set_yaw=True)
         p.zb = pr.base_z(inst, poses)
@@ -537,6 +591,10 @@ def _local_search(pr: _Problem, poses: dict[str, _Pose], rng: random.Random) -> 
             if r.rel == "facing" and r.b in poses:
                 p = poses[iid]
                 try_move(iid, _Pose(p.x, p.y, _face_yaw(p.x, p.y, poses[r.b].x, poses[r.b].y), p.zb))
+        dt = pr.default_face(inst, poses)
+        if dt is not None:
+            p = poses[iid]
+            try_move(iid, _Pose(p.x, p.y, _face_yaw(p.x, p.y, dt[0], dt[1]), p.zb))
     step, dyaw = LAYOUT_LOCAL_STEP_M, math.radians(LAYOUT_LOCAL_YAW_DEG)
     for _ in range(LAYOUT_LOCAL_ITERS):
         iid = rng.choice(ids)
@@ -550,9 +608,21 @@ def _local_search(pr: _Problem, poses: dict[str, _Pose], rng: random.Random) -> 
             for r in pr.by_a.get(iid, []):
                 if r.rel == "facing" and r.b in poses and rng.random() < 0.5:
                     new.yaw = _face_yaw(new.x, new.y, poses[r.b].x, poses[r.b].y)
+            dt = pr.default_face(inst, poses)
+            if dt is not None and rng.random() < 0.5:
+                new.yaw = _face_yaw(new.x, new.y, dt[0], dt[1])
         pr.snap_walls(inst, new, set_yaw=False)
         new.zb = pr.base_z(inst, poses)
         try_move(iid, new)
+
+
+def _facing_target(pr: _Problem, iid: str) -> str | None:
+    rels = pr.by_a.get(iid, [])
+    for rel in ("facing", "in_front_of"):
+        for r in rels:
+            if r.rel == rel and r.b in pr.insts:
+                return r.b
+    return None
 
 
 def _to_placements(pr: _Problem, poses: dict[str, _Pose]) -> list[Placement]:
@@ -566,6 +636,7 @@ def _to_placements(pr: _Problem, poses: dict[str, _Pose]) -> list[Placement]:
                 round(math.degrees(p.yaw) % 360.0, 6),
                 inst.dims,
                 inst.category,
+                _facing_target(pr, iid),
             )
         )
     return out

@@ -46,6 +46,7 @@ def parse_placements(raw: Any) -> list[Placement]:
                 rotation_deg_z=float(p.get("rotation_deg_z", 0.0)),
                 dims=tuple(float(v) for v in p["dims"]),  # type: ignore[arg-type]
                 category=str(p.get("category", "")),
+                facing_target=p.get("facing_target"),
             )
         )
     return out
@@ -58,37 +59,63 @@ def placement_to_dict(p: Placement) -> dict[str, Any]:
         "rotation_deg_z": p.rotation_deg_z,
         "dims": list(p.dims),
         "category": p.category,
+        "yaw_deg": p.rotation_deg_z,
+        **({"facing_target": p.facing_target} if p.facing_target else {}),
     }
 
 
 # --- pure command construction -------------------------------------------------
 
 
-def _room_commands(spec: SceneSpec) -> list[dict[str, Any]]:
+_OPENING_KINDS = ("window", "door", "niche")
+
+
+def _openings(spec: SceneSpec, placements: list[Placement]) -> list[dict[str, Any]]:
+    """Wall openings from window/door/niche objects that have an against_wall relation."""
+    base_wall = {r.a: r for r in spec.relations if r.rel == "against_wall"}
+    ids = {o.id for o in spec.objects}
+    out = []
+    for pl in placements:
+        if pl.category not in _OPENING_KINDS:
+            continue
+        base = pl.id if pl.id in ids else _SUFFIX.sub("", pl.id)
+        r = base_wall.get(base)
+        if r is None:
+            continue
+        w, d, h = pl.dims
+        out.append({
+            "id": pl.id, "kind": pl.category, "wall": r.b, **({"at_deg": r.at_deg} if r.at_deg is not None else {}),
+            "center": [pl.location[0], pl.location[1]], "yaw_deg": pl.rotation_deg_z,
+            "width": w, "height": h, "depth": d, "base_z": pl.location[2] - h / 2,
+        })
+    return out
+
+
+def _room_commands(spec: SceneSpec, placements: list[Placement] | None = None) -> list[dict[str, Any]]:
     kind = spec.setting.kind
     if kind == "single_asset":
         return []
     w, d, h = spec.setting.bounds_m
     t = WALL_THICKNESS_M
-    cmds = [
-        {
-            "type": "create_primitive",
-            "params": {"primitive": "cube", "name": "floor", "location": [w / 2, d / 2, -t / 2],
-                       "scale": [w / 2, d / 2, t / 2]},
-        }
-    ]
     if kind == "indoor":
-        walls = {
-            "wall_north": ([w / 2, d + t / 2, h / 2], [w / 2 + t, t / 2, h / 2]),
-            "wall_south": ([w / 2, -t / 2, h / 2], [w / 2 + t, t / 2, h / 2]),
-            "wall_east": ([w + t / 2, d / 2, h / 2], [t / 2, d / 2, h / 2]),
-            "wall_west": ([-t / 2, d / 2, h / 2], [t / 2, d / 2, h / 2]),
+        st = spec.setting
+        params: dict[str, Any] = {
+            "shape": st.shape, "height": h, "wall_thickness": t,
+            "openings": _openings(spec, placements or []),
+            "floor": True, "ceiling": False, "trim": False,
         }
-        for name in _WALLS:
-            loc, sc = walls[name]
-            cmds.append({"type": "create_primitive",
-                         "params": {"primitive": "cube", "name": name, "location": loc, "scale": sc}})
-    return cmds
+        if st.shape == "polygon":
+            params["points"] = [list(p) for p in st.points]
+        else:
+            params["size"] = [w, d]
+        return [{"type": "room_shell", "params": params}]
+    shp = spec.setting.shape
+    return [{
+        "type": "create_primitive",
+        "params": {"primitive": "cube", "name": "floor", "location": [w / 2, d / 2, -t / 2], "scale": [w / 2, d / 2, t / 2]},
+    }] if shp == "rect" else [{"type": "room_shell", "params": {
+        "shape": shp, "height": 0.0, "wall_thickness": t, "openings": [], "floor": True, "ceiling": False, "trim": False,
+        **({"points": [list(p) for p in spec.setting.points]} if shp == "polygon" else {"size": [w, d]})}}]
 
 
 def _lookup_asset(asset_map: dict[str, Any], pl: Placement, base_id: str) -> dict[str, Any] | None:
@@ -130,8 +157,9 @@ def build_layout_commands(
     asset_map = asset_map or {}
     priors = load_priors()
     heroes = {o.id for o in spec.objects if o.hero}
-    cmds = _room_commands(spec)
-    names = [c["params"]["name"] for c in cmds]
+    details = {o.id: o.detail for o in spec.objects}
+    cmds = _room_commands(spec, placements)
+    names = [c["params"].get("name", "room_shell") for c in cmds]
     tag: list[dict[str, Any]] = []
     for pl in placements:
         base = _SUFFIX.sub("", pl.id) if pl.id not in {o.id for o in spec.objects} else pl.id
@@ -141,7 +169,10 @@ def build_layout_commands(
             "category": pl.category,
             "hero": base in heroes,
             "support": prior.support if prior else "floor",
+            "detail": details.get(base, "standard"),
         }
+        if pl.facing_target:
+            props["facing_target"] = pl.facing_target
         asset = _lookup_asset(asset_map, pl, base)
         if asset:
             cmds.append({"type": "append_asset", "params": {

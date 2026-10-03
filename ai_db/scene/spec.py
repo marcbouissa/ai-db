@@ -8,11 +8,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ai_db.constants import LAYOUT_MAX_BOUND_M, LAYOUT_MAX_COUNT
-from ai_db.scene.priors import categories
+from ai_db.scene.priors import SUPPORTS, categories
+from ai_db.scene.shapes import polygon_wall_names
 
 RELATIONS = ("on", "against_wall", "in_front_of", "beside", "facing", "centered_in", "under", "around")
 SETTING_KINDS = ("indoor", "outdoor", "tabletop", "single_asset")
 WALLS = ("wall_north", "wall_south", "wall_east", "wall_west")
+SHAPES = ("rect", "ellipse", "polygon")
+DETAILS = ("draft", "standard", "hero")
+SUPPORT_VOCAB = SUPPORTS  # floor | surface | wall | ceiling | ground: shared with the Blender builder
+NONRECT_WALL = "wall"  # implicit wall of ellipse/polygon rooms (with at_deg); polygons also have wall_1..wall_N
 ROOM = "room"  # target keyword for centered_in
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 # Relations that need a wall / an object / either object or the room as their `b`.
@@ -24,6 +29,8 @@ class Setting:
     kind: str
     bounds_m: tuple[float, float, float]  # x (east-west), y (north-south), z (height)
     style: str | None = None
+    shape: str = "rect"
+    points: tuple[tuple[float, float], ...] = ()  # polygon footprint (x, y) in meters
 
 
 @dataclass(frozen=True)
@@ -32,6 +39,7 @@ class ObjectSpec:
     category: str
     count: int = 1
     hero: bool = False
+    detail: str = "standard"
 
 
 @dataclass(frozen=True)
@@ -40,6 +48,7 @@ class Relation:
     rel: str
     b: str
     gap_m: float | None = None
+    at_deg: float | None = None  # against_wall on ellipse/polygon: where on the wall (ellipse angle / polygon ray from center)
 
 
 @dataclass(frozen=True)
@@ -60,10 +69,22 @@ class SceneSpec:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "setting": {"kind": self.setting.kind, "bounds_m": list(self.setting.bounds_m), "style": self.setting.style},
-            "objects": [{"id": o.id, "category": o.category, "count": o.count, "hero": o.hero} for o in self.objects],
+            "setting": {
+                "kind": self.setting.kind,
+                "bounds_m": list(self.setting.bounds_m),
+                "style": self.setting.style,
+                **({"shape": self.setting.shape} if self.setting.shape != "rect" else {}),
+                **({"points": [list(p) for p in self.setting.points]} if self.setting.points else {}),
+            },
+            "objects": [
+                {"id": o.id, "category": o.category, "count": o.count, "hero": o.hero, "detail": o.detail} for o in self.objects
+            ],
             "relations": [
-                {"a": r.a, "rel": r.rel, "b": r.b, **({"gap_m": r.gap_m} if r.gap_m is not None else {})}
+                {
+                    "a": r.a, "rel": r.rel, "b": r.b,
+                    **({"gap_m": r.gap_m} if r.gap_m is not None else {}),
+                    **({"at_deg": r.at_deg} if r.at_deg is not None else {}),
+                }
                 for r in self.relations
             ],
             "lighting": dict(self.lighting),
@@ -93,6 +114,13 @@ def spec_schema() -> dict[str, Any]:
                         "description": "[x width, y depth, z height] in meters",
                     },
                     "style": {"type": "string"},
+                    "shape": {"enum": list(SHAPES), "description": "room footprint inside bounds_m x/y; default rect"},
+                    "points": {
+                        "type": "array",
+                        "minItems": 3,
+                        "items": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                        "description": "polygon only: [[x, y], ...] vertices in meters inside [0,x]x[0,y]",
+                    },
                 },
             },
             "objects": {
@@ -107,6 +135,7 @@ def spec_schema() -> dict[str, Any]:
                         "category": {"enum": categories()},
                         "count": {"type": "integer", "minimum": 1, "maximum": LAYOUT_MAX_COUNT},
                         "hero": {"type": "boolean"},
+                        "detail": {"enum": list(DETAILS), "description": "modeling detail level; default standard"},
                     },
                 },
             },
@@ -121,10 +150,12 @@ def spec_schema() -> dict[str, Any]:
                         "rel": {"enum": list(RELATIONS)},
                         "b": {
                             "type": "string",
-                            "description": f"object id; wall name {list(WALLS)} for against_wall (indoor); "
+                            "description": f"object id; wall name {list(WALLS)} for against_wall (indoor rect); "
+                            f"'{NONRECT_WALL}' (+at_deg) or '{NONRECT_WALL}_<n>' for ellipse/polygon rooms; "
                             f"'{ROOM}' also allowed for centered_in",
                         },
                         "gap_m": {"type": "number", "minimum": 0},
+                        "at_deg": {"type": "number", "description": "against_wall in ellipse/polygon rooms: angle on the wall"},
                     },
                 },
             },
@@ -158,7 +189,7 @@ def _parse_setting(raw: Any, errors: list[str]) -> Setting | None:
         errors.append(f"setting: expected object, got {_typename(raw)}")
         return None
     n0 = len(errors)
-    _unknown_keys("setting", raw, ("kind", "bounds_m", "style"), errors)
+    _unknown_keys("setting", raw, ("kind", "bounds_m", "style", "shape", "points"), errors)
     kind = raw.get("kind")
     if kind not in SETTING_KINDS:
         errors.append(f"setting.kind: {kind!r} is not allowed; allowed values: {list(SETTING_KINDS)}")
@@ -177,9 +208,27 @@ def _parse_setting(raw: Any, errors: list[str]) -> Setting | None:
     style = raw.get("style")
     if style is not None and not isinstance(style, str):
         errors.append(f"setting.style: expected string, got {_typename(style)}")
+    shape = raw.get("shape", "rect")
+    if shape not in SHAPES:
+        errors.append(f"setting.shape: {shape!r} is not allowed; allowed values: {list(SHAPES)}")
+    pts: list[tuple[float, float]] = []
+    raw_pts = raw.get("points")
+    if shape == "polygon":
+        if not isinstance(raw_pts, list) or len(raw_pts) < 3:
+            errors.append(f"setting.points: polygon needs a list of >= 3 [x, y] points, got {raw_pts!r}")
+        else:
+            for i, pt in enumerate(raw_pts):
+                if not (isinstance(pt, list) and len(pt) == 2 and all(_is_num(v) for v in pt)):
+                    errors.append(f"setting.points[{i}]: expected [x, y] numbers, got {pt!r}")
+                elif bounds is not None and not (-1e-9 <= pt[0] <= bounds[0] + 1e-9 and -1e-9 <= pt[1] <= bounds[1] + 1e-9):
+                    errors.append(f"setting.points[{i}]: {pt!r} lies outside bounds_m x/y [0, {bounds[0]:g}] x [0, {bounds[1]:g}]")
+                else:
+                    pts.append((float(pt[0]), float(pt[1])))
+    elif raw_pts is not None:
+        errors.append("setting.points: only allowed when setting.shape is 'polygon'")
     if len(errors) > n0 or bounds is None:
         return None
-    return Setting(str(kind), bounds, style)
+    return Setting(str(kind), bounds, style, str(shape), tuple(pts))
 
 
 def _parse_objects(raw: Any, errors: list[str]) -> list[ObjectSpec]:
@@ -194,14 +243,15 @@ def _parse_objects(raw: Any, errors: list[str]) -> list[ObjectSpec]:
         if not isinstance(o, dict):
             errors.append(f"{p}: expected object, got {_typename(o)}")
             continue
-        _unknown_keys(p, o, ("id", "category", "count", "hero"), errors)
+        _unknown_keys(p, o, ("id", "category", "count", "hero", "detail"), errors)
         oid, cat, count, hero = o.get("id"), o.get("category"), o.get("count", 1), o.get("hero", False)
+        detail = o.get("detail", "standard")
         ok = True
         if not isinstance(oid, str) or not _ID_RE.match(oid):
             errors.append(f"{p}.id: {oid!r} must match {_ID_RE.pattern} (lowercase snake_case)")
             ok = False
-        elif oid in WALLS or oid == ROOM:
-            errors.append(f"{p}.id: '{oid}' is reserved (walls {list(WALLS)} and '{ROOM}')")
+        elif oid in WALLS or oid == ROOM or oid == NONRECT_WALL or re.match(r"^wall_\d+$", oid):
+            errors.append(f"{p}.id: '{oid}' is reserved (walls {list(WALLS)}, '{NONRECT_WALL}', '{NONRECT_WALL}_<n>' and '{ROOM}')")
             ok = False
         elif oid in seen:
             errors.append(f"{p}.id: duplicate id '{oid}'")
@@ -215,27 +265,35 @@ def _parse_objects(raw: Any, errors: list[str]) -> list[ObjectSpec]:
         if not isinstance(hero, bool):
             errors.append(f"{p}.hero: expected boolean, got {hero!r}")
             ok = False
+        if detail not in DETAILS:
+            errors.append(f"{p}.detail: {detail!r} is not allowed; allowed values: {list(DETAILS)}")
+            ok = False
         if isinstance(oid, str):
             seen.add(oid)
         if ok:
-            out.append(ObjectSpec(str(oid), str(cat), count, hero))
+            out.append(ObjectSpec(str(oid), str(cat), count, hero, str(detail)))
     return out
 
 
-def _parse_relations(raw: Any, ids: list[str], kind: str, errors: list[str]) -> list[Relation]:
+def _parse_relations(raw: Any, ids: list[str], setting: Setting | None, errors: list[str]) -> list[Relation]:
     if raw is None:
         return []
     if not isinstance(raw, list):
         errors.append(f"relations: expected a list, got {_typename(raw)}")
         return []
+    kind = setting.kind if setting else ""
+    shape = setting.shape if setting else "rect"
+    walls = list(WALLS) if shape == "rect" else (
+        [NONRECT_WALL] if shape == "ellipse" else [NONRECT_WALL, *polygon_wall_names(len(setting.points) if setting else 0)])
     out: list[Relation] = []
     for i, r in enumerate(raw):
         p = f"relations[{i}]"
         if not isinstance(r, dict):
             errors.append(f"{p}: expected object, got {_typename(r)}")
             continue
-        _unknown_keys(p, r, ("a", "rel", "b", "gap_m"), errors)
+        _unknown_keys(p, r, ("a", "rel", "b", "gap_m", "at_deg"), errors)
         a, rel, b, gap = r.get("a"), r.get("rel"), r.get("b"), r.get("gap_m")
+        at_deg = r.get("at_deg")
         n0 = len(errors)
         if rel not in RELATIONS:
             errors.append(f"{p}.rel: {rel!r} is not allowed; allowed values: {list(RELATIONS)}")
@@ -244,8 +302,9 @@ def _parse_relations(raw: Any, ids: list[str], kind: str, errors: list[str]) -> 
         if rel == _WALL_REL:
             if kind != "indoor":
                 errors.append(f"{p}: against_wall needs setting.kind 'indoor' (walls exist only indoors), got '{kind}'")
-            elif b not in WALLS:
-                errors.append(f"{p}.b: {b!r} is not a wall; allowed values: {list(WALLS)}")
+            elif b not in walls:
+                room_note = "" if shape == "rect" else f" of this {shape} room"
+                errors.append(f"{p}.b: {b!r} is not a wall{room_note}; allowed values: {walls}")
         elif rel in RELATIONS:
             allowed_b = ids + ([ROOM] if rel == "centered_in" else [])
             if b not in allowed_b:
@@ -254,8 +313,10 @@ def _parse_relations(raw: Any, ids: list[str], kind: str, errors: list[str]) -> 
             errors.append(f"{p}: object '{a}' cannot be related to itself")
         if gap is not None and (not _is_num(gap) or gap < 0):
             errors.append(f"{p}.gap_m: expected number >= 0, got {gap!r}")
+        if at_deg is not None and (not _is_num(at_deg) or rel != _WALL_REL or shape == "rect"):
+            errors.append(f"{p}.at_deg: only allowed (as a number) on against_wall in ellipse/polygon rooms, got {at_deg!r}")
         if len(errors) == n0:
-            out.append(Relation(str(a), str(rel), str(b), None if gap is None else float(gap)))
+            out.append(Relation(str(a), str(rel), str(b), None if gap is None else float(gap), None if at_deg is None else float(at_deg)))
     return out
 
 
@@ -274,8 +335,7 @@ def validate_spec(data: Any) -> tuple[SceneSpec | None, list[str]]:
     objs = _parse_objects(data.get("objects"), errors) if objs_present else []
     raw_objs = data.get("objects")
     declared = [o["id"] for o in raw_objs if isinstance(o, dict) and isinstance(o.get("id"), str)] if isinstance(raw_objs, list) else []
-    kind = setting.kind if setting else ""
-    rels = _parse_relations(data.get("relations"), declared, kind, errors) if setting is not None or not errors else []
+    rels = _parse_relations(data.get("relations"), declared, setting, errors) if setting is not None or not errors else []
     lighting = data.get("lighting", {})
     camera = data.get("camera", {})
     if not isinstance(lighting, dict):
