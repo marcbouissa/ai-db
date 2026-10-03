@@ -160,4 +160,4 @@ class ContextMemory:
         if not session_id:
             raise ValueError("session_id is required")
 
-        return self.db.delete_context(session_id=session_id, project=project or "global")
+        return bool(self.db.delete_context(session_id=session_id, project=project or "global"))
