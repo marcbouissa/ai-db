@@ -20,3 +20,7 @@ class AiDbQueryError(AiDbError):
 
 class AiDbStorageError(AiDbError):
     """Stored data is corrupt or the storage backend violated its contract."""
+
+
+class AiDbProtocolError(AiDbError):
+    """A remote (daemon) response had an unexpected JSON shape."""

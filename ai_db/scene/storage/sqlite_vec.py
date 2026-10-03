@@ -13,6 +13,7 @@ from typing import Any
 
 from ai_db.scene.storage.base import SceneMemoryBackend
 from ai_db.scene.models import PromptContext, RunRecord, SceneState
+from ai_db.errors import AiDbStorageError
 from ai_db.logger import _logger
 
 
@@ -26,26 +27,32 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
         self.conn: sqlite3.Connection | None = None
         self.db_path: Path | None = None
     
+    @property
+    def _db(self) -> sqlite3.Connection:
+        if self.conn is None:
+            raise AiDbStorageError("SQLiteVecSceneBackend not initialized")
+        return self.conn
+
     def initialize(self, config: dict[str, Any]) -> None:
         db_path = config.get("path", "~/.ai-db/scene_memory.db")
         self.db_path = Path(db_path).expanduser()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
         self.conn = sqlite3.connect(str(self.db_path))
-        self.conn.enable_load_extension(True)
+        self._db.enable_load_extension(True)
         sqlite_vec.load(self.conn)
-        self.conn.enable_load_extension(False)
+        self._db.enable_load_extension(False)
         
         # WAL mode for performance
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
-        self.conn.execute("PRAGMA cache_size=-32768")  # 32MB cache
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=NORMAL")
+        self._db.execute("PRAGMA cache_size=-32768")  # 32MB cache
         
         self._init_schema()
         _logger.info(f"SQLiteVecSceneBackend initialized at {self.db_path}")
     
     def _init_schema(self):
-        c = self.conn.cursor()
+        c = self._db.cursor()
         
         # Scenes table
         c.execute("""
@@ -146,17 +153,17 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
             )
         """)
         
-        self.conn.commit()
+        self._db.commit()
     
     def close(self) -> None:
         if self.conn:
-            self.conn.close()
+            self._db.close()
             self.conn = None
     
     # --- Scene snapshots ---
     
     def save_scene(self, scene: SceneState) -> str:
-        c = self.conn.cursor()
+        c = self._db.cursor()
         data_json = json.dumps(scene.to_dict())
         
         # Upsert scene
@@ -183,7 +190,7 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
                 obj.parent_uuid, obj_data
             ))
         
-        self.conn.commit()
+        self._db.commit()
         
         # Save prompt context if present
         if scene.prompt_context:
@@ -193,7 +200,7 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
         return scene.scene_id
     
     def load_scene(self, scene_id: str) -> SceneState | None:
-        c = self.conn.cursor()
+        c = self._db.cursor()
         c.execute("SELECT data FROM scenes WHERE scene_id = ?", (scene_id,))
         row = c.fetchone()
         if not row:
@@ -201,7 +208,7 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
         return SceneState.from_dict(json.loads(row[0]))
     
     def list_scenes(self, project: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
-        c = self.conn.cursor()
+        c = self._db.cursor()
         if project:
             c.execute("""
                 SELECT scene_id, project, name, timestamp, version, object_count, tags, prompt
@@ -235,15 +242,15 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
         ]
     
     def delete_scene(self, scene_id: str) -> bool:
-        c = self.conn.cursor()
+        c = self._db.cursor()
         c.execute("DELETE FROM scenes WHERE scene_id = ?", (scene_id,))
-        self.conn.commit()
+        self._db.commit()
         return c.rowcount > 0
     
     # --- Prompt-aware history ---
     
     def save_prompt_context(self, ctx: PromptContext) -> int:
-        c = self.conn.cursor()
+        c = self._db.cursor()
         c.execute("""
             INSERT INTO prompt_contexts (scene_id, project, prompt, timestamp, objects_affected, operation_type, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -251,8 +258,8 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
             ctx.scene_id, ctx.project, ctx.prompt, ctx.timestamp,
             json.dumps(ctx.objects_affected), ctx.operation_type, json.dumps(ctx.metadata)
         ))
-        ctx.id = c.lastrowid
-        self.conn.commit()
+        ctx.id = c.lastrowid or 0
+        self._db.commit()
         return ctx.id
     
     def get_scene_history(
@@ -262,10 +269,10 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
         project: str | None = None,
         limit: int = 50
     ) -> list[PromptContext]:
-        c = self.conn.cursor()
+        c = self._db.cursor()
         
         query = "SELECT id, scene_id, project, prompt, timestamp, objects_affected, operation_type, metadata FROM prompt_contexts WHERE 1=1"
-        params = []
+        params: list[Any] = []
         
         if scene_id:
             query += " AND scene_id = ?"
@@ -300,7 +307,7 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
         top_k: int = 10
     ) -> list[SceneState]:
         """Search using FTS5 (BM25) + vector similarity if embeddings available."""
-        c = self.conn.cursor()
+        c = self._db.cursor()
         
         # First try vector search if embeddings exist
         c.execute("SELECT COUNT(*) FROM prompt_embeddings")
@@ -320,7 +327,7 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
             JOIN scenes s ON pc.scene_id = s.scene_id
             WHERE prompt_contexts_fts MATCH ?
         """
-        params = [fts_query]
+        params: list[Any] = [fts_query]
         if project:
             sql += " AND s.project = ?"
             params.append(project)
@@ -338,7 +345,7 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
         top_k: int = 20
     ) -> list[dict[str, Any]]:
         """Search objects by name/material/type across scenes using FTS."""
-        c = self.conn.cursor()
+        c = self._db.cursor()
         
         # Search in objects table using name, type, materials
         fts_query = query.replace('"', '""')
@@ -350,7 +357,7 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
             WHERE (o.name LIKE ? OR o.type LIKE ? OR o.collection LIKE ? OR o.materials LIKE ?)
         """
         like_param = f"%{query}%"
-        params = [like_param, like_param, like_param, like_param]
+        params: list[Any] = [like_param, like_param, like_param, like_param]
         
         if project:
             sql += " AND s.project = ?"
@@ -373,15 +380,15 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
     # --- Run records ---
 
     def save_run(self, run: RunRecord) -> str:
-        self.conn.execute(
+        self._db.execute(
             "INSERT OR REPLACE INTO run_records (run_id, project, outcome, created_at, data) VALUES (?, ?, ?, ?, ?)",
             (run.run_id, run.project, run.outcome, run.created_at, json.dumps(run.to_dict())),
         )
-        self.conn.commit()
+        self._db.commit()
         return run.run_id
 
     def load_run(self, run_id: str) -> RunRecord | None:
-        row = self.conn.execute("SELECT data FROM run_records WHERE run_id = ?", (run_id,)).fetchone()
+        row = self._db.execute("SELECT data FROM run_records WHERE run_id = ?", (run_id,)).fetchone()
         return RunRecord.from_dict(json.loads(row[0])) if row else None
 
     def list_runs(self, project: str | None = None, limit: int = 100) -> list[RunRecord]:
@@ -392,4 +399,4 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
             args.append(project)
         sql += " ORDER BY created_at DESC LIMIT ?"
         args.append(limit)
-        return [RunRecord.from_dict(json.loads(r[0])) for r in self.conn.execute(sql, args)]
+        return [RunRecord.from_dict(json.loads(r[0])) for r in self._db.execute(sql, args)]

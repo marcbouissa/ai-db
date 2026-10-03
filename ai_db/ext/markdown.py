@@ -32,9 +32,9 @@ class MarkdownChunker(ChunkerExtension):
             body = content
         
         lines = body.splitlines(keepends=True)
-        current_chunk = []
+        current_chunk: list[str] = []
         current_start = 1
-        heading_stack = []
+        heading_stack: list[str] = []
         
         for i, line in enumerate(lines, 1):
             # Detect headings

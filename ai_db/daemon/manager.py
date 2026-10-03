@@ -11,6 +11,8 @@ from typing import Any
 
 import httpx
 
+from ai_db.daemon._json import as_dict
+
 from ai_db.config import AppConfig, load_config
 from ai_db.daemon.config import DaemonConfig as InternalDaemonConfig
 
@@ -240,7 +242,7 @@ class DaemonManager:
                 }
                 resp = client.post(f"{self.base_url}/projects", json=payload)
                 resp.raise_for_status()
-                return resp.json()
+                return as_dict(resp.json())
         except Exception as e:
             raise RuntimeError(f"Failed to register project: {e}")
 
@@ -287,7 +289,7 @@ class DaemonManager:
             with httpx.Client(timeout=10.0) as client:
                 resp = client.delete(f"{self.base_url}/projects/{name}")
                 resp.raise_for_status()
-                return resp.json()
+                return as_dict(resp.json())
         except Exception as e:
             raise RuntimeError(f"Failed to unregister project: {e}")
 
@@ -315,7 +317,7 @@ class DaemonManager:
             with httpx.Client(timeout=10.0) as client:
                 resp = client.post(f"{self.base_url}/daemon/reload")
                 resp.raise_for_status()
-                return resp.json()
+                return as_dict(resp.json())
         except Exception as e:
             raise RuntimeError(f"Failed to reload config: {e}")
 

@@ -147,11 +147,12 @@ class USDChunker(ChunkerExtension):
     
     def get_metadata(self, filepath: Path, chunk: Chunk) -> dict[str, Any]:
         meta = super().get_metadata(filepath, chunk)
+        cm = chunk.metadata or {}
         meta.update({
-            "prim_path": chunk.metadata.get("prim_path"),
-            "prim_type": chunk.metadata.get("prim_type"),
-            "has_references": bool(chunk.metadata.get("references")),
-            "has_payloads": bool(chunk.metadata.get("payloads")),
+            "prim_path": cm.get("prim_path"),
+            "prim_type": cm.get("prim_type"),
+            "has_references": bool(cm.get("references")),
+            "has_payloads": bool(cm.get("payloads")),
         })
         return meta
 

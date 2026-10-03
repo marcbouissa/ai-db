@@ -34,17 +34,18 @@ class SegmentationChunker(ChunkerExtension):
         chunks = []
         
         suffix = "".join(filepath.suffixes).lower()
+        text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else content
         
         if suffix in (".seg.png", ".mask.png", ".png"):
             chunks = self._chunk_png_mask(filepath, content)
         elif suffix == ".seg.npy" or suffix == ".npy":
             chunks = self._chunk_numpy_mask(filepath, content)
         elif suffix == ".rle":
-            chunks = self._chunk_rle(filepath, content)
+            chunks = self._chunk_rle(filepath, text)
         elif suffix == ".coco.json":
-            chunks = self._chunk_coco(filepath, content)
+            chunks = self._chunk_coco(filepath, text)
         elif suffix == ".yolo.txt":
-            chunks = self._chunk_yolo(filepath, content)
+            chunks = self._chunk_yolo(filepath, text)
         else:
             # Generic fallback
             chunks = [Chunk(

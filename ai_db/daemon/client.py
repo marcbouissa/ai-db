@@ -7,6 +7,8 @@ import uuid
 from typing import Any
 
 import httpx
+
+from ai_db.daemon._json import as_dict, as_list
 try:
     import websockets
     WEBSOCKETS_AVAILABLE = True
@@ -271,7 +273,7 @@ class DaemonClient:
         client = await self._ensure_client()
         resp = await client.get(f"{self.base_url}/health")
         resp.raise_for_status()
-        return resp.json()
+        return as_dict(resp.json())
 
     def status(self) -> dict[str, Any]:
         return asyncio.run(self._status_async())
@@ -281,7 +283,7 @@ class DaemonClient:
         project = self._resolve_project(None)
         resp = await client.get(f"{self.base_url}/projects/{project}/status")
         resp.raise_for_status()
-        return resp.json()
+        return as_dict(resp.json())
 
     def list_projects(self) -> list[dict[str, Any]]:
         return asyncio.run(self._list_projects_async())
@@ -290,7 +292,7 @@ class DaemonClient:
         client = await self._ensure_client()
         resp = await client.get(f"{self.base_url}/projects")
         resp.raise_for_status()
-        return resp.json()
+        return as_list(resp.json())
 
     def register_project(
         self,
@@ -317,7 +319,7 @@ class DaemonClient:
         }
         resp = await client.post(f"{self.base_url}/projects", json=payload)
         resp.raise_for_status()
-        return resp.json()
+        return as_dict(resp.json())
 
     def unregister_project(self, name: str) -> dict[str, Any]:
         return asyncio.run(self._unregister_project_async(name))
@@ -338,7 +340,7 @@ class DaemonClient:
         top: int,
     ) -> list[dict[str, Any]]:
         client = await self._ensure_client()
-        payload = {
+        payload: dict[str, Any] = {
             "name": "query",
             "arguments": {
                 "query": query,
@@ -357,9 +359,9 @@ class DaemonClient:
 
         text = data["content"][0]["text"]
         try:
-            return json.loads(text)
+            return as_list(json.loads(text))
         except json.JSONDecodeError:
-            return text
+            return as_list(text)
 
     def metrics(self) -> dict[str, Any]:
         """Get daemon metrics."""
@@ -369,7 +371,7 @@ class DaemonClient:
         client = await self._ensure_client()
         resp = await client.get(f"{self.base_url}/metrics")
         resp.raise_for_status()
-        return resp.json()
+        return as_dict(resp.json())
 
     def templates(self) -> list[dict[str, Any]]:
         """List available project templates."""
@@ -379,13 +381,13 @@ class DaemonClient:
         client = await self._ensure_client()
         resp = await client.get(f"{self.base_url}/templates")
         resp.raise_for_status()
-        return resp.json()
+        return as_list(resp.json())
 
     async def _unregister_project_async(self, name: str) -> dict[str, Any]:
         client = await self._ensure_client()
         resp = await client.delete(f"{self.base_url}/projects/{name}")
         resp.raise_for_status()
-        return resp.json()
+        return as_dict(resp.json())
 
     def reload_config(self) -> dict[str, Any]:
         return asyncio.run(self._reload_config_async())
@@ -397,7 +399,7 @@ class DaemonClient:
         # Clear tools cache after reload
         self._tools_cache = None
         self._tools_cache_project = None
-        return resp.json()
+        return as_dict(resp.json())
 
 
 # Convenience function to create client from config/environment

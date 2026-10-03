@@ -156,7 +156,7 @@ class VideoPipeline:
         
         return result
     
-    def list_available(self) -> dict[str, VideoProcessor]:
+    def list_available(self) -> dict[str, dict[str, Any]]:
         """List all available processors with their capabilities."""
         return {
             name: {

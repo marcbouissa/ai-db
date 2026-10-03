@@ -11,6 +11,7 @@ from typing import Any
 
 from ai_db.scene.storage.base import SceneMemoryBackend
 from ai_db.scene.models import PromptContext, RunRecord, SceneState
+from ai_db.errors import AiDbStorageError
 from ai_db.logger import _logger
 
 
@@ -22,19 +23,36 @@ class JSONFileSceneBackend(SceneMemoryBackend):
     
     def __init__(self):
         self.base_path: Path | None = None
-        self.scenes_dir: Path | None = None
-        self.history_dir: Path | None = None
-        self.runs_dir: Path | None = None
+        self._scenes_dir: Path | None = None
+        self._history_dir: Path | None = None
+        self._runs_dir: Path | None = None
     
+    def _require(self, path: Path | None) -> Path:
+        if path is None:
+            raise AiDbStorageError("JSONFileSceneBackend not initialized")
+        return path
+
+    @property
+    def scenes_dir(self) -> Path:
+        return self._require(self._scenes_dir)
+
+    @property
+    def history_dir(self) -> Path:
+        return self._require(self._history_dir)
+
+    @property
+    def runs_dir(self) -> Path:
+        return self._require(self._runs_dir)
+
     def initialize(self, config: dict[str, Any]) -> None:
         base = config.get("path", "~/.ai-db/scene_memory")
         self.base_path = Path(base).expanduser()
-        self.scenes_dir = self.base_path / "scenes"
-        self.history_dir = self.base_path / "history"
-        self.runs_dir = self.base_path / "runs"
-        self.scenes_dir.mkdir(parents=True, exist_ok=True)
-        self.runs_dir.mkdir(parents=True, exist_ok=True)
-        self.history_dir.mkdir(parents=True, exist_ok=True)
+        self._scenes_dir = self.base_path / "scenes"
+        self._history_dir = self.base_path / "history"
+        self._runs_dir = self.base_path / "runs"
+        self._scenes_dir.mkdir(parents=True, exist_ok=True)
+        self._runs_dir.mkdir(parents=True, exist_ok=True)
+        self._history_dir.mkdir(parents=True, exist_ok=True)
         _logger.info(f"JSONFileSceneBackend initialized at {self.base_path}")
     
     def close(self) -> None:

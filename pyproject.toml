@@ -152,3 +152,7 @@ disallow_untyped_defs = false
 [[tool.mypy.overrides]]
 module = ["sqlite_vec", "sentence_transformers", "tree_sitter_language_pack", "tiktoken"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["openai", "anthropic"]
+ignore_missing_imports = true
