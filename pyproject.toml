@@ -100,7 +100,7 @@ exclude = ["tests*", ".agents*"]
 py-modules = ["vectordb", "mcp_server"]
 
 [tool.setuptools.package-data]
-ai_db = ["parser/queries/*.scm"]
+ai_db = ["parser/queries/*.scm", "scene/priors.json"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

@@ -151,3 +151,22 @@ TRACE_WAIT_PATTERNS = (
     "acquire",
     "release",
 )
+
+# --- Scene layout solver (ai_db/scene/layout.py) ---
+LAYOUT_SEED = 0
+LAYOUT_EPS_M = 1e-4  # geometric slack for exact contact (walls, stacking)
+LAYOUT_REL_TOL_M = 0.03  # tolerance when verifying gap/contact/centering relations
+LAYOUT_FACING_TOL_DEG = 15.0
+LAYOUT_CANDIDATES = 300  # sampled candidates per object (greedy pass)
+LAYOUT_RETRY_CANDIDATES = 2000  # one denser retry before declaring a conflict
+LAYOUT_LOCAL_ITERS = 400  # local-search proposals after the greedy pass
+LAYOUT_LOCAL_STEP_M = 0.25
+LAYOUT_LOCAL_YAW_DEG = 15.0
+LAYOUT_DEFAULT_IN_FRONT_GAP_M = 0.4
+LAYOUT_DEFAULT_BESIDE_GAP_M = 0.15
+LAYOUT_DEFAULT_AROUND_GAP_M = 0.3
+LAYOUT_FLAT_MAX_H_M = 0.03  # objects at most this tall (rugs) do not block others
+LAYOUT_BREATHING_M = 1.0  # soft preference for free space around objects
+LAYOUT_MAX_COUNT = 50  # max instances per ObjectSpec
+LAYOUT_MAX_BOUND_M = 500.0
+LAYOUT_RESTARTS = 4  # greedy passes (fresh random draws) before reporting a conflict

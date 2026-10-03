@@ -1,0 +1,632 @@
+"""Deterministic layout solver: SceneSpec + priors -> oriented-box placements.
+
+Conventions
+-----------
+* Room: x in [0, W] (east-west), y in [0, D] (north-south), z up. wall_south is y=0,
+  wall_north y=D, wall_west x=0, wall_east x=W. Only ``indoor`` settings have walls.
+* Object dims are [w, d, h]: w along the local x axis, d along local y. The *front* of an
+  object is its local +y side. ``rotation_deg_z`` is the yaw (counter-clockwise, 0 = front
+  faces +y). ``location`` is the center of the bounding box (z included).
+* ``count > 1`` expands an object into instances ``<id>_1 .. <id>_n``. Relations of the
+  object apply to every instance; a target with several instances is paired by index.
+"""
+
+from __future__ import annotations
+
+import math
+import random
+from collections import Counter
+from dataclasses import dataclass
+
+from ai_db.constants import (
+    LAYOUT_BREATHING_M,
+    LAYOUT_CANDIDATES,
+    LAYOUT_DEFAULT_AROUND_GAP_M,
+    LAYOUT_DEFAULT_BESIDE_GAP_M,
+    LAYOUT_DEFAULT_IN_FRONT_GAP_M,
+    LAYOUT_EPS_M,
+    LAYOUT_FACING_TOL_DEG,
+    LAYOUT_FLAT_MAX_H_M,
+    LAYOUT_LOCAL_ITERS,
+    LAYOUT_LOCAL_STEP_M,
+    LAYOUT_LOCAL_YAW_DEG,
+    LAYOUT_REL_TOL_M,
+    LAYOUT_RESTARTS,
+    LAYOUT_RETRY_CANDIDATES,
+    LAYOUT_SEED,
+)
+from ai_db.scene.priors import CategoryPrior, load_priors
+from ai_db.scene.spec import ROOM, SceneSpec
+
+Dims = tuple[float, float, float]
+_HALF_PI = math.pi / 2
+_GAP_RELS = ("in_front_of", "beside", "around")
+_PRIMARY_ORDER = ("on", "under", "centered_in", "around", "in_front_of", "beside")
+_DEP_RELS = ("on", "under", "centered_in", "around", "in_front_of", "beside")
+
+
+@dataclass(frozen=True)
+class Placement:
+    id: str
+    location: tuple[float, float, float]  # bbox center, meters
+    rotation_deg_z: float
+    dims: Dims  # [w, d, h] meters
+    category: str = ""
+
+
+class LayoutError(Exception):
+    """The spec cannot be laid out; ``conflicts`` names the relations/objects involved."""
+
+    def __init__(self, message: str, conflicts: list[str]) -> None:
+        super().__init__(message)
+        self.conflicts = conflicts
+
+
+@dataclass(frozen=True)
+class _Inst:
+    id: str
+    base: str
+    category: str
+    prior: CategoryPrior
+    dims: Dims
+    hero: bool
+    idx: int
+    n: int
+
+    @property
+    def flat(self) -> bool:
+        return self.dims[2] <= LAYOUT_FLAT_MAX_H_M
+
+
+@dataclass(frozen=True)
+class _Rel:
+    a: str
+    rel: str
+    b: str
+    gap: float
+    ring_i: int
+    ring_n: int
+    label: str
+
+
+@dataclass
+class _Pose:
+    x: float
+    y: float
+    yaw: float
+    zb: float  # base z
+
+
+def _axes(yaw: float) -> tuple[tuple[float, float], tuple[float, float]]:
+    return (math.cos(yaw), math.sin(yaw)), (-math.sin(yaw), math.cos(yaw))
+
+
+def _ext(dims: Dims, yaw: float, u: tuple[float, float]) -> float:
+    r, f = _axes(yaw)
+    return dims[0] / 2 * abs(u[0] * r[0] + u[1] * r[1]) + dims[1] / 2 * abs(u[0] * f[0] + u[1] * f[1])
+
+
+def _sep(pa: _Pose, da: Dims, pb: _Pose, db: Dims) -> float:
+    """Separating-axis distance between two oriented rectangles (<0 when overlapping)."""
+    dx, dy = pa.x - pb.x, pa.y - pb.y
+    best = -1e9
+    for yaw in (pa.yaw, pb.yaw):
+        for u in _axes(yaw):
+            s = abs(dx * u[0] + dy * u[1]) - _ext(da, pa.yaw, u) - _ext(db, pb.yaw, u)
+            best = max(best, s)
+    return best
+
+
+def _corners(p: _Pose, d: Dims) -> list[tuple[float, float]]:
+    r, f = _axes(p.yaw)
+    out = []
+    for sw in (-1, 1):
+        for sd in (-1, 1):
+            out.append((p.x + sw * d[0] / 2 * r[0] + sd * d[1] / 2 * f[0], p.y + sw * d[0] / 2 * r[1] + sd * d[1] / 2 * f[1]))
+    return out
+
+
+def _inside(p: _Pose, d: Dims, outer: _Pose, od: Dims, eps: float) -> bool:
+    r, f = _axes(outer.yaw)
+    for cx, cy in _corners(p, d):
+        dx, dy = cx - outer.x, cy - outer.y
+        if abs(dx * r[0] + dy * r[1]) > od[0] / 2 + eps or abs(dx * f[0] + dy * f[1]) > od[1] / 2 + eps:
+            return False
+    return True
+
+
+def _face_yaw(ax: float, ay: float, bx: float, by: float) -> float:
+    return math.atan2(-(bx - ax), by - ay)
+
+
+def _angdiff(a: float, b: float) -> float:
+    return abs((a - b + math.pi) % (2 * math.pi) - math.pi)
+
+
+class _Problem:
+    """Instances, expanded relations and the geometric predicates shared by solver and checker."""
+
+    def __init__(self, spec: SceneSpec, priors: dict[str, CategoryPrior], dims_override: dict[str, Dims]) -> None:
+        self.spec = spec
+        self.kind = spec.setting.kind
+        self.W, self.D, self.H = spec.setting.bounds_m
+        self.insts: dict[str, _Inst] = {}
+        by_base: dict[str, list[str]] = {}
+        for o in spec.objects:
+            prior = priors.get(o.category)
+            if prior is None:
+                raise LayoutError(f"object '{o.id}': category '{o.category}' has no prior", [o.id])
+            for i in range(1, o.count + 1):
+                iid = o.id if o.count == 1 else f"{o.id}_{i}"
+                dims = dims_override.get(iid) or dims_override.get(o.id) or prior.typical_m
+                self.insts[iid] = _Inst(iid, o.id, o.category, prior, dims, o.hero, i - 1, o.count)
+                by_base.setdefault(o.id, []).append(iid)
+        self.rels: list[_Rel] = []
+        for r in spec.relations:
+            for ai in by_base[r.a]:
+                a = self.insts[ai]
+                if r.b in by_base:
+                    bl = by_base[r.b]
+                    bi = bl[0] if len(bl) == 1 else bl[a.idx % len(bl)]
+                else:
+                    bi = r.b
+                default = {"in_front_of": LAYOUT_DEFAULT_IN_FRONT_GAP_M, "beside": LAYOUT_DEFAULT_BESIDE_GAP_M, "around": LAYOUT_DEFAULT_AROUND_GAP_M}.get(r.rel, 0.0)
+                gap = default if r.gap_m is None else r.gap_m
+                label = f"{ai} {r.rel} {bi}" + (f" (gap {gap:g} m)" if r.rel in _GAP_RELS else "")
+                self.rels.append(_Rel(ai, r.rel, bi, gap, a.idx, a.n, label))
+        self.by_a: dict[str, list[_Rel]] = {}
+        self.by_b: dict[str, list[_Rel]] = {}
+        for rl in self.rels:
+            self.by_a.setdefault(rl.a, []).append(rl)
+            if rl.b in self.insts:
+                self.by_b.setdefault(rl.b, []).append(rl)
+        self.pair_gap: dict[frozenset[str], float] = {}
+        for rl in self.rels:
+            if rl.rel in _GAP_RELS and rl.b in self.insts:
+                k = frozenset((rl.a, rl.b))
+                self.pair_gap[k] = min(self.pair_gap.get(k, 1e9), rl.gap)
+        self.under_pairs = {frozenset((r.a, r.b)) for r in self.rels if r.rel == "under"}
+        self._static_checks()
+
+    # ---- static (pose-independent) validation -------------------------------------------
+    def _static_checks(self) -> None:
+        indoor = self.kind == "indoor"
+        has_on = {r.a for r in self.rels if r.rel == "on"}
+        has_wall = {r.a for r in self.rels if r.rel == "against_wall"}
+        for i in self.insts.values():
+            sup = i.prior.support
+            if sup == "surface" and i.id not in has_on:
+                raise LayoutError(
+                    f"'{i.id}' ({i.category}) must rest on a surface: add a relation {{a: '{i.base}', rel: 'on', b: <object that can support others>}}",
+                    [i.id],
+                )
+            if sup == "wall" and i.id not in has_wall:
+                raise LayoutError(f"'{i.id}' ({i.category}) is wall-mounted: add a relation {{a: '{i.base}', rel: 'against_wall', b: 'wall_north'|...}}", [i.id])
+            if sup == "ceiling" and not indoor:
+                raise LayoutError(f"'{i.id}' ({i.category}) is ceiling-mounted but the setting is '{self.kind}', not indoor", [i.id])
+        for r in self.rels:
+            if r.rel == "on":
+                b = self.insts[r.b]
+                if not b.prior.can_support_others:
+                    raise LayoutError(f"relation '{r.label}': category '{b.category}' cannot support other objects", [r.label])
+                if self.insts[r.a].prior.support in ("wall", "ceiling"):
+                    raise LayoutError(f"relation '{r.label}': '{r.a}' is {self.insts[r.a].prior.support}-mounted and cannot rest on an object", [r.label])
+            if r.rel == "under" and self.insts[r.a].dims[2] >= self.insts[r.b].dims[2]:
+                raise LayoutError(f"relation '{r.label}': '{r.a}' is as tall as or taller than '{r.b}'", [r.label])
+
+    # ---- walls ---------------------------------------------------------------------------
+    def wall(self, name: str) -> tuple[tuple[float, float], tuple[float, float], float]:
+        """(inward normal, point on wall, yaw whose front faces inward)."""
+        return {
+            "wall_north": ((0.0, -1.0), (0.0, self.D), math.pi),
+            "wall_south": ((0.0, 1.0), (0.0, 0.0), 0.0),
+            "wall_east": ((-1.0, 0.0), (self.W, 0.0), _HALF_PI),
+            "wall_west": ((1.0, 0.0), (0.0, 0.0), 3 * _HALF_PI),
+        }[name]
+
+    def snap_walls(self, inst: _Inst, pose: _Pose, set_yaw: bool) -> None:
+        walls = [r for r in self.by_a.get(inst.id, []) if r.rel == "against_wall"]
+        for k, r in enumerate(walls):
+            n, p, wyaw = self.wall(r.b)
+            if k == 0 and set_yaw:
+                pose.yaw = wyaw
+            s = (pose.x - p[0]) * n[0] + (pose.y - p[1]) * n[1]
+            delta = _ext(inst.dims, pose.yaw, n) - s
+            pose.x += delta * n[0]
+            pose.y += delta * n[1]
+
+    def base_z(self, inst: _Inst, poses: dict[str, _Pose]) -> float:
+        sup = inst.prior.support
+        if sup == "wall":
+            return inst.prior.mount_height_m
+        if sup == "ceiling":
+            return self.H - inst.dims[2]
+        for r in self.by_a.get(inst.id, []):
+            if r.rel == "on" and r.b in poses:
+                return poses[r.b].zb + self.insts[r.b].dims[2]
+        return 0.0
+
+    # ---- predicates ----------------------------------------------------------------------
+    def rel_violation(self, r: _Rel, pa: _Pose, pb: _Pose | None) -> str | None:
+        """Reason a hard relation is violated, else None. facing is soft: handled elsewhere."""
+        a = self.insts[r.a]
+        tol = LAYOUT_REL_TOL_M
+        if r.rel == "against_wall":
+            n, p, _ = self.wall(r.b)
+            gap = (pa.x - p[0]) * n[0] + (pa.y - p[1]) * n[1] - _ext(a.dims, pa.yaw, n)
+            f = _axes(pa.yaw)[1]
+            if abs(gap) > 1e-3 or f[0] * n[0] + f[1] * n[1] < 0.99:
+                return f"'{r.label}': not flush against the wall (gap {gap:.3f} m)"
+            return None
+        if r.rel == "centered_in":
+            if pb is None:
+                tx, ty = self.W / 2, self.D / 2
+            else:
+                tx, ty = pb.x, pb.y
+            if math.hypot(pa.x - tx, pa.y - ty) > tol:
+                return f"'{r.label}': center is {math.hypot(pa.x - tx, pa.y - ty):.3f} m off"
+            return None
+        if pb is None:
+            return None  # target not placed yet
+        b = self.insts[r.b]
+        if r.rel == "on":
+            if abs(pa.zb - (pb.zb + b.dims[2])) > 1e-3 or not _inside(pa, a.dims, pb, b.dims, LAYOUT_EPS_M):
+                return f"'{r.label}': does not fit on top of '{r.b}'"
+            return None
+        if r.rel == "under":
+            if not _inside(pa, a.dims, pb, b.dims, LAYOUT_EPS_M):
+                return f"'{r.label}': not within the footprint of '{r.b}'"
+            return None
+        if r.rel == "in_front_of":
+            fb, rb = _axes(pb.yaw)[1], _axes(pb.yaw)[0]
+            d = (pa.x - pb.x, pa.y - pb.y)
+            along = d[0] * fb[0] + d[1] * fb[1] - _ext(b.dims, pb.yaw, fb) - _ext(a.dims, pa.yaw, fb)
+            lat = abs(d[0] * rb[0] + d[1] * rb[1])
+            if abs(along - r.gap) > tol or lat > _ext(b.dims, pb.yaw, rb) + tol:
+                return f"'{r.label}': measured gap {along:.3f} m, lateral offset {lat:.3f} m"
+            return None
+        if r.rel == "beside":
+            s = _sep(pa, a.dims, pb, b.dims)
+            if abs(s - r.gap) > tol:
+                return f"'{r.label}': measured gap {s:.3f} m"
+            return None
+        if r.rel == "around":
+            dx, dy = pa.x - pb.x, pa.y - pb.y
+            dist = math.hypot(dx, dy)
+            if dist < 1e-9:
+                return f"'{r.label}': coincident centers"
+            u = (dx / dist, dy / dist)
+            gap = dist - _ext(b.dims, pb.yaw, u) - _ext(a.dims, pa.yaw, u)
+            if abs(gap - r.gap) > tol:
+                return f"'{r.label}': measured ring gap {gap:.3f} m"
+            return None
+        return None
+
+    def facing_error_deg(self, r: _Rel, pa: _Pose, pb: _Pose) -> float:
+        return math.degrees(_angdiff(pa.yaw, _face_yaw(pa.x, pa.y, pb.x, pb.y)))
+
+    def margin(self, a: _Inst, b: _Inst) -> float:
+        m = max(a.prior.default_clearance_m, b.prior.default_clearance_m)
+        g = self.pair_gap.get(frozenset((a.id, b.id)))
+        return m if g is None else min(m, g)
+
+    def pair_conflict(self, a: _Inst, pa: _Pose, b: _Inst, pb: _Pose) -> bool:
+        if a.flat != b.flat:
+            return False
+        if frozenset((a.id, b.id)) in self.under_pairs:
+            return False
+        if pa.zb >= pb.zb + b.dims[2] - LAYOUT_EPS_M or pb.zb >= pa.zb + a.dims[2] - LAYOUT_EPS_M:
+            return False
+        return _sep(pa, a.dims, pb, b.dims) < self.margin(a, b) - LAYOUT_EPS_M
+
+    def hard_violation(self, inst: _Inst, pose: _Pose, poses: dict[str, _Pose]) -> str | None:
+        """First hard-constraint violation of `inst` at `pose` against already-placed poses."""
+        e = LAYOUT_EPS_M
+        for cx, cy in _corners(pose, inst.dims):
+            if cx < -e or cx > self.W + e or cy < -e or cy > self.D + e:
+                return "out of bounds"
+        if self.kind == "indoor" and (pose.zb < -e or pose.zb + inst.dims[2] > self.H + e):
+            return "out of bounds (height)"
+        for r in self.by_a.get(inst.id, []):
+            if r.rel == "facing":
+                continue
+            pb = poses.get(r.b) if r.b in self.insts else None
+            if r.b in self.insts and pb is None:
+                continue
+            v = self.rel_violation(r, pose, pb)
+            if v:
+                return f"relation {v}"
+        for r in self.by_b.get(inst.id, []):
+            if r.rel == "facing" or r.a not in poses:
+                continue
+            v = self.rel_violation(r, poses[r.a], pose)
+            if v:
+                return f"relation {v}"
+        for oid, op in poses.items():
+            if oid != inst.id and self.pair_conflict(inst, pose, self.insts[oid], op):
+                return f"overlaps '{oid}'"
+        return None
+
+    def soft_cost(self, inst: _Inst, pose: _Pose, poses: dict[str, _Pose]) -> float:
+        cost = 0.0
+        for r in self.by_a.get(inst.id, []):
+            pb = poses.get(r.b)
+            if pb is None:
+                continue
+            if r.rel == "facing":
+                cost += self.facing_error_deg(r, pose, pb) / 180.0
+            elif r.rel in ("in_front_of", "beside"):
+                cost += 0.05 * _angdiff(pose.yaw, pb.yaw) / math.pi
+        for oid, op in poses.items():
+            if oid == inst.id:
+                continue
+            o = self.insts[oid]
+            if o.flat or inst.flat or frozenset((inst.id, oid)) in self.pair_gap:
+                continue
+            s = _sep(pose, inst.dims, op, o.dims)
+            if s < LAYOUT_BREATHING_M:
+                cost += 0.1 * (LAYOUT_BREATHING_M - max(s, 0.0)) / LAYOUT_BREATHING_M
+        return cost
+
+    # ---- ordering ------------------------------------------------------------------------
+    @staticmethod
+    def _cyclic(deps: dict[str, set[str]]) -> bool:
+        done: set[str] = set()
+        left = set(deps)
+        while left:
+            ready = {i for i in left if deps[i] <= done}
+            if not ready:
+                return True
+            done |= ready
+            left -= ready
+        return False
+
+    def order(self) -> list[str]:
+        def deps_of(rels: tuple[str, ...]) -> dict[str, set[str]]:
+            return {i: {r.b for r in self.by_a.get(i, []) if r.rel in rels and r.b in self.insts} for i in self.insts}
+
+        # `facing` is soft: its target is placed first when possible (so the yaw is exact),
+        # and the facing edges are dropped only if they would make the order circular.
+        deps = deps_of((*_DEP_RELS, "facing"))
+        if self._cyclic(deps):
+            deps = deps_of(_DEP_RELS)
+        done: list[str] = []
+        left = set(self.insts)
+        def anchored(i: str) -> bool:
+            return any(r.rel in ("against_wall", "centered_in") for r in self.by_a.get(i, []))
+
+        # wall/center-anchored objects first (they have the fewest legal poses), then hero, then big
+        key = lambda i: (not anchored(i), not self.insts[i].hero, -self.insts[i].dims[0] * self.insts[i].dims[1], i)
+        while left:
+            ready = sorted((i for i in left if deps[i] <= set(done)), key=key)
+            if not ready:
+                cyc = sorted(left)
+                labels = [r.label for r in self.rels if r.a in left and r.b in left and r.rel in _DEP_RELS]
+                raise LayoutError(f"circular relations between {cyc}: {labels}", labels)
+            # hero (or largest) first, but only one at a time so dependents see updated order
+            done.append(ready[0])
+            left.discard(ready[0])
+        return done
+
+
+def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.Random, n: int) -> list[_Pose]:
+    rels = pr.by_a.get(inst.id, [])
+    walls = [r for r in rels if r.rel == "against_wall"]
+    prim = next((r for k in _PRIMARY_ORDER for r in rels if r.rel == k and (r.b in poses or r.b == ROOM)), None)
+    pb = poses.get(prim.b) if prim is not None else None
+    b = pr.insts.get(prim.b) if prim is not None else None
+    cards = [k * _HALF_PI for k in range(4)]
+    yaws = list(cards)
+    for r in rels:
+        t = poses.get(r.b)
+        if t is None:
+            continue
+        if r.rel in ("on", "under", "in_front_of", "beside", "centered_in"):
+            yaws = [(t.yaw + k * _HALF_PI) % (2 * math.pi) for k in range(4)] + yaws
+    facing_targets = [poses[r.b] for r in rels if r.rel == "facing" and r.b in poses]
+    out: list[_Pose] = []
+    for k in range(n):
+        yaw = rng.choice(yaws[: 4 if k % 2 == 0 else len(yaws)]) if yaws else 0.0
+        if prim is None or pb is None and prim.rel != "centered_in":
+            x = rng.uniform(0, pr.W)
+            y = rng.uniform(0, pr.D)
+        elif prim.rel == "centered_in":
+            x, y = (pr.W / 2, pr.D / 2) if pb is None else (pb.x, pb.y)
+        else:
+            assert b is not None and pb is not None
+            rb, fb = _axes(pb.yaw)
+            jit = 0.0 if k == 0 else rng.uniform(-1, 1)
+            if prim.rel in ("on", "under"):
+                x = pb.x + jit * max(b.dims[0] / 2 - inst.dims[0] / 2, 0) * rb[0] + rng.uniform(-1, 1) * (0 if k == 0 else max(b.dims[1] / 2 - inst.dims[1] / 2, 0)) * fb[0]
+                y = pb.y + jit * max(b.dims[0] / 2 - inst.dims[0] / 2, 0) * rb[1] + rng.uniform(-1, 1) * (0 if k == 0 else max(b.dims[1] / 2 - inst.dims[1] / 2, 0)) * fb[1]
+            elif prim.rel == "around":
+                phi = 2 * math.pi * prim.ring_i / max(prim.ring_n, 1) + (0.0 if k % 3 == 0 else rng.uniform(0, 2 * math.pi))
+                u = (math.cos(phi), math.sin(phi))
+                yaw = _face_yaw(0, 0, -u[0], -u[1])
+                dist = _ext(b.dims, pb.yaw, u) + prim.gap + _ext(inst.dims, yaw, u)
+                x, y = pb.x + u[0] * dist, pb.y + u[1] * dist
+            else:  # in_front_of / beside
+                dirs = [fb] if prim.rel == "in_front_of" else [rb, (-rb[0], -rb[1]), fb, (-fb[0], -fb[1])]
+                u = dirs[k % len(dirs)]
+                tg = (-u[1], u[0])
+                dist = _ext(b.dims, pb.yaw, u) + prim.gap + _ext(inst.dims, yaw, u)
+                span = _ext(b.dims, pb.yaw, tg)
+                off = 0.0 if k < len(dirs) else rng.uniform(-span, span)
+                x, y = pb.x + u[0] * dist + tg[0] * off, pb.y + u[1] * dist + tg[1] * off
+        if facing_targets and not walls and prim is None and k % 2 == 1:
+            ft = facing_targets[k % len(facing_targets)]
+            yaw = _face_yaw(x, y, ft.x, ft.y)
+        p = _Pose(x, y, yaw, 0.0)
+        pr.snap_walls(inst, p, set_yaw=True)
+        p.zb = pr.base_z(inst, poses)
+        out.append(p)
+    return out
+
+
+def _fail(pr: _Problem, inst: _Inst, tally: Counter[str], tried: int) -> LayoutError:
+    rels = [r.label for r in pr.by_a.get(inst.id, [])]
+    top = tally.most_common(3)
+    conflicts: list[str] = []
+    for reason, _ in top:
+        for r in pr.rels:
+            if f"'{r.label}'" in reason and r.label not in conflicts:
+                conflicts.append(r.label)
+        if reason.startswith("overlaps '"):
+            conflicts.append(reason.split("'")[1])
+    if not conflicts:
+        conflicts = rels or [inst.id]
+    w, d, h = inst.dims
+    why = "; ".join(f"{c}x {r}" for r, c in top) or "no candidate pose could be generated"
+    return LayoutError(
+        f"cannot place '{inst.id}' ({inst.category}, {w:g}x{d:g}x{h:g} m) in {pr.W:g}x{pr.D:g}x{pr.H:g} m {pr.kind} setting "
+        f"after {tried} candidates; main blockers: {why}. relations of '{inst.id}': {rels or 'none'}",
+        conflicts,
+    )
+
+
+def _place_greedy(pr: _Problem, rng: random.Random) -> dict[str, _Pose]:
+    poses: dict[str, _Pose] = {}
+    for iid in pr.order():
+        inst = pr.insts[iid]
+        best: tuple[float, int, _Pose] | None = None
+        tally: Counter[str] = Counter()
+        tried = 0
+        for n in (LAYOUT_CANDIDATES, LAYOUT_RETRY_CANDIDATES):
+            for k, cand in enumerate(_candidates(pr, inst, poses, rng, n)):
+                tried += 1
+                v = pr.hard_violation(inst, cand, poses)
+                if v:
+                    tally[v] += 1
+                    continue
+                c = pr.soft_cost(inst, cand, poses)
+                if best is None or c < best[0] - 1e-12:
+                    best = (c, k, cand)
+            if best is not None:
+                break
+        if best is None:
+            raise _fail(pr, inst, tally, tried)
+        poses[iid] = best[2]
+    return poses
+
+
+def _total_cost(pr: _Problem, poses: dict[str, _Pose]) -> float:
+    return sum(pr.soft_cost(pr.insts[i], p, poses) for i, p in poses.items())
+
+
+def _local_search(pr: _Problem, poses: dict[str, _Pose], rng: random.Random) -> None:
+    ids = sorted(poses)
+    yaw_locked = {i for i in ids if any(r.rel == "against_wall" for r in pr.by_a.get(i, []))}
+
+    def try_move(iid: str, new: _Pose) -> bool:
+        inst = pr.insts[iid]
+        old = poses[iid]
+        before = _total_cost(pr, poses)
+        poses[iid] = new
+        ok = pr.hard_violation(inst, new, poses) is None
+        # dependents' `on` height follows the base of their support
+        if ok and _total_cost(pr, poses) < before - 1e-12:
+            return True
+        poses[iid] = old
+        return False
+
+    for iid in ids:  # deterministic facing pass
+        inst = pr.insts[iid]
+        if iid in yaw_locked:
+            continue
+        for r in pr.by_a.get(iid, []):
+            if r.rel == "facing" and r.b in poses:
+                p = poses[iid]
+                try_move(iid, _Pose(p.x, p.y, _face_yaw(p.x, p.y, poses[r.b].x, poses[r.b].y), p.zb))
+    step, dyaw = LAYOUT_LOCAL_STEP_M, math.radians(LAYOUT_LOCAL_YAW_DEG)
+    for _ in range(LAYOUT_LOCAL_ITERS):
+        iid = rng.choice(ids)
+        inst = pr.insts[iid]
+        p = poses[iid]
+        if pr.by_b.get(iid) and not any(r.rel == "facing" for r in pr.by_b[iid]):
+            continue  # support/anchor objects keep their position: dependents were placed relative to them
+        new = _Pose(p.x + rng.uniform(-step, step), p.y + rng.uniform(-step, step), p.yaw, p.zb)
+        if iid not in yaw_locked:
+            new.yaw = p.yaw + rng.uniform(-dyaw, dyaw)
+            for r in pr.by_a.get(iid, []):
+                if r.rel == "facing" and r.b in poses and rng.random() < 0.5:
+                    new.yaw = _face_yaw(new.x, new.y, poses[r.b].x, poses[r.b].y)
+        pr.snap_walls(inst, new, set_yaw=False)
+        new.zb = pr.base_z(inst, poses)
+        try_move(iid, new)
+
+
+def _to_placements(pr: _Problem, poses: dict[str, _Pose]) -> list[Placement]:
+    out = []
+    for iid, inst in pr.insts.items():
+        p = poses[iid]
+        out.append(
+            Placement(
+                iid,
+                (round(p.x, 6), round(p.y, 6), round(p.zb + inst.dims[2] / 2, 6)),
+                round(math.degrees(p.yaw) % 360.0, 6),
+                inst.dims,
+                inst.category,
+            )
+        )
+    return out
+
+
+def solve_layout(
+    spec: SceneSpec,
+    priors: dict[str, CategoryPrior] | None = None,
+    measured_dims: dict[str, Dims] | None = None,
+    seed: int = LAYOUT_SEED,
+) -> list[Placement]:
+    """Place every object instance. Deterministic for a given (spec, priors, dims, seed).
+
+    Raises LayoutError (with ``conflicts``) when the spec cannot be satisfied.
+    """
+    pr = _Problem(spec, priors or load_priors(), {k: tuple(v) for k, v in (measured_dims or {}).items()})  # type: ignore[misc]
+    rng = random.Random(seed)
+    for attempt in range(LAYOUT_RESTARTS):
+        try:
+            poses = _place_greedy(pr, rng)
+            break
+        except LayoutError:
+            if attempt == LAYOUT_RESTARTS - 1:
+                raise  # the last attempt's conflict is reported
+    _local_search(pr, poses, rng)
+    for iid, p in poses.items():  # final proof that nothing was broken by the search
+        v = pr.hard_violation(pr.insts[iid], p, poses)
+        if v:
+            raise LayoutError(f"internal: final layout violates a hard constraint for '{iid}': {v}", [iid])
+    return _to_placements(pr, poses)
+
+
+def check_layout(
+    spec: SceneSpec,
+    placements: list[Placement],
+    priors: dict[str, CategoryPrior] | None = None,
+) -> list[str]:
+    """Independent verification. Returns 'hard: ...' / 'soft: ...' issue strings (empty = clean)."""
+    pr = _Problem(spec, priors or load_priors(), {p.id: p.dims for p in placements})
+    poses: dict[str, _Pose] = {}
+    issues: list[str] = []
+    for pl in placements:
+        if pl.id not in pr.insts:
+            issues.append(f"hard: placement '{pl.id}' is not an object instance of the spec")
+            continue
+        poses[pl.id] = _Pose(pl.location[0], pl.location[1], math.radians(pl.rotation_deg_z), pl.location[2] - pl.dims[2] / 2)
+    for iid in pr.insts:
+        if iid not in poses:
+            issues.append(f"hard: no placement for '{iid}'")
+    placed: dict[str, _Pose] = {}
+    for iid, p in poses.items():
+        v = pr.hard_violation(pr.insts[iid], p, placed)
+        placed[iid] = p
+        if v:
+            issues.append(f"hard: {iid}: {v}")
+        inst = pr.insts[iid]
+        if inst.prior.support in ("floor", "ground") and not any(r.rel == "on" for r in pr.by_a.get(iid, [])) and abs(p.zb) > 1e-3:
+            issues.append(f"hard: {iid}: floats at z={p.zb:.3f} m")
+    for r in pr.rels:
+        if r.rel == "facing" and r.a in poses and r.b in poses:
+            err = pr.facing_error_deg(r, poses[r.a], poses[r.b])
+            if err > LAYOUT_FACING_TOL_DEG:
+                issues.append(f"soft: '{r.label}': facing off by {err:.0f} deg")
+    return issues
