@@ -32,7 +32,9 @@ class CrossEncoderReranker(RerankProvider):
         self.model_name = options["model"]
         device = resolve_device(options.get("device"), where="rerank")
         self.device = device
-        self.model = CrossEncoder(self.model_name, device=device)
+        from ai_db.quiet import quiet_model_load
+        with quiet_model_load(self.model_name):
+            self.model = CrossEncoder(self.model_name, device=device)
         self.model_id = f"sentence_transformers:{self.model_name}"
 
     def score(self, query: str, texts: list[str]) -> list[float]:

@@ -37,8 +37,10 @@ class SentenceTransformersEmbedder(EmbeddingProvider):
         model_kwargs: dict[str, Any] = {}
         if self.dtype is not None:
             model_kwargs["torch_dtype"] = _TORCH_DTYPES.get(self.dtype, self.dtype)
-        self.model = SentenceTransformer(self.model_name, device=device,
-                                         model_kwargs=model_kwargs or None)
+        from ai_db.quiet import quiet_model_load
+        with quiet_model_load(self.model_name):
+            self.model = SentenceTransformer(self.model_name, device=device,
+                                             model_kwargs=model_kwargs or None)
         self.loaded_dtype: str = str(
             next(self.model.parameters()).dtype).removeprefix("torch.")
         # renamed in sentence-transformers 6 (get_sentence_embedding_dimension -> get_embedding_dimension)
