@@ -30,10 +30,28 @@ with open(os.environ["AI_DB_CONFIG"], "w", encoding="utf-8") as _guard_cfg:
 @pytest.fixture(autouse=True)
 def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Virtualize all ai-db environment variables to an isolated temporary sandbox.
-    
+
     Guarantees that test operations never access ~/.gemini, host databases,
     or user configuration files.
     """
+    # Guard: raise error if PYTEST_CURRENT_TEST is set and DB resolves to user's real default location
+    from ai_db.errors import AiDbConfigError
+
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        # Compute the real default DB path (not the one from constants which might have been modified)
+        # by checking what the path would be without AI_DB_PATH set and without XDG overrides
+        user_xdg_data = os.path.expanduser("~/.local/share")
+        real_default_db = os.path.join(user_xdg_data, "ai-db", "codebase_knowledge.db")
+
+        resolved_db = os.path.expanduser(os.environ.get("AI_DB_PATH", real_default_db))
+
+        # Check if we're trying to use the user's real DB
+        if os.path.normpath(resolved_db) == os.path.normpath(real_default_db):
+            raise AiDbConfigError(
+                f"Test attempted to use default user DB ({real_default_db}). "
+                "This would pollute real project context data. Use isolated_env fixture."
+            )
+
     data_dir = tmp_path / "data"
     config_dir = tmp_path / "config"
     skills_dir = tmp_path / "skills"
