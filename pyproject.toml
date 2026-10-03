@@ -57,6 +57,7 @@ ext = [
 ]
 # Video processor extras
 video-base = ["opencv-python-headless>=4.8", "pillow>=10.0"]
+judge = ["anthropic>=0.40"]
 video-vlm = ["openai>=1.0", "anthropic>=0.7"]
 video-depth = ["torch>=2.0", "transformers>=4.30", "accelerate>=0.20"]
 video-sfm = ["pycolmap>=0.6"]

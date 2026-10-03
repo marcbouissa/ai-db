@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ai_db.scene.storage.base import SceneMemoryBackend
-from ai_db.scene.models import SceneState, PromptContext
+from ai_db.scene.models import PromptContext, RunRecord, SceneState
 from ai_db.logger import _logger
 
 
@@ -24,13 +24,16 @@ class JSONFileSceneBackend(SceneMemoryBackend):
         self.base_path: Path | None = None
         self.scenes_dir: Path | None = None
         self.history_dir: Path | None = None
+        self.runs_dir: Path | None = None
     
     def initialize(self, config: dict[str, Any]) -> None:
         base = config.get("path", "~/.ai-db/scene_memory")
         self.base_path = Path(base).expanduser()
         self.scenes_dir = self.base_path / "scenes"
         self.history_dir = self.base_path / "history"
+        self.runs_dir = self.base_path / "runs"
         self.scenes_dir.mkdir(parents=True, exist_ok=True)
+        self.runs_dir.mkdir(parents=True, exist_ok=True)
         self.history_dir.mkdir(parents=True, exist_ok=True)
         _logger.info(f"JSONFileSceneBackend initialized at {self.base_path}")
     
@@ -226,3 +229,25 @@ class JSONFileSceneBackend(SceneMemoryBackend):
                         break
         
         return results[:top_k]
+
+    # --- Run records ---
+
+    def save_run(self, run: RunRecord) -> str:
+        (self.runs_dir / f"{run.run_id}.json").write_text(json.dumps(run.to_dict(), indent=2))
+        return run.run_id
+
+    def load_run(self, run_id: str) -> RunRecord | None:
+        f = self.runs_dir / f"{run_id}.json"
+        if not f.exists():
+            return None
+        try:
+            return RunRecord.from_dict(json.loads(f.read_text()))
+        except Exception:
+            return None
+
+    def list_runs(self, project: str | None = None, limit: int = 100) -> list[RunRecord]:
+        runs = [r for f in self.runs_dir.glob("*.json") if (r := self.load_run(f.stem))]
+        if project:
+            runs = [r for r in runs if r.project == project]
+        runs.sort(key=lambda r: r.created_at, reverse=True)
+        return runs[:limit]

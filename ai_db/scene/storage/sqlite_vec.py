@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ai_db.scene.storage.base import SceneMemoryBackend
-from ai_db.scene.models import SceneState, PromptContext
+from ai_db.scene.models import PromptContext, RunRecord, SceneState
 from ai_db.logger import _logger
 
 
@@ -61,6 +61,16 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
                 created_at REAL DEFAULT (strftime('%s','now'))
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS run_records (
+                run_id TEXT PRIMARY KEY,
+                project TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                data TEXT NOT NULL
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_runs_project ON run_records(project, created_at DESC)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_scenes_project ON scenes(project)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_scenes_timestamp ON scenes(timestamp DESC)")
         
@@ -359,3 +369,27 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
             }
             for r in c.fetchall()
         ]
+
+    # --- Run records ---
+
+    def save_run(self, run: RunRecord) -> str:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO run_records (run_id, project, outcome, created_at, data) VALUES (?, ?, ?, ?, ?)",
+            (run.run_id, run.project, run.outcome, run.created_at, json.dumps(run.to_dict())),
+        )
+        self.conn.commit()
+        return run.run_id
+
+    def load_run(self, run_id: str) -> RunRecord | None:
+        row = self.conn.execute("SELECT data FROM run_records WHERE run_id = ?", (run_id,)).fetchone()
+        return RunRecord.from_dict(json.loads(row[0])) if row else None
+
+    def list_runs(self, project: str | None = None, limit: int = 100) -> list[RunRecord]:
+        sql = "SELECT data FROM run_records"
+        args: list[Any] = []
+        if project:
+            sql += " WHERE project = ?"
+            args.append(project)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        args.append(limit)
+        return [RunRecord.from_dict(json.loads(r[0])) for r in self.conn.execute(sql, args)]

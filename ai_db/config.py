@@ -55,7 +55,7 @@ RERANK_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {    "none"
 }
 
 TOP_LEVEL_KEYS = frozenset(
-    {"version", "storage", "retrieval", "embedding", "rerank", "access", "auto_sync_paths", "index", "trace", "daemon"}
+    {"version", "storage", "retrieval", "embedding", "rerank", "access", "auto_sync_paths", "index", "trace", "daemon", "scene"}
 )
 REQUIRED_TOP_LEVEL = frozenset({"version", "storage", "retrieval", "embedding", "rerank"})
 
@@ -80,6 +80,14 @@ class ProviderConfig:
 class IndexConfig:
     doc_weight: float = DEFAULT_DOC_WEIGHT
     ignore: list[str] = field(default_factory=lambda: list(DEFAULT_INDEX_IGNORE))
+
+
+DEFAULT_JUDGE_MODEL = "claude-opus-5-5"
+
+
+@dataclass(frozen=True)
+class SceneConfig:
+    judge_model: str = DEFAULT_JUDGE_MODEL
 
 
 @dataclass(frozen=True)
@@ -144,6 +152,7 @@ class AppConfig:
     trace_wait_patterns: list[str] | None = None
     trace_wait_patterns_extend: list[str] | None = None
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
+    scene: SceneConfig = field(default_factory=SceneConfig)
     source_path: str | None = None
 
     @property
@@ -360,6 +369,13 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         raise AiDbConfigError("'index.ignore' must be a list of strings")
     index = IndexConfig(doc_weight=doc_weight, ignore=ignore)
 
+    scene_raw = _require_dict(data.get("scene", {}), "scene")
+    _check_keys(scene_raw, frozenset({"judge_model"}), "scene")
+    judge_model = scene_raw.get("judge_model", DEFAULT_JUDGE_MODEL)
+    if not isinstance(judge_model, str) or not judge_model:
+        raise AiDbConfigError("'scene.judge_model' must be a non-empty string")
+    scene_cfg = SceneConfig(judge_model=judge_model)
+
     # Parse daemon configuration
     daemon_raw = _require_dict(data.get("daemon", {}), "daemon")
     _check_keys(daemon_raw, frozenset({"enabled", "host", "port", "pid_file", "projects", "auto_discover", "shutdown_timeout"}), "daemon")
@@ -413,6 +429,7 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         cross_project=cross,
         auto_sync_paths=list(paths),
         index=index,
+        scene=scene_cfg,
         trace_wait_patterns=trace_wait_patterns,
         trace_wait_patterns_extend=trace_wait_patterns_extend,
         daemon=daemon,

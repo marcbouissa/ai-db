@@ -7,7 +7,8 @@ Pluggable backends for persistent 3D scene state.
 
 from abc import ABC, abstractmethod
 from typing import Any
-from ai_db.scene.models import SceneState, PromptContext
+from ai_db.scene.models import PromptContext, RunRecord, SceneState
+from ai_db.scene.runs import rank_exemplars
 
 
 class SceneMemoryBackend(ABC):
@@ -108,6 +109,31 @@ class SceneMemoryBackend(ABC):
     ) -> list[dict[str, Any]]:
         """Search for objects matching description across scenes."""
         pass
+
+    # --- Run records (pipeline Stage 7) ---
+
+    @abstractmethod
+    def save_run(self, run: RunRecord) -> str:
+        """Persist a run record (upsert by run_id). Returns run_id."""
+        pass
+
+    @abstractmethod
+    def load_run(self, run_id: str) -> RunRecord | None:
+        pass
+
+    @abstractmethod
+    def list_runs(self, project: str | None = None, limit: int = 100) -> list[RunRecord]:
+        """Runs newest first."""
+        pass
+
+    def search_exemplars(
+        self, brief: str, min_score: float = 4.0, top_k: int = 3, project: str | None = None
+    ) -> list[RunRecord]:
+        """Successful, judged runs scoring >= min_score, ranked by brief similarity.
+
+        Failed / low-score / unjudged runs are never returned.
+        """
+        return rank_exemplars(self.list_runs(project=project, limit=10_000), brief, min_score, top_k)
 
 
 def get_backend_capabilities(backend_name: str) -> set[str]:

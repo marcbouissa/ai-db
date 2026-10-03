@@ -377,41 +377,6 @@ _FORWARDED_TOOLS: list[tuple[str, str, dict[str, Any]]] = [
         },
     ),
     (
-        "create_complex_asset",
-        "Create a complex parametric asset in Blender: rounded_box, pill, staircase, fence, arch, pipe, terrain, rock",
-        {
-            "type": "object",
-            "properties": {
-                "asset": {
-                    "type": "string",
-                    "enum": [
-                        "rounded_box",
-                        "pill",
-                        "staircase",
-                        "fence",
-                        "arch",
-                        "pipe",
-                        "terrain",
-                        "rock",
-                    ],
-                    "description": "Complex asset type",
-                },
-                "name": {"type": "string", "description": "Object name"},
-                "location": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "description": "[x, y, z]",
-                },
-                "scale": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "description": "[sx, sy, sz]",
-                },
-            },
-            "required": ["asset"],
-        },
-    ),
-    (
         "modify_object",
         "Modify the transform (location, rotation in degrees, scale) of an object in Blender by name",
         {
@@ -535,16 +500,6 @@ _FORWARDED_TOOLS: list[tuple[str, str, dict[str, Any]]] = [
         },
     ),
     (
-        "get_viewport_screenshot",
-        "Capture a fast render or viewport screenshot from Blender",
-        {
-            "type": "object",
-            "properties": {
-                "filepath": {"type": "string", "description": "Optional destination filepath"}
-            },
-        },
-    ),
-    (
         "render",
         "Render the current Blender scene to an image file",
         {
@@ -562,216 +517,136 @@ _FORWARDED_TOOLS: list[tuple[str, str, dict[str, Any]]] = [
         },
     ),
     (
-        "get_object_transform",
-        "Get full world-space transform (location, rotation, scale), bounding box, and dimensions of an object by name or UUID",
-        {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Object name"},
-                "uuid": {"type": "string", "description": "Object UUID (alternative to name)"},
-                "include_children": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Include child objects in bounds calculation",
-                },
-            },
-            "required": [],
-        },
-    ),
-    (
-        "raycast",
-        "Cast a ray from a point in a direction and return the first object hit with distance and hit location",
-        {
-            "type": "object",
-            "properties": {
-                "origin": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "description": "[x, y, z] ray origin",
-                },
-                "direction": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "description": "[x, y, z] ray direction (normalized)",
-                },
-                "distance": {"type": "number", "default": 100.0, "description": "Max ray distance"},
-                "exclude_names": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Object names to ignore",
-                },
-            },
-            "required": ["origin", "direction"],
-        },
-    ),
-    (
-        "measure_distance",
-        "Measure distance between two objects, an object and a point, or two points in world space",
-        {
-            "type": "object",
-            "properties": {
-                "from_name": {"type": "string", "description": "Source object name"},
-                "from_uuid": {"type": "string", "description": "Source object UUID"},
-                "from_point": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "description": "Source point [x, y, z]",
-                },
-                "to_name": {"type": "string", "description": "Target object name"},
-                "to_uuid": {"type": "string", "description": "Target object UUID"},
-                "to_point": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "description": "Target point [x, y, z]",
-                },
-            },
-            "required": [],
-        },
-    ),
-    (
-        "check_collision",
-        "Check if two objects intersect (bounding box or precise mesh collision)",
-        {
-            "type": "object",
-            "properties": {
-                "name_a": {"type": "string", "description": "First object name"},
-                "uuid_a": {"type": "string", "description": "First object UUID"},
-                "name_b": {"type": "string", "description": "Second object name"},
-                "uuid_b": {"type": "string", "description": "Second object UUID"},
-                "precise": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Use precise mesh collision (slower)",
-                },
-            },
-            "required": [],
-        },
-    ),
-    (
-        "get_camera_view",
-        "Get objects visible from the active camera (or specified camera) with screen-space bounds",
-        {
-            "type": "object",
-            "properties": {
-                "camera_name": {
-                    "type": "string",
-                    "description": "Camera object name (default: active scene camera)",
-                },
-                "frustum_only": {
-                    "type": "boolean",
-                    "default": True,
-                    "description": "Only return objects in camera frustum",
-                },
-                "max_distance": {
-                    "type": "number",
-                    "default": 100.0,
-                    "description": "Max distance from camera",
-                },
-            },
-        },
-    ),
-    (
-        "get_bounds",
-        "Get world-space bounding box of one or more objects (min/max corners, center, dimensions)",
-        {
-            "type": "object",
-            "properties": {
-                "names": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Object names",
-                },
-                "uuids": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Object UUIDs",
-                },
-                "include_children": {"type": "boolean", "default": True},
-            },
-        },
-    ),
-    (
-        "find_objects_in_region",
-        "Find all objects within a spatial region (box, sphere, or cylinder)",
-        {
-            "type": "object",
-            "properties": {
-                "region_type": {
-                    "type": "string",
-                    "enum": ["box", "sphere", "cylinder"],
-                    "default": "box",
-                },
-                "center": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "description": "[x, y, z] center",
-                },
-                "size": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "description": "[x, y, z] half-extents for box, or [radius, height] for "
-                    "cylinder/sphere",
-                },
-                "rotation": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "description": "[rx, ry, rz] degrees for box/cylinder",
-                },
-            },
-            "required": ["center", "size"],
-        },
-    ),
-    (
-        "get_spatial_context",
-        "Natural language spatial query: 'what is in front of the camera', 'what is near the desk', 'what is to the left of the chair'",
-        {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Spatial query in natural language"},
-                "reference_object": {
-                    "type": "string",
-                    "description": "Reference object name for relative queries",
-                },
-                "camera_relative": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Interpret directions relative to active camera",
-                },
-            },
-            "required": ["query"],
-        },
-    ),
-    (
-        "get_scene_info",
-        "Get a summary of the current Blender scene: object counts, bounds, camera, lights, materials",
-        {
-            "type": "object",
-            "properties": {
-                "detailed": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Include per-object details",
-                }
-            },
-        },
-    ),
-    (
-        "validate_scene",
-        "Validate the live Blender scene (interpenetration, floating/sunk, bounds, materials, poly budget) against an optional SceneSpec; returns issues with fix actions",
-        {
-            "type": "object",
-            "properties": {
-                "spec": {
-                    "type": "object",
-                    "description": "Optional SceneSpec to check relations/bounds against",
-                }
-            },
-        },
-    ),
-    (
         "scene_snapshot",
         "List all Blender objects with stable UUIDs, locations, dimensions and materials",
         {"type": "object", "properties": {}},
+    ),
+]
+
+
+def _obj(props: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
+    return {"type": "object", "properties": props, "required": required or []}
+
+
+_XYZ = {"type": "array", "items": {"type": "number"}}
+
+
+def _vec(desc: str) -> dict[str, Any]:
+    return {**_XYZ, "description": desc}
+
+
+# Schemas mirror blender_mcp/tools.json (guarded by tests/test_scene_forward_schemas.py).
+_FORWARDED_TOOLS += [
+    (
+        "create_complex_asset",
+        "Create a complex parametric asset in Blender: rounded_box, pill, staircase, fence, arch, pipe, terrain, rock",
+        _obj(
+            {
+                "asset": {
+                    "type": "string",
+                    "enum": ["rounded_box", "pill", "staircase", "fence", "arch", "pipe", "terrain", "rock"],
+                },
+                "name": {"type": "string"},
+                "location": _vec("[x, y, z]"),
+                "scale": _vec("[sx, sy, sz]"),
+                "steps": {"type": "integer"},
+                "count": {"type": "integer"},
+                "radius": {"type": "number"},
+                "thickness": {"type": "number"},
+                "size": {"type": "number"},
+                "height": {"type": "number"},
+                "noise_scale": {"type": "number"},
+                "strength": {"type": "number"},
+            },
+            ["asset"],
+        ),
+    ),
+    (
+        "get_bounds",
+        "Axis-aligned bounds (min, max, center, dimensions) of an object by name",
+        _obj({"name": {"type": "string"}}, ["name"]),
+    ),
+    (
+        "get_viewport_screenshot",
+        "Render a viewport screenshot; returns image file path",
+        _obj(
+            {
+                "filepath": {"type": "string"},
+                "engine": {"type": "string"},
+                "keep_file": {"type": "boolean"},
+                "resolution": {"type": "array", "items": {"type": "integer"}, "description": "[w, h]"},
+            }
+        ),
+    ),
+    (
+        "get_object_transform",
+        "Get location/rotation/scale/dimensions of an object by name",
+        _obj({"name": {"type": "string"}}, ["name"]),
+    ),
+    (
+        "raycast",
+        "Cast a ray; returns first hit object, point and normal",
+        _obj(
+            {
+                "origin": _vec("[x, y, z]"),
+                "direction": _vec("[dx, dy, dz]"),
+                "max_distance": {"type": "number"},
+                "ignore": {"type": "array", "items": {"type": "string"}, "description": "Object names to skip"},
+            },
+            ["origin", "direction"],
+        ),
+    ),
+    (
+        "measure_distance",
+        "Distance between two objects (mode: surface or center)",
+        _obj(
+            {"a": {"type": "string"}, "b": {"type": "string"}, "mode": {"type": "string"}},
+            ["a", "b"],
+        ),
+    ),
+    (
+        "check_collision",
+        "Check whether object a overlaps b (or any object if b omitted)",
+        _obj(
+            {"a": {"type": "string"}, "b": {"type": "string"}, "tolerance": {"type": "number"}},
+            ["a"],
+        ),
+    ),
+    (
+        "get_camera_view",
+        "Objects visible from a camera (default: active camera)",
+        _obj({"camera": {"type": "string"}}),
+    ),
+    (
+        "find_objects_in_region",
+        "Objects whose bounds intersect an axis-aligned region",
+        _obj({"min": _vec("[x, y, z]"), "max": _vec("[x, y, z]")}, ["min", "max"]),
+    ),
+    (
+        "get_spatial_context",
+        "Neighbours of an object within a radius, with relative directions",
+        _obj({"name": {"type": "string"}, "radius": {"type": "number"}}, ["name"]),
+    ),
+    (
+        "get_scene_info",
+        "List all scene objects (name, type, location) and counts",
+        _obj({}),
+    ),
+    (
+        "validate_scene",
+        (
+            "Validate the live Blender scene (interpenetration, floating/sunk, bounds, materials, poly budget) "
+            "against an optional SceneSpec; returns issues with fix actions"
+        ),
+        _obj(
+            {
+                "spec": {"type": "object", "description": "Optional SceneSpec to check relations/bounds against"},
+                "checks": {"type": "array", "items": {"type": "string"}, "description": "Subset of checks to run"},
+                "room_bounds": _vec("[x, y, z] room size in meters"),
+                "priors": {"type": "object", "description": "Category dimension priors override"},
+                "poly_budget": {"type": "object", "description": "Polygon budgets (per-object / total)"},
+            }
+        ),
     ),
 ]
 
@@ -792,6 +667,9 @@ def scene_tool_table() -> list[tuple[str, str, dict[str, Any], Any]]:
     """All scene tools as (name, description, schema, handler)."""
     rows = [(n, d, s, _MEMORY_HANDLERS[n]) for n, d, s in _MEMORY_TOOLS]
     rows += [(n, d, s, _make_forward(n)) for n, d, s in _FORWARDED_TOOLS]
+    from ai_db.mcp_tools.scene_pipeline import PIPELINE_TOOLS
+
+    rows += PIPELINE_TOOLS
     return rows
 
 

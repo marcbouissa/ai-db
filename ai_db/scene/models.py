@@ -177,3 +177,54 @@ class SceneState:
         if data.get("prompt_context"):
             scene.prompt_context = PromptContext(**data["prompt_context"])
         return scene
+
+
+RUN_OUTCOMES = ("success", "failed", "partial", "aborted")
+
+
+@dataclass
+class RunRecord:
+    """One end-to-end pipeline run (brief to judged scene); source of exemplars."""
+
+    brief: str = ""
+    spec: dict[str, Any] = field(default_factory=dict)
+    placements: list[dict[str, Any]] = field(default_factory=list)
+    actions: list[dict[str, Any]] = field(default_factory=list)  # recipe/asset/free-code + params
+    validation_reports: list[Any] = field(default_factory=list)  # one per fix iteration
+    judge_scores: list[dict[str, Any]] = field(default_factory=list)  # JudgeResult.to_dict() per call
+    token_cost: float = 0.0
+    wall_time_s: float = 0.0
+    outcome: str = "success"
+    created_at: float = field(default_factory=lambda: datetime.now().timestamp())
+    project: str = "default"
+    run_id: str = field(default_factory=lambda: str(uuid4())[:12])
+
+    @property
+    def score(self) -> float | None:
+        """Overall score of the last judge call (None if never judged)."""
+        for js in reversed(self.judge_scores):
+            v = js.get("overall") if isinstance(js, dict) else None
+            if isinstance(v, (int, float)):
+                return float(v)
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "brief": self.brief,
+            "spec": self.spec,
+            "placements": self.placements,
+            "actions": self.actions,
+            "validation_reports": self.validation_reports,
+            "judge_scores": self.judge_scores,
+            "token_cost": self.token_cost,
+            "wall_time_s": self.wall_time_s,
+            "outcome": self.outcome,
+            "created_at": self.created_at,
+            "project": self.project,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RunRecord":
+        known = set(cls.__dataclass_fields__)
+        return cls(**{k: v for k, v in data.items() if k in known})

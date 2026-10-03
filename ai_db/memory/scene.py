@@ -6,7 +6,7 @@ Follows ContextMemory pattern from ai_db.memory.context.
 
 from typing import Any
 from ai_db.scene.factory import SceneMemoryFactory
-from ai_db.scene.models import SceneState, PromptContext
+from ai_db.scene.models import PromptContext, RunRecord, SceneState
 from ai_db.logger import _logger
 
 
@@ -139,3 +139,16 @@ class SceneMemory:
         new_scene.prompt_context = prompt_ctx
         
         return self.backend.save_scene(new_scene)
+
+    # --- Run records / exemplars (pipeline Stage 7) ---
+
+    def record_run(self, run: RunRecord) -> str:
+        return self.backend.save_run(run)
+
+    def get_run(self, run_id: str) -> RunRecord | None:
+        return self.backend.load_run(run_id)
+
+    def search_exemplars(
+        self, brief: str, min_score: float = 4.0, top_k: int = 3, project: str | None = None
+    ) -> list[RunRecord]:
+        return self.backend.search_exemplars(brief, min_score=min_score, top_k=top_k, project=project)

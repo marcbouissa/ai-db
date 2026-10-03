@@ -147,8 +147,8 @@ def test_forward_goes_to_blender(fake, monkeypatch):
     f, _ = fake(lambda p: _json_line({"ok": 1, "status": "success", "result": {"min": [0, 0, 0]}}))
     monkeypatch.setenv("AI_DB_BLENDER_PORT", str(f.port))
     handler = {n: h for n, _, _, h in scene_tools.scene_tool_table()}["get_bounds"]
-    assert handler({"names": ["A"]}) == {"status": "success", "result": {"min": [0, 0, 0]}}
-    assert f.received[0] == {"type": "get_bounds", "params": {"names": ["A"]}}
+    assert handler({"name": "A"}) == {"status": "success", "result": {"min": [0, 0, 0]}}
+    assert f.received[0] == {"type": "get_bounds", "params": {"name": "A"}}
     code = {n: h for n, _, _, h in scene_tools.scene_tool_table()}["execute_blender_code"]
     code({"code": "result=1", "user_prompt": "hi"})
     assert f.received[1] == {"type": "run_code", "params": {"code": "result=1"}}
