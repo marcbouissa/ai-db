@@ -1948,6 +1948,41 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             for r in cur.fetchall()
         ]
 
+    def delete_context(
+        self,
+        session_id: str,
+        project: str | None = None,
+    ) -> bool:
+        """Delete a context record by session_id and project.
+
+        Returns True if a record was deleted, False if no record matched.
+        """
+        self._check_closed()
+        if not session_id:
+            raise ValueError("session_id is required for delete_context")
+
+        if project is None:
+            project = "global"
+
+        cur = self.conn.cursor()
+        # Delete from both contexts and fts_contexts
+        cur.execute(
+            "DELETE FROM contexts WHERE session_id = ? AND project = ?",
+            (session_id, project)
+        )
+        deleted_rows = cur.rowcount
+        cur.execute(
+            "DELETE FROM fts_contexts WHERE session_id = ? AND project = ?",
+            (session_id, project)
+        )
+        # Also delete associated context vectors if they exist
+        cur.execute(
+            """DELETE FROM context_vectors
+               WHERE context_id NOT IN (SELECT id FROM contexts)"""
+        )
+        self._auto_commit()
+        return deleted_rows > 0
+
     # =========================================================================
     # Analysis References
     # =========================================================================
