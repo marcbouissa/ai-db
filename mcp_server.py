@@ -145,6 +145,7 @@ class StdioMCPServer:
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
             progress = self._progress_callback(params.get("_meta") or {})
+
             try:
                 res = self.dispatcher.execute(tool_name, arguments, progress=progress)
                 text = res if isinstance(res, str) else json.dumps(res, indent=2)
@@ -185,6 +186,12 @@ def run_stdio(db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | Da
     if dispatcher is None:
         if daemon_url:
             dispatcher = create_daemon_client(daemon_url, project=project)
+            try:
+                dispatcher.health()  # fail fast: verify daemon is reachable and responding
+            except Exception as exc:
+                sys.stderr.write(f"[ai-db] failed to connect to daemon at {daemon_url}: {exc}\n")
+                sys.stderr.flush()
+                raise SystemExit(1) from exc
         else:
             from ai_db.config import load_config
             cfg = config if config is not None else load_config()

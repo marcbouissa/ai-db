@@ -447,6 +447,8 @@ def _main(argv: list[str] | None = None) -> int:
     # mcp (JSON-RPC MCP Server)
     mcp_p = subparsers.add_parser("mcp", help="Run stdio JSON-RPC MCP server for Claude/Cursor/Antigravity")
     mcp_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
+    mcp_p.add_argument("--daemon-url", default=None, help="Connect to ai-db daemon (http://host:port)")
+    mcp_p.add_argument("--project", dest="mcp_project", default=None, help="Project name (for --daemon-url)")
 
     # status
     status_p = subparsers.add_parser("status", help="Show database statistics and index health")
@@ -567,7 +569,9 @@ def _main(argv: list[str] | None = None) -> int:
     # Transport and long-running server/daemon commands
     if args.command == "mcp":
         import mcp_server
-        mcp_server.run_stdio(args.db, config=cfg, daemon_url=args.daemon_url, project=args.daemon_project)
+        mcp_daemon_url = getattr(args, "daemon_url", None) or os.environ.get("AI_DB_DAEMON_URL")
+        mcp_proj = getattr(args, "mcp_project", None) or getattr(args, "daemon_project", None)
+        mcp_server.run_stdio(args.db, config=cfg, daemon_url=mcp_daemon_url, project=mcp_proj)
         return 0
 
     if args.command == "watch":

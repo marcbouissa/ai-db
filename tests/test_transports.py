@@ -572,3 +572,28 @@ class TestTransportsDaemonBackedMCP:
 
         assert {"snapshot_scene", "video_to_scene"} <= set(dispatcher._tools)
         assert registered_before <= set(dispatcher._tools)
+
+    def test_run_stdio_daemon_url_fails_fast_on_unreachable_daemon(self, monkeypatch):
+        import mcp_server
+
+        # When daemon_url is passed and daemon is unreachable, it must exit immediately
+        monkeypatch.setattr(mcp_server.sys, "stdin", io.StringIO(""))
+        errors = io.StringIO()
+        monkeypatch.setattr(mcp_server.sys, "stderr", errors)
+
+        with pytest.raises(SystemExit) as exc_info:
+            mcp_server.run_stdio(daemon_url="http://127.0.0.1:59999", project="test")
+
+        assert exc_info.value.code == 1
+        assert "failed to connect to daemon" in errors.getvalue()
+
+    def test_run_stdio_daemon_url_succeeds_on_healthy_daemon(self, monkeypatch):
+        import mcp_server
+        from ai_db.daemon.client import DaemonClient
+
+        monkeypatch.setattr(mcp_server.sys, "stdin", io.StringIO(""))
+        monkeypatch.setattr(DaemonClient, "health", lambda self: {"status": "ok"})
+
+        # Should not raise
+        mcp_server.run_stdio(daemon_url="http://127.0.0.1:8080", project="test")
+
