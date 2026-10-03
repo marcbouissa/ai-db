@@ -1037,7 +1037,10 @@ class ServiceDispatcher:
         # A non-default style returns a rendered string, which the MCP and HTTP
         # transports already pass through verbatim, so one renderer serves all
         # three instead of being reimplemented per transport.
-        style = args.get("format") or "json"
+        # Check session default if no format given. Default to "json" for backward compat
+        # with direct dispatcher calls; CLI layer ensures effective_fmt is always passed.
+        default_fmt = db.get_session_state("default_format") if hasattr(db, "get_session_state") else None
+        style = args.get("format") or default_fmt or "json"
         if style == "json":
             return pack
         from ai_db.analyzer.formatters import format_pack
