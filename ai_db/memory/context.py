@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Any
 
@@ -70,20 +71,47 @@ class ContextMemory:
         self, session_id: str | None = None, project: str | None = None,
         allowed_projects: list[str] | None = None
     ) -> dict[str, Any] | None:
-        """Retrieves the latest or specified session context for the allowed project scope."""
+        """Retrieves the latest or specified session context for the allowed project scope.
+
+        Includes:
+        - saved_at: human-readable age of the context
+        - active_files with "missing" flag for files that no longer exist
+        """
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
         record = self.db.get_context(session_id=session_id, allowed_projects=allowed)
         if not record:
             return None
+
+        # Calculate human-readable age
+        now = time.time()
+        age_seconds = now - record.timestamp
+        if age_seconds < 60:
+            saved_at = f"{int(age_seconds)}s ago"
+        elif age_seconds < 3600:
+            saved_at = f"{int(age_seconds // 60)}m ago"
+        elif age_seconds < 86400:
+            saved_at = f"{int(age_seconds // 3600)}h ago"
+        else:
+            saved_at = f"{int(age_seconds // 86400)}d ago"
+
+        # Flag missing files
+        active_files_with_status = []
+        for fpath in record.active_files:
+            exists = os.path.exists(fpath)
+            active_files_with_status.append({
+                "path": fpath,
+                "missing": not exists
+            })
 
         return {
             "session_id": record.session_id,
             "project": record.project,
             "title": record.title,
             "summary": record.summary,
-            "active_files": list(record.active_files),
+            "active_files": active_files_with_status,
             "open_tasks": list(record.open_tasks),
             "timestamp": record.timestamp,
+            "saved_at": saved_at,
             "full_notes": record.full_notes
         }
 
@@ -121,3 +149,15 @@ class ContextMemory:
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
         hits: list[dict[str, Any]] = self.db.search_contexts(query_text, allowed_projects=allowed, top_k=top_k)
         return hits
+
+    def delete_context(
+        self, session_id: str, project: str | None = None
+    ) -> bool:
+        """Delete a context by session_id and project.
+
+        Returns True if the context was deleted, False if not found.
+        """
+        if not session_id:
+            raise ValueError("session_id is required")
+
+        return self.db.delete_context(session_id=session_id, project=project or "global")
