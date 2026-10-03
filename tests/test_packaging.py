@@ -107,13 +107,16 @@ class TestPackagingTier1:
         before = probe.read_bytes()
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "ruff", "check", "--fix", "--select", "F401", "."],
+                # --diff, not --fix: --fix would rewrite real source files across the
+                # repo (e.g. uncommitted work in progress), not just the probe.
+                [sys.executable, "-m", "ruff", "check", "--diff", "--select", "F401", "."],
                 cwd=REPO_ROOT, capture_output=True, text=True, check=False,
             )
-            assert probe.read_bytes() == before, (
-                "a repo-wide `ruff check --fix .` rewrote a file outside its "
+            assert probe.name not in result.stdout, (
+                "a repo-wide `ruff check --fix .` would rewrite a file outside its "
                 f"configured include: {result.stdout}"
             )
+            assert probe.read_bytes() == before
         finally:
             probe.unlink(missing_ok=True)
 
