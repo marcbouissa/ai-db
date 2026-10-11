@@ -706,3 +706,19 @@ def test_new_material_kinds_fall_back_on_an_older_addon(monkeypatch):
     res = [{"ok": False, "message": "unknown material kind 'paint' (have [...])"}, {"ok": True}]
     assert sp._retry_legacy_materials(cmds, res) == [{"ok": True}, {"ok": True}]
     assert sent == [[{"type": "apply_material", "params": {"name": "car", "material": "color:#7a1f1f"}}]]
+
+
+def test_generated_furniture_varies_by_scene_but_pairs_match():
+    import json as _json
+    from pathlib import Path
+
+    raw = _json.loads((Path(__file__).parent / "fixtures" / "golden" / "indoor_living_room.json").read_text())["spec"]
+    spec, _ = sp._parse_spec(raw)
+    v1, v1b = sp._variation(spec, "sofa", "sofa"), sp._variation(spec, "sofa", "sofa")
+    assert v1 == v1b and 0 <= v1["seed"] < 2**31            # a rebuild keeps the same sofa; a C int
+    raw2 = {**raw, "setting": {**raw["setting"], "bounds_m": [7.0, 6.0, 2.8]}}
+    spec2, _ = sp._parse_spec(raw2)
+    assert sp._variation(spec2, "sofa", "sofa")["seed"] != v1["seed"]  # another scene, another sofa
+    raw3 = {**raw, "setting": {**raw["setting"], "style": "classic"}}
+    spec3, _ = sp._parse_spec(raw3)
+    assert sp._variation(spec3, "sofa", "sofa")["preset"] == "chesterfield_like"

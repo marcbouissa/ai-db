@@ -6,6 +6,7 @@ construction is pure (``build_layout_commands``) so it is testable without Blend
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -497,6 +498,32 @@ _GENERATED: dict[str, tuple[str, Any]] = {
     "desk": ("desk", lambda w, d, h: {"width": w, "depth": d, "height": h}),
     "bookshelf": ("bookshelf", lambda w, d, h: {"width": w, "depth": d, "height": h}),
 }
+#: setting.style -> the generator preset a family starts from (a seed then varies it)
+_STYLE_PRESETS: dict[str, dict[str, str]] = {
+    "classic": {"sofa": "chesterfield_like", "armchair": "wingback_like"},
+    "modern": {"sofa": "mid_century", "armchair": "modern_lounge"},
+    "scandinavian": {"sofa": "compact_loveseat", "armchair": "modern_lounge", "dining_chair": "scandi_slat"},
+    "rustic": {"sofa": "lounge_deep", "armchair": "club_chair"},
+    "industrial": {"sofa": "lounge_deep", "armchair": "club_chair"},
+}
+
+
+def _variation(spec: SceneSpec, family: str, base_id: str) -> dict[str, Any]:
+    """Seed (and style preset) for a generated piece, so scenes do not all get the generator's
+    default sofa. The seed comes from the scene (setting + object list) and the object's base id:
+    a different scene gets a different sofa, a rebuild or edit_scene of the same scene keeps it,
+    and the copies of one spec object (armchair_1, armchair_2) stay a matching pair."""
+    sig = json.dumps([spec.setting.kind, list(spec.setting.bounds_m), spec.setting.style,
+                      sorted((o.id, o.category) for o in spec.objects), base_id])
+    out: dict[str, Any] = {"seed": int(hashlib.sha1(sig.encode()).hexdigest()[:7], 16)}  # < 2**31: a C int
+    from ai_db_scene.materials import style_palette
+
+    preset = _STYLE_PRESETS.get(style_palette(spec.setting.style) or "", {}).get(family)
+    if preset:
+        out["preset"] = preset
+    return out
+
+
 GEOMETRY_MODES = ("generated", "boxes")
 #: parts a spec material must not repaint on generated furniture (wooden legs, the books)
 _KEEP_PARTS = {"sofa": ("leg",), "armchair": ("leg",), "bookshelf": ("book",)}
@@ -668,6 +695,7 @@ def build_layout_commands(
             loc = _shift(pl.location, off)
             cmds.append({"type": "generate_asset", "params": {
                 "family": family, "params": params(*pl.dims), "name": pl.id,
+                **_variation(spec, family, base),
                 "location": [loc[0], loc[1], loc[2] - pl.dims[2] / 2],  # base centre
                 "rotation": [0.0, 0.0, pl.rotation_deg_z]}})
             tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
