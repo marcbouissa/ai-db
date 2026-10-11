@@ -17,12 +17,16 @@ localhost by default). Otherwise every route except ``/health`` needs
 user allowed that project, or the admin key; management routes (``/projects``,
 ``/metrics``, ``/query/cross-project``, ``/daemon/*``) accept only the admin key. A user
 key whose user has no ``daemon.users`` entry opens nothing.
+
+``GET /status/html`` is a read-only status page (projects, model load state, call queue
+and progress, uptime), served to loopback clients or with the admin key.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import html
 import json
 import logging
 import os
@@ -37,7 +41,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from ai_db import VectorDB, load_config
 from ai_db.config import AppConfig, DaemonProjectConfig, DaemonUserConfig
@@ -48,6 +52,7 @@ from ai_db.constants import (
     DAEMON_PROGRESS_KEEPALIVE_S,
     DAEMON_RATE_LIMIT,
     DAEMON_RATE_WINDOW_S,
+    DAEMON_STATUS_REFRESH_S,
     DAEMON_WAL_CHECKPOINT_S,
     DEFAULT_DB_FILE,
 )
@@ -76,6 +81,8 @@ _logger = logging.getLogger("ai_db.daemon")
 # other route except /health is a management route.
 _PROJECT_ROUTE = re.compile(r"^/projects/(?P<name>[^/]+)/(?:status|tools(?:/.*)?)$")
 _PROJECT_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+STATUS_PAGE = "/status/html"
+_LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 class UnknownProjectError(AiDbError):
@@ -118,6 +125,9 @@ class ProjectPool:
         self.metrics: dict[str, ProjectMetrics] = {}
         self.warmed: set[str] = set()
         self.start_time = time.time()
+        # Status page: calls waiting for a project's execution lock, and the running one.
+        self.waiting: dict[str, int] = {}
+        self.running: dict[str, tuple[str, float]] = {}  # project -> (tool, started)
 
     def _load_lock(self, name: str) -> asyncio.Lock:
         return self._load_locks.setdefault(name, asyncio.Lock())
@@ -269,7 +279,7 @@ class ProjectPool:
         m = self._metrics(name)
         start = time.time()
         try:
-            async with self._exec_lock(name):
+            async with self._exclusive(name, tool):
                 result = await asyncio.to_thread(dispatcher.execute, tool, args, progress)
         except Exception:
             m.requests_errors += 1
@@ -281,6 +291,38 @@ class ProjectPool:
             m.latency_sum_ms += (time.time() - start) * 1000
             m.last_access = time.time()
         return result
+
+    @contextlib.asynccontextmanager
+    async def _exclusive(self, name: str, what: str) -> AsyncIterator[None]:
+        """The project's execution lock, counted for the status page while waited on."""
+        self.waiting[name] = self.waiting.get(name, 0) + 1
+        acquired = False
+        try:
+            async with self._exec_lock(name):
+                self.waiting[name] -= 1
+                acquired = True
+                self.running[name] = (what, time.time())
+                try:
+                    yield
+                finally:
+                    self.running.pop(name, None)
+        finally:
+            if not acquired:  # cancelled while queued
+                self.waiting[name] -= 1
+
+    def model_state(self, name: str) -> dict[str, Any]:
+        """Configured models of a loaded project and whether they are in memory."""
+        db = self.projects.get(name)
+        if db is None:
+            return {"embedding": None, "rerank": None}
+        out: dict[str, Any] = {}
+        for kind, cfg, lazy in (("embedding", db.config.embedding, db.embedder),
+                                ("rerank", db.config.rerank, db.reranker)):
+            if lazy is None:
+                out[kind] = None
+            else:
+                out[kind] = {"model": cfg.options.get("model", cfg.provider), "loaded": lazy.loaded}
+        return out
 
 
 # =============================================================================
@@ -467,6 +509,15 @@ def _auth_failure(path: str, authorization: str | None) -> tuple[int, str] | Non
     return 403, "Invalid API key for this route"
 
 
+def _status_page_failure(client_ip: str, authorization: str | None) -> tuple[int, str] | None:
+    """The status page is for loopback clients, or anyone with the admin key."""
+    if client_ip in _LOOPBACK or _is_admin(_bearer(authorization)):
+        return None
+    if _bearer(authorization) is None:
+        return 401, "The status page needs a loopback client or the admin key"
+    return 403, "The status page needs a loopback client or the admin key"
+
+
 def _caller(authorization: str | None) -> str:
     """Who is calling, for the access log (never the key)."""
     token = _bearer(authorization)
@@ -516,7 +567,8 @@ async def guard(request: Request, call_next: Callable[[Request], Awaitable[Respo
     project = _route_project(path)
     client_ip = request.client.host if request.client else "unknown"
     authorization = request.headers.get("Authorization")
-    failure = _auth_failure(path, authorization)
+    failure = (_status_page_failure(client_ip, authorization) if path == STATUS_PAGE
+               else _auth_failure(path, authorization))
     if failure is not None:
         response: Response = JSONResponse(status_code=failure[0], content={"detail": failure[1]})
     elif path != "/health" and not rate_limiter.is_allowed(
@@ -575,6 +627,88 @@ async def health() -> DaemonHealth:
     pool = get_pool()
     projects = await asyncio.to_thread(pool.list_projects)
     return DaemonHealth(status="ok", projects=projects, uptime_seconds=time.time() - pool.start_time)
+
+
+def status_snapshot() -> dict[str, Any]:
+    """Everything the status page shows (no keys, no request contents)."""
+    pool = get_pool()
+    projects = pool.list_projects()
+    now = time.time()
+    rows = []
+    for name in sorted(projects):
+        st = projects[name]
+        m = pool.metrics.get(name, ProjectMetrics())
+        running = pool.running.get(name)
+        rows.append({
+            "name": name, "loaded": st.loaded, "db_path": st.db_path, "files": st.files,
+            "chunks": st.chunks, "symbols": st.symbols, "size_kb": st.size_kb,
+            "warmed": name in pool.warmed, "models": pool.model_state(name),
+            "requests": m.requests_total, "errors": m.requests_errors,
+            "avg_latency_ms": round(m.latency_sum_ms / m.requests_total, 1) if m.requests_total else 0.0,
+            "last_access": m.last_access or None,
+            "running": ({"tool": running[0], "for_s": round(now - running[1], 1)} if running else None),
+            "waiting": pool.waiting.get(name, 0),
+        })
+    return {
+        "uptime_s": round(now - pool.start_time, 1),
+        "auth": ("open" if not _auth_enabled() else
+                 f"{len(_state.project_keys)} project key(s), {len(_state.user_keys)} user key(s), "
+                 f"admin key {'set' if _state.admin_key else 'not set'}"),
+        "projects": rows,
+        "progress_streams": sorted(pool._progress),
+    }
+
+
+def _ago(ts: float | None) -> str:
+    return "never" if not ts else f"{time.time() - ts:.0f} s ago"
+
+
+def render_status_page(snap: dict[str, Any]) -> str:
+    """The status snapshot as a self-refreshing HTML page (every value escaped)."""
+    e = html.escape
+
+    def model(m: dict[str, Any] | None) -> str:
+        if m is None:
+            return "none"
+        return f"{e(str(m['model']))} ({'loaded' if m['loaded'] else 'not loaded'})"
+
+    rows = []
+    for p in snap["projects"]:
+        running = (f"{e(p['running']['tool'])} for {p['running']['for_s']} s" if p["running"] else "idle")
+        rows.append(
+            "<tr>" + "".join(f"<td>{c}</td>" for c in (
+                e(p["name"]), "loaded" if p["loaded"] else "not loaded", p["files"], p["chunks"],
+                p["symbols"], p["size_kb"], model(p["models"]["embedding"]),
+                model(p["models"]["rerank"]), "yes" if p["warmed"] else "no", running, p["waiting"],
+                p["requests"], p["errors"], p["avg_latency_ms"], _ago(p["last_access"]))) + "</tr>")
+    streams = ", ".join(e(t) for t in snap["progress_streams"]) or "none"
+    head = ("Project", "State", "Files", "Chunks", "Symbols", "KB", "Embedding", "Rerank", "Warmed",
+            "Running", "Queued", "Calls", "Errors", "Avg ms", "Last call")
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="{DAEMON_STATUS_REFRESH_S}">
+<title>ai-db daemon</title>
+<style>
+body {{ font: 14px system-ui, sans-serif; margin: 1.5em; color: #222; background: #fff; }}
+table {{ border-collapse: collapse; }} td, th {{ border: 1px solid #ccc; padding: 3px 8px; text-align: left; }}
+th {{ background: #f2f2f2; }} code {{ font-size: 13px; }}
+</style></head><body>
+<h1>ai-db daemon</h1>
+<p>Up {snap['uptime_s']:.0f} s. Auth: {e(snap['auth'])}. Read-only; refreshes every {DAEMON_STATUS_REFRESH_S} s.</p>
+<h2>Projects</h2>
+<table><tr>{''.join(f'<th>{h}</th>' for h in head)}</tr>
+{''.join(rows) or '<tr><td colspan="15">no project</td></tr>'}
+</table>
+<h2>Progress streams</h2><p>{streams}</p>
+</body></html>
+"""
+
+
+@app.get(STATUS_PAGE, response_class=HTMLResponse)
+async def status_page() -> HTMLResponse:
+    """Read-only HTML status (loopback clients or the admin key; see the middleware)."""
+    snap = await asyncio.to_thread(status_snapshot)
+    return HTMLResponse(render_status_page(snap))
 
 
 @app.get("/metrics", response_model=MetricsResponse)

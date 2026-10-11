@@ -490,6 +490,13 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   routes (never management routes); a key without a `daemon.users` entry opens nothing;
   project/admin keys work as before; the access log names the caller (`user:alice`),
   never the key. Tests: `tests/test_daemon_features.py`.
+- [x] Read-only status page `GET /status/html` (admin or loopback only): projects, model
+  load state, queue/progress, uptime. **Done 2026-10-11:** loopback clients need no key,
+  anyone else the admin key (also on an open daemon bound to a public interface); shows per
+  project load state, counts, configured embedding/rerank model and whether it is in
+  memory, the running call and how many wait for the project lock, calls/errors/latency,
+  open progress streams, auth mode (no keys); every value HTML-escaped; refreshes every
+  `DAEMON_STATUS_REFRESH_S`. Tests: `tests/test_daemon_features.py`.
 
 ## P1: Scene / video
 

@@ -3,12 +3,13 @@
 Runs the FastAPI app in-process (TestClient); no real socket, no real file events.
 """
 
+import asyncio
 import json
 
 import pytest
 from fastapi.testclient import TestClient
 
-from ai_db.config import parse_config
+from ai_db.config import load_config, parse_config
 from ai_db.config_template import build_template
 from ai_db.daemon import server
 from ai_db.errors import AiDbConfigError
@@ -116,3 +117,78 @@ def test_daemon_users_config_is_validated():
     cfg = parse_config(data)
     assert cfg.daemon.users["alice"].allows("proj") and not cfg.daemon.users["alice"].allows("x")
     assert cfg.daemon.to_dict()["users"] == {"alice": {"projects": ["proj"]}}
+
+
+# --- status page -----------------------------------------------------------------
+
+
+@pytest.fixture
+def secured_cfg(tmp_path, monkeypatch):
+    _env(monkeypatch, _write_config(tmp_path), api_keys="proj=pkey", admin_key="adm")
+
+
+def test_status_page_for_loopback_clients(secured_cfg):
+    with TestClient(server.app, client=("127.0.0.1", 50000)) as client:
+        assert _status(client, "proj", "pkey") == 200  # loads the project
+        resp = client.get(server.STATUS_PAGE)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    page = resp.text
+    assert "ai-db daemon" in page and "Up " in page
+    assert "<td>proj</td><td>loaded</td>" in page and "<td>proj2</td><td>not loaded</td>" in page
+    assert "pkey" not in page and "Bearer" not in page
+
+
+def test_status_page_elsewhere_needs_the_admin_key(secured_cfg):
+    with TestClient(server.app) as client:  # client host "testclient": not loopback
+        assert client.get(server.STATUS_PAGE).status_code == 401
+        assert client.get(server.STATUS_PAGE, headers={"Authorization": "Bearer pkey"}).status_code == 403
+        assert client.get(server.STATUS_PAGE, headers={"Authorization": "Bearer adm"}).status_code == 200
+
+
+def test_status_page_is_not_public_on_an_open_daemon(tmp_path, monkeypatch):
+    _env(monkeypatch, _write_config(tmp_path))
+    with TestClient(server.app) as client:
+        assert client.get(server.STATUS_PAGE).status_code == 401
+    with TestClient(server.app, client=("::1", 50000)) as client:
+        assert client.get(server.STATUS_PAGE).status_code == 200
+
+
+def test_status_shows_the_running_call_and_the_queue(tmp_path):
+    async def scenario():
+        pool = server.ProjectPool(load_config(str(_write_config(tmp_path))))
+        server._state.pool = pool
+        try:
+            await pool.get_or_create("proj")
+            release = asyncio.Event()
+
+            async def hold():
+                async with pool._exclusive("proj", "sync"):
+                    await release.wait()
+
+            first = asyncio.create_task(hold())
+            await asyncio.sleep(0.05)
+            second = asyncio.create_task(hold())
+            await asyncio.sleep(0.05)
+            snap = server.status_snapshot()
+            release.set()
+            await asyncio.gather(first, second)
+            after = server.status_snapshot()
+            return snap, after
+        finally:
+            await pool.shutdown()
+            server._state.pool = None
+
+    snap, after = asyncio.run(scenario())
+    row = next(p for p in snap["projects"] if p["name"] == "proj")
+    assert row["running"]["tool"] == "sync" and row["waiting"] == 1
+    assert row["models"] == {"embedding": None, "rerank": None}
+    row = next(p for p in after["projects"] if p["name"] == "proj")
+    assert row["running"] is None and row["waiting"] == 0
+
+
+def test_status_page_escapes_everything():
+    snap = {"uptime_s": 1.0, "auth": "open", "progress_streams": ["<b>tok</b>"],
+            "projects": [], "watch": None}
+    page = server.render_status_page(snap)
+    assert "<b>tok</b>" not in page and "&lt;b&gt;tok&lt;/b&gt;" in page
