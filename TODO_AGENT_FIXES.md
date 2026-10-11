@@ -603,6 +603,10 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   abstract; the aliases and the status-derived `get_table_counts` default are gone and
   `status` uses `get_table_counts`. `module_summaries` is dropped (`SCHEMA_VERSION` 13: the
   next sync re-indexes, which also applies the G1/G5 parser changes).
+  **Eval follow-up 2026-10-11:** the golden sets named the old homes of moved/deleted
+  symbols (K1/K2/K4/K5); they and `eval/scenarios.json` now follow the code, and the
+  baselines were re-recorded: lexical recall@10 0.775 → 0.75 (`record_token_compression`
+  no longer exists, so that query has no real target), pack 0.9 → 0.925.
 
 ### K3. Slim `ai_db/__init__.py`
 - [x] Move `VectorDB` to `ai_db/facade.py`; `__init__` exports lazily (`__getattr__`), so

@@ -1,131 +1,131 @@
 {
   "queries": 20,
   "budget_tokens": 8000,
-  "pack_recall": 0.9,
-  "tokens_mean": 7695.8,
-  "latency_ms_p50": 48.55,
-  "latency_ms_p95": 78.93,
+  "pack_recall": 0.925,
+  "tokens_mean": 7593.5,
+  "latency_ms_p50": 50.32,
+  "latency_ms_p95": 79.28,
   "per_query": [
     {
       "query": "how does hybrid retrieval fuse bm25 and vector results",
       "mode": "explain",
       "pack_recall": 1.0,
-      "tokens": 7908
+      "tokens": 7951
     },
     {
       "query": "how is the final ranking of search candidates computed",
       "mode": "explain",
       "pack_recall": 0.5,
-      "tokens": 7888
+      "tokens": 7934
     },
     {
       "query": "how does sync decide which files to reindex",
       "mode": "explain",
       "pack_recall": 0.5,
-      "tokens": 7937
+      "tokens": 7929
     },
     {
       "query": "how are oversized code chunks split into parts",
       "mode": "explain",
-      "pack_recall": 0.5,
-      "tokens": 7899
+      "pack_recall": 1.0,
+      "tokens": 7994
     },
     {
       "query": "how is the config file validated",
       "mode": "explain",
       "pack_recall": 1.0,
-      "tokens": 7932
+      "tokens": 7947
     },
     {
       "query": "how are storage providers discovered from entry points",
       "mode": "explain",
       "pack_recall": 1.0,
-      "tokens": 7982
+      "tokens": 7558
     },
     {
       "query": "how are embeddings computed for chunks without vectors",
       "mode": "explain",
       "pack_recall": 1.0,
-      "tokens": 7923
+      "tokens": 7909
     },
     {
       "query": "how are hosted provider http requests retried",
       "mode": "explain",
       "pack_recall": 1.0,
-      "tokens": 7956
+      "tokens": 5748
     },
     {
       "query": "how is the fts match expression built from a query",
       "mode": "explain",
       "pack_recall": 1.0,
-      "tokens": 7839
+      "tokens": 7879
     },
     {
       "query": "how does investigate fit the pack into the token budget",
       "mode": "explain",
       "pack_recall": 1.0,
-      "tokens": 7870
+      "tokens": 7849
     },
     {
       "query": "search_chunks",
       "mode": "impact",
       "pack_recall": 0.5,
-      "tokens": 7947
+      "tokens": 7976
     },
     {
       "query": "count_tokens",
       "mode": "impact",
       "pack_recall": 1.0,
-      "tokens": 7929
+      "tokens": 7940
     },
     {
       "query": "expand_terms",
       "mode": "impact",
       "pack_recall": 1.0,
-      "tokens": 7838
+      "tokens": 7951
     },
     {
       "query": "get_chunks_by_ids",
       "mode": "impact",
       "pack_recall": 1.0,
-      "tokens": 7970
+      "tokens": 7923
     },
     {
       "query": "build_fts",
       "mode": "impact",
       "pack_recall": 1.0,
-      "tokens": 7989
+      "tokens": 7914
     },
     {
       "query": "parse_config",
       "mode": "impact",
       "pack_recall": 1.0,
-      "tokens": 7974
+      "tokens": 7919
     },
     {
       "query": "embed_missing",
       "mode": "impact",
       "pack_recall": 1.0,
-      "tokens": 3398
+      "tokens": 3626
     },
     {
       "query": "post_json",
       "mode": "impact",
       "pack_recall": 1.0,
-      "tokens": 7941
+      "tokens": 7998
     },
     {
       "query": "split_identifier",
       "mode": "impact",
       "pack_recall": 1.0,
-      "tokens": 7844
+      "tokens": 7925
     },
     {
       "query": "git_worktree",
       "mode": "impact",
       "pack_recall": 1.0,
-      "tokens": 7951
+      "tokens": 8000
     }
   ],
-  "_note": "Re-recorded 2026-10-11 (G10): exact symbol matching (the last dotted component, or the qualified name for a dotted expectation; it was a substring test), the corpus materialised as a git worktree at HEAD, and stale golden entries fixed (VectorDB.embed_missing moved to ai_db/facade.py; materialize_tracked -> git_worktree; the known-unreachable http_server.py entry is kept, see eval/scenarios.json). pack_recall 0.9 -> 0.9."
+  "_note": "Re-recorded 2026-10-11 after the K1/K2/K4/K5 refactors: golden entries follow the moved symbols (SQLiteBackend methods -> ai_db/storage/sqlite_repos/*.py, mcp_server.py -> ai_db/transports/mcp.py, count_tokens -> ai_db/tokens.py, telemetry latency -> tracker._latency); the deleted record_token_compression query now targets analysis/formatters.annotate_formatted_tokens. pack_recall 0.9 -> 0.925.\n\nRe-recorded 2026-10-11 (G10): exact symbol matching (the last dotted component, or the qualified name for a dotted expectation; it was a substring test), the corpus materialised as a git worktree at HEAD, and stale golden entries fixed (VectorDB.embed_missing moved to ai_db/facade.py; materialize_tracked -> git_worktree; the known-unreachable http_server.py entry is kept, see eval/scenarios.json). pack_recall 0.9 -> 0.9."
 }

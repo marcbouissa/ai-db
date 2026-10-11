@@ -51,7 +51,7 @@
           "query": "where is bm25 ranking of chunks done",
           "ground_truth": {
             "recall": [
-              "ai_db/storage/sqlite_backend.py"
+              "ai_db/storage/sqlite_repos/chunks.py"
             ],
             "symbol_recall": [
               "search_chunks"
@@ -62,7 +62,7 @@
           "query": "insert chunks compress content into fts index",
           "ground_truth": {
             "recall": [
-              "ai_db/storage/sqlite_backend.py"
+              "ai_db/storage/sqlite_repos/chunks.py"
             ],
             "symbol_recall": [
               "insert_chunks"
@@ -73,7 +73,7 @@
           "query": "delete file cascade remove symbols annotations",
           "ground_truth": {
             "recall": [
-              "ai_db/storage/sqlite_backend.py"
+              "ai_db/storage/sqlite_repos/chunks.py"
             ],
             "symbol_recall": [
               "delete_file"
@@ -214,7 +214,7 @@
           "ground_truth": {
             "recall": [
               "ai_db/search/retriever.py",
-              "ai_db/storage/sqlite_backend.py"
+              "ai_db/storage/sqlite_repos/vectors.py"
             ],
             "symbol_recall": []
           }
@@ -241,7 +241,8 @@
           "query": "how are oversized code chunks split into parts",
           "ground_truth": {
             "recall": [
-              "ai_db/parser/chunker.py"
+              "ai_db/parser/chunker.py",
+              "ai_db/tokens.py"
             ],
             "symbol_recall": []
           }
@@ -269,7 +270,7 @@
           "ground_truth": {
             "recall": [
               "ai_db/embed/indexing.py",
-              "ai_db/storage/sqlite_backend.py"
+              "ai_db/storage/sqlite_repos/vectors.py"
             ],
             "symbol_recall": []
           }
@@ -335,7 +336,7 @@
           "query": "build_fts",
           "ground_truth": {
             "recall": [
-              "ai_db/storage/sqlite_backend.py"
+              "ai_db/storage/sqlite_repos/chunks.py"
             ],
             "symbol_recall": []
           }
