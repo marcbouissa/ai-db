@@ -614,13 +614,21 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 ### K6. Constants sweep
 - [x] Language maps unified in `ai_db/parser/languages.py`; grammars are now selectable per
   language (`index.languages`, `ai-db grammars`, tests in `tests/test_languages.py`).
-- [ ] Move to `ai_db/constants.py`: BM25 weights, `QUERY_LOG_KEEP`, vec0 over-fetch factor
+- [x] Move to `ai_db/constants.py`: BM25 weights, `QUERY_LOG_KEEP`, vec0 over-fetch factor
   (`k*4`), 7-day eviction (duplicated in storage and `analyzer/engine.py`), FTS 4000-char
   truncation, `ZLIB_LEVEL`, investigate decay factors 0.6/0.5/0.4, `limit=100`, `per_file=5`,
   `[:8]`, analyzer 32 targets / ctx 10 lines, linter timeout 15, `META_MAX_CHARS`,
   `SNIPPET_CHARS`, `COMPOUND_MAX_DEFINITIONS`. Use the existing `GIT_TIMEOUT_S` instead of
   literal 5/10. Unify `ts_graph.SUPPORTED_LANGUAGES`/`language_for` with
   `constants.EXT_TO_LANG`/`chunker.language_for`.
+  **Done 2026-10-11:** `BM25_WEIGHTS`, `QUERY_LOG_KEEP` (K5), `VEC0_OVERFETCH`,
+  `ANALYSIS_REF_TTL_S`, `CONTEXT_FTS_MAX_CHARS` (skills reuse `SKILL_CONTENT_MAX_CHARS`),
+  `ZLIB_LEVEL`, `INVESTIGATE_HOP_DECAY`/`_PARENT_FACTOR`/`_TEST_FACTOR`,
+  `RESOLVE_CALLERS_LIMIT`, `RECENT_CHANGES_PER_FILE`/`_MAX_FILES`,
+  `ANALYZE_MAX_TARGETS`/`ANALYZE_CTX_LINES` (CLI, MCP schema, facade, engine),
+  `LINTER_TIMEOUT_S` (K7), `META_MAX_CHARS`, `SNIPPET_CHARS`; the duplicate
+  `COMPOUND_MAX_DEFINITIONS` in `resolve.py` is gone; `_recent_changes` uses
+  `GIT_TIMEOUT_S`. The language-map part landed with the first bullet.
 
 ### K7. Dead or half-wired features (DECISION per bullet; default = delete)
 - [x] **Skill/context vectors: done (2026-10-07), user decision "an extension, but built in".**

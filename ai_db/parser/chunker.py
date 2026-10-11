@@ -28,6 +28,7 @@ from typing import Any
 
 from ai_db.constants import (
     MAX_CHUNK_TOKENS,
+    META_MAX_CHARS,
     TEXT_WINDOW_LINES,
     TEXT_WINDOW_OVERLAP,
 )
@@ -38,7 +39,6 @@ from ai_db.tokens import count_tokens
 from ai_db.utils import strip_code_bloat
 
 META_FILES = ("package.json", "METADATA", "pyproject.toml")
-META_MAX_CHARS = 1500
 
 
 @cache

@@ -84,6 +84,15 @@ CODE_STOPWORDS = frozenset({
 # Retrieval
 CANDIDATE_POOL = 50  # candidates per retriever list before fusion/rerank
 RRF_K = 60
+BM25_WEIGHTS = (8.0, 6.0, 2.0, 1.0, 1.0)  # fts_index bm25 column weights: name, qualified_name, filepath, content, idents
+VEC0_OVERFETCH = 4  # vec0 KNN fetches k * this when a filter needs the chunks/files join (applied afterwards)
+ZLIB_LEVEL = 6  # compression of stored chunk/context/ref bodies
+CONTEXT_FTS_MAX_CHARS = 4000  # saved-context notes indexed for FTS (the full notes are stored compressed)
+SNIPPET_CHARS = 280  # search-result snippet length
+META_MAX_CHARS = 1500  # package metadata file (package.json, pyproject.toml, METADATA) kept as one lib_meta chunk
+ANALYSIS_REF_TTL_S = 7 * 86400  # analysis refs (`expand` handles) older than this are evicted
+ANALYZE_MAX_TARGETS = 32  # files per `analyze` batch (globs expanded first)
+ANALYZE_CTX_LINES = 10  # context lines around an `analyze --span`
 QUERY_LOG_KEEP = 10000  # query_log rows kept (newest); telemetry covers this window
 DEFAULT_DOC_WEIGHT = 0.5  # index.doc_weight: score factor for md/txt chunks (docs rank below code)
 DEFAULT_RERANK_TOP_N = 10  # rerank.top_n: fused candidates the reranker re-scores
@@ -124,6 +133,12 @@ LINTER_TIMEOUT_S = 15  # an external linter (bash -n, yaml) taking longer is rep
 EVAL_GIT_TIMEOUT_S = 120  # `ai-db eval` worktree checkouts (a whole tree, not one request)
 STALE_RESYNC_MAX_FILES = 20  # stale result files re-synced inline per read; above this they are flagged
 DELEGATE_MAX_TOKENS = 120  # seeds this small also get their callees' callees
+INVESTIGATE_HOP_DECAY = 0.6  # score factor per graph hop for callees/callers of a seed
+INVESTIGATE_PARENT_FACTOR = 0.5  # score of a seed's enclosing class header, relative to the seed
+INVESTIGATE_TEST_FACTOR = 0.4  # score of a test that calls a seed, relative to the seed
+RESOLVE_CALLERS_LIMIT = 100  # call sites read per symbol when resolving callers (investigate/trace)
+RECENT_CHANGES_MAX_FILES = 8  # seed files whose `git log` is shown in a pack
+RECENT_CHANGES_PER_FILE = 5  # commits listed per file
 REF_ID_HEX_LEN = 12  # analysis ref ids `ref:<sha1 prefix>`: 48 bits (32 collided at ~1% over 10k refs)
 
 # Skill router

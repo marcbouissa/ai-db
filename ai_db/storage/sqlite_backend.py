@@ -18,7 +18,16 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import Any, TypeVar, cast
 
-from ai_db.constants import DEFAULT_DB_FILE, QUERY_LOG_KEEP
+from ai_db.constants import (
+    ANALYSIS_REF_TTL_S,
+    BM25_WEIGHTS,
+    CONTEXT_FTS_MAX_CHARS,
+    DEFAULT_DB_FILE,
+    QUERY_LOG_KEEP,
+    SKILL_CONTENT_MAX_CHARS,
+    VEC0_OVERFETCH,
+    ZLIB_LEVEL,
+)
 from ai_db.errors import AiDbConfigError, AiDbQueryError, AiDbStorageError
 from ai_db.search.query_builder import (
     base_terms,
@@ -41,7 +50,6 @@ from ai_db.storage.models import (
     SyntaxErrorRecord,
 )
 
-ZLIB_LEVEL = 6
 SCHEMA_VERSION = "12"  # 12: symbol_refs stores seq/await_kind/guard/receiver
 
 # Process-wide write mutex (TODO 13.6).
@@ -676,7 +684,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         cur.execute("VACUUM")
 
         # Evict stale analysis refs older than 7 days
-        self.evict_stale_analysis_refs(86400 * 7)
+        self.evict_stale_analysis_refs(ANALYSIS_REF_TTL_S)
 
         if default_format:
             norm_fmt = default_format.strip().lower()
@@ -941,9 +949,6 @@ class SQLiteBackend(StorageBackend, VectorCapable):
             ))
         return result
 
-    # bm25 column weights: name, qualified_name, filepath, content, idents
-    BM25_WEIGHTS = (8.0, 6.0, 2.0, 1.0, 1.0)
-
     def search_chunks(
         self,
         query_tokens: list[str],
@@ -971,7 +976,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self._append_filters(where_clauses, params, allowed_projects, path_prefix,
                              languages, chunk_types, modified_since)
         params.append(top_k)
-        w = ", ".join(str(x) for x in self.BM25_WEIGHTS)
+        w = ", ".join(str(x) for x in BM25_WEIGHTS)
         sql = f"""
             SELECT chunks.id AS chunk_id, chunks.filepath, chunks.name,
                    bm25(fts_index, {w}) AS bm25_rank,
@@ -1167,7 +1172,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
                              chunk_types: list[str] | None, path_prefix: str | None,
                              modified_since: float | None) -> list[tuple[int, float]]:
         """ANN KNN. Metadata that vec0 carries is constrained in-query; filters that
-        need the chunks/files join over-fetch k*4 and truncate afterwards."""
+        need the chunks/files join over-fetch k*VEC0_OVERFETCH and truncate afterwards."""
         import sqlite_vec
 
         conds = ["embedding MATCH ?"]
@@ -1184,7 +1189,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
         # These need a join, so KNN must over-fetch and we filter afterwards.
         needs_join = path_prefix is not None or modified_since is not None
-        fetch = int(k) * 4 if needs_join else int(k)
+        fetch = int(k) * VEC0_OVERFETCH if needs_join else int(k)
         conds.append("k = ?")
         params.append(fetch)
 
@@ -1793,7 +1798,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         cur.execute("DELETE FROM fts_skills WHERE name = ? AND project = ?", (skill.name, skill.project))
         cur.execute(
             "INSERT INTO fts_skills (name, description, triggers, content, project) VALUES (?, ?, ?, ?, ?)",
-            (skill.name, skill.description, skill.triggers, skill.content[:4000], skill.project)
+            (skill.name, skill.description, skill.triggers, skill.content[:SKILL_CONTENT_MAX_CHARS], skill.project)
         )
 
     @_writes
@@ -1902,7 +1907,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         cur.execute("DELETE FROM fts_contexts WHERE session_id = ? AND project = ?", (context.session_id, context.project))
         cur.execute(
             "INSERT INTO fts_contexts (session_id, project, title, summary, content) VALUES (?, ?, ?, ?, ?)",
-            (context.session_id, context.project, context.title or "", context.summary, context.full_notes[:4000])
+            (context.session_id, context.project, context.title or "", context.summary, context.full_notes[:CONTEXT_FTS_MAX_CHARS])
         )
         return context_id
 

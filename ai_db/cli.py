@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ai_db import __version__
 from ai_db.config import AppConfig, config_path, load_config, masked_dict
-from ai_db.constants import TODO_LINE_CHARS, TRACE_DEPTH, TRACE_MAX_NODES
+from ai_db.constants import ANALYZE_CTX_LINES, TODO_LINE_CHARS, TRACE_DEPTH, TRACE_MAX_NODES
 from ai_db.dispatcher import ServiceDispatcher
 from ai_db.errors import AiDbConfigError, AiDbDaemonError, AiDbError
 from ai_db.utils import detect_project_name
@@ -513,7 +513,8 @@ def _main(argv: list[str] | None = None) -> int:
     analyze_p.add_argument("targets", nargs="*", default=[], help="File(s) or glob pattern to analyze")
     analyze_p.add_argument("--depth", choices=["summary", "structure", "targeted", "full"], default="structure", help="Analysis depth (default: structure)")
     analyze_p.add_argument("--span", default=None, help="Range target START:END (e.g. 50:120)")
-    analyze_p.add_argument("--ctx", type=int, default=10, help="Context lines around span (default: 10)")
+    analyze_p.add_argument("--ctx", type=int, default=ANALYZE_CTX_LINES,
+                           help=f"Context lines around span (default: {ANALYZE_CTX_LINES})")
     analyze_p.add_argument("--focus", default=None, help="Symbol or token focus filter")
     analyze_p.add_argument("-q", "--question", default=None, help="Question-driven filter query")
     analyze_p.add_argument("--since", default=None, help="Diff mode: inspect changes since hash or timestamp")

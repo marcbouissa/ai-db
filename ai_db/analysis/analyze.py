@@ -7,6 +7,7 @@ from typing import Any
 
 from ai_db.analysis.diff import file_diff
 from ai_db.analysis.refs import ReferenceStore
+from ai_db.constants import ANALYSIS_REF_TTL_S, ANALYZE_CTX_LINES, ANALYZE_MAX_TARGETS
 from ai_db.errors import AiDbConfigError
 from ai_db.parser.chunker import chunk_file
 from ai_db.parser.languages import SUPPORTED_LANGUAGES
@@ -63,8 +64,8 @@ class AnalyzerEngine:
         self.languages: frozenset[str] = SUPPORTED_LANGUAGES
 
     def _evict_stale_refs(self):
-        """Evicts analysis refs older than 7 days to prevent unbounded table growth."""
-        self.backend.evict_stale_analysis_refs(older_than_seconds=86400 * 7)
+        """Evicts analysis refs older than ANALYSIS_REF_TTL_S to prevent unbounded table growth."""
+        self.backend.evict_stale_analysis_refs(older_than_seconds=ANALYSIS_REF_TTL_S)
 
     def expand_ref(self, ref_id: str, depth: str = "full", span: tuple[int, int] | None = None) -> dict[str, Any] | None:
         return self.ref_store.expand_ref(ref_id, depth, span)
@@ -80,7 +81,7 @@ class AnalyzerEngine:
                      focus: str | None = None,
                      q: str | None = None,
                      since: str | None = None,
-                     ctx_lines: int = 10,
+                     ctx_lines: int = ANALYZE_CTX_LINES,
                      bypass_cache: bool = False,
                      no_cache: bool = False) -> dict[str, Any]:
         """Analyzes a single file according to RFC tokenopt-analyzer v2."""
@@ -233,7 +234,7 @@ class AnalyzerEngine:
                       since: str | None = None,
                       max_out: int | None = None,
                       cursor: str | None = None,
-                      ctx_lines: int = 10) -> dict[str, Any]:
+                      ctx_lines: int = ANALYZE_CTX_LINES) -> dict[str, Any]:
         """F4 Batching + F5 Token Budgeting: Analyzes multiple targets up to n<=32 with cursor continuation."""
         expanded_targets = []
         for t in targets:
@@ -243,7 +244,7 @@ class AnalyzerEngine:
             else:
                 expanded_targets.append(resolve_client_path(t))
 
-        expanded_targets = list(dict.fromkeys(expanded_targets))[:32]  # Cap n<=32
+        expanded_targets = list(dict.fromkeys(expanded_targets))[:ANALYZE_MAX_TARGETS]
 
         # F13 Session State: Save targets and query
         self.set_session_state("last_analysis", {

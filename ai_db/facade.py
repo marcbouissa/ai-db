@@ -13,6 +13,7 @@ from ai_db.analysis.analyze import AnalyzerEngine
 from ai_db.analysis.formatters import Formatters, format_as_sexp, format_as_stub
 from ai_db.config import AppConfig, load_config
 from ai_db.constants import (
+    ANALYZE_CTX_LINES,
     DEFAULT_DB_FILE,
     INDEX_LANGUAGES_STATE_KEY,
 )
@@ -368,7 +369,7 @@ class VectorDB:
                      focus: str | None = None,
                      q: str | None = None,
                      since: str | None = None,
-                     ctx_lines: int = 10,
+                     ctx_lines: int = ANALYZE_CTX_LINES,
                      bypass_cache: bool = False,
                      no_cache: bool = False) -> dict[str, Any]:
         t0 = time.perf_counter()
@@ -385,7 +386,7 @@ class VectorDB:
                       since: str | None = None,
                       max_out: int | None = None,
                       cursor: str | None = None,
-                      ctx_lines: int = 10) -> dict[str, Any]:
+                      ctx_lines: int = ANALYZE_CTX_LINES) -> dict[str, Any]:
         return self.analyzer_engine.analyze_batch(targets, depth=depth, q=q, focus=focus, span=span,
                                                  since=since, max_out=max_out, cursor=cursor, ctx_lines=ctx_lines)
 

@@ -34,14 +34,22 @@ from ai_db.constants import (
     DIFF_QUERY_BOOST,
     DIFF_SEEDS_PER_FILE,
     EXPLAIN_CALLER_SEEDS,
+    GIT_TIMEOUT_S,
     IMPACT_DEPTH,
     INVESTIGATE_BODY_SHARE,
+    INVESTIGATE_HOP_DECAY,
     INVESTIGATE_MIN_BUDGET,
+    INVESTIGATE_PARENT_FACTOR,
+    INVESTIGATE_TEST_FACTOR,
     MAX_EXPANDED_PER_SEED,
     MAX_OMITTED,
     MAX_TESTS,
     MODULE_SEED_FACTOR,
+    RECENT_CHANGES_MAX_FILES,
+    RECENT_CHANGES_PER_FILE,
+    RESOLVE_CALLERS_LIMIT,
     SEED_K,
+    SNIPPET_CHARS,
     STALE_RESYNC_MAX_FILES,
     TRACE_CONTEXT_LINES,
     TRACE_DEPTH,
@@ -49,7 +57,6 @@ from ai_db.constants import (
 )
 from ai_db.parser.chunker import count_tokens
 from ai_db.search.ranking import last_component
-from ai_db.search.retriever import SNIPPET_CHARS
 from ai_db.storage.models import ChunkRecord, SearchResult
 from ai_db.utils import get_allowed_projects
 
@@ -365,7 +372,7 @@ class Investigator:
         for s in seeds:
             parent = parents.get(s.chunk.parent_id) if s.chunk.parent_id is not None else None
             if parent is not None and parent.chunk_type == "class_header":
-                self._add(items, parent, "parent", s.score * 0.5, f"class of {s.chunk.qualified_name}")
+                self._add(items, parent, "parent", s.score * INVESTIGATE_PARENT_FACTOR, f"class of {s.chunk.qualified_name}")
 
     def _add_callees(self, seeds: list[_Item], allowed: list[str], items: dict[int, _Item],
                      edges: list[list[str]], unresolved: set[str]) -> None:
@@ -385,7 +392,7 @@ class Investigator:
                     unresolved |= result.unresolved
                 targets = [c for n in names if n in result.resolved for c in result.resolved[n]]
                 for callee in targets[:MAX_EXPANDED_PER_SEED]:
-                    self._add(items, callee, "callee", score * (0.6 ** hop),
+                    self._add(items, callee, "callee", score * (INVESTIGATE_HOP_DECAY ** hop),
                               f"called by {chunk.qualified_name}")
                     edges.append([chunk.qualified_name, callee.qualified_name])
                     if hop == 1 and chunk.token_count <= DELEGATE_MAX_TOKENS:
@@ -402,7 +409,7 @@ class Investigator:
             next_frontier = []
             for target, score in frontier:
                 name = last_component(target.qualified_name)
-                callers = self._resolver.resolve_callers(name, target, allowed, limit=100)
+                callers = self._resolver.resolve_callers(name, target, allowed, limit=RESOLVE_CALLERS_LIMIT)
                 added = 0
                 for caller in callers:
                     if added >= MAX_EXPANDED_PER_SEED:
@@ -413,7 +420,7 @@ class Investigator:
                     seen.add(caller.id)
                     added += 1
                     role = "test" if is_test_path(caller.filepath) else "caller"
-                    self._add(items, caller, role, score * (0.6 ** depth),
+                    self._add(items, caller, role, score * (INVESTIGATE_HOP_DECAY ** depth),
                               f"calls {target.qualified_name} (depth {depth})")
                     next_frontier.append((caller, score))
             frontier = next_frontier
@@ -427,14 +434,15 @@ class Investigator:
             if is_test_path(s.chunk.filepath):
                 continue
             name = last_component(s.chunk.qualified_name)
-            test_callers = self._resolver.find_test_callers(name, s.chunk, allowed, limit=100)
+            test_callers = self._resolver.find_test_callers(name, s.chunk, allowed,
+                                                            limit=RESOLVE_CALLERS_LIMIT)
             for chunk in test_callers:
                 if len(tests) >= MAX_TESTS:
                     return
                 if chunk.id is None or chunk.id in listed:
                     continue
                 listed.add(chunk.id)
-                self._add(items, chunk, "test", s.score * 0.4, f"tests {s.chunk.qualified_name}")
+                self._add(items, chunk, "test", s.score * INVESTIGATE_TEST_FACTOR, f"tests {s.chunk.qualified_name}")
                 tests.append({"test": chunk.qualified_name,
                               "filepath": self._display(chunk.filepath, relative_to),
                               "lines": f"L{chunk.start_line}-{chunk.end_line}",
@@ -442,20 +450,21 @@ class Investigator:
 
     # ------------------------------------------------------------- git
 
-    def _recent_changes(self, files: list[str], per_file: int = 5) -> list[dict[str, Any]]:
+    def _recent_changes(self, files: list[str],
+                        per_file: int = RECENT_CHANGES_PER_FILE) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
-        for path in list(dict.fromkeys(files))[:8]:
+        for path in list(dict.fromkeys(files))[:RECENT_CHANGES_MAX_FILES]:
             directory = os.path.dirname(path) or "."
             if not os.path.isdir(directory):
                 continue
             inside = subprocess.run(["git", "-C", directory, "rev-parse", "--is-inside-work-tree"],
-                                    capture_output=True, text=True, timeout=5, check=False)
+                                    capture_output=True, text=True, timeout=GIT_TIMEOUT_S, check=False)
             if inside.returncode != 0 or inside.stdout.strip() != "true":
                 continue  # not version controlled: nothing to report for this file
             log = subprocess.run(
                 ["git", "-C", directory, "log", f"-n{per_file}", "--date=short",
                  "--format=%h%x1f%s%x1f%ad", "--", os.path.basename(path)],
-                capture_output=True, text=True, timeout=10, check=True)
+                capture_output=True, text=True, timeout=GIT_TIMEOUT_S, check=True)
             commits = []
             for line in log.stdout.splitlines():
                 h, subject, date = line.split("\x1f")

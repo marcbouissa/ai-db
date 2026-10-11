@@ -13,6 +13,7 @@ from typing import Any
 
 from ai_db.analysis.resolve import Resolver
 from ai_db.constants import (
+    RESOLVE_CALLERS_LIMIT,
     TRACE_DEPTH,
     TRACE_MAX_NODES,
     TRACE_SNAP_LINES,
@@ -265,10 +266,12 @@ class TraceEngine:
     ) -> None:
         """Add caller parents to the trace node."""
         name = chunk.qualified_name.split(".")[-1]
-        callers = self.resolver.resolve_callers(name, chunk, self.allowed_projects, limit=100)
+        callers = self.resolver.resolve_callers(name, chunk, self.allowed_projects,
+                                                    limit=RESOLVE_CALLERS_LIMIT)
 
         if include_tests:
-            test_callers = self.resolver.find_test_callers(name, chunk, self.allowed_projects, limit=100)
+            test_callers = self.resolver.find_test_callers(name, chunk, self.allowed_projects,
+                                                               limit=RESOLVE_CALLERS_LIMIT)
             callers.extend(test_callers)
 
         for caller in callers:

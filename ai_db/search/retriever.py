@@ -14,12 +14,10 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ai_db.constants import RRF_K
+from ai_db.constants import RRF_K, SNIPPET_CHARS
 from ai_db.embed.base import EmbeddingProvider
 from ai_db.search.query_builder import base_terms, expand_terms
 from ai_db.storage.models import SearchResult
-
-SNIPPET_CHARS = 280
 
 
 class Retriever(ABC):

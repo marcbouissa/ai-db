@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ai_db.constants import ANALYZE_CTX_LINES
 from ai_db.errors import AiDbConfigError, UnknownToolError
 from ai_db.plugins import register_tool_plugins
 from ai_db.search import freshness
@@ -341,7 +342,7 @@ class ServiceDispatcher:
                     "q": {"type": "string", "description": "Question or concept filter"},
                     "focus": {"type": "string", "description": "Symbol name or substring filter"},
                     "span": {"type": "array", "items": {"type": "integer"}, "description": "Line range [start, end]"},
-                    "ctx_lines": {"type": "integer", "default": 10, "description": "Context lines around span"},
+                    "ctx_lines": {"type": "integer", "default": ANALYZE_CTX_LINES, "description": "Context lines around span"},
                     "since": {"type": "string", "description": "Diff mode: inspect changed line spans"},
                     "max_out": {"type": "integer", "description": "Token budget ceiling"},
                     "cursor": {"type": "string", "description": "Continuation cursor handle"},
@@ -842,7 +843,7 @@ class ServiceDispatcher:
             span_tuple = None
 
         since = args.get("since")
-        ctx_lines = int(args.get("ctx_lines") or args.get("ctx") or 10)
+        ctx_lines = int(args.get("ctx_lines") or args.get("ctx") or ANALYZE_CTX_LINES)
         max_out = args.get("max_out")
         cursor = args.get("cursor")
         no_cache = bool(args.get("no_cache", False))
