@@ -21,7 +21,10 @@ _STONE = "color:#b7b1a6"
 _GREEN = "foliage:#3f6b33"
 _GREEN2 = "foliage:#4f7d3c"
 _BARK = "wood:dark"
-_YELLOW = "color:#e0a000"
+_YELLOW = "paint:#e0a000"
+_BLUE = "paint:#2f5d8a"
+_ORANGE = "paint:#e8661a"
+_CARDBOARD = "plaster:#a8835a"
 _WHITE = "color:#f2f2f2"
 
 
@@ -53,6 +56,47 @@ def _lobes(pid: str, z0: float, height: float, spread: float, n: int, mat: str, 
         z = round(min(z0 + zf * height - size / 2, top), 4)
         parts.append(_sphere(f"{pid}_{k}", [size, size, round(size * 0.85, 4)], [x, y, max(z0, z)],
                              mat2 if k % 3 == 1 else mat))
+    return parts
+
+
+def _brace(pid: str, x: float, y0: float, z0: float, y1: float, z1: float, tx: float, t: float,
+           mat: str) -> dict[str, Any]:
+    """A straight strut from (y0, z0) to (y1, z1) in the plane x (unit space), e.g. the zig-zag
+    bracing of a rack frame: a box of length |d| turned about X; ``at`` is its rotated bottom centre."""
+    import math
+
+    dy, dz = y1 - y0, z1 - z0
+    length = math.hypot(dy, dz)
+    ang = math.degrees(math.atan2(dz, dy))
+    ext_z = abs(length * math.sin(math.radians(ang))) + abs(t * math.cos(math.radians(ang)))
+    return _box(pid, [tx, round(length, 4), t], [x, round((y0 + y1) / 2, 4), round((z0 + z1) / 2 - ext_z / 2, 4)],
+                mat, rotation_deg=[round(ang, 2), 0, 0])
+
+
+def _rack() -> list[dict[str, Any]]:
+    """Selective pallet rack (2.7 x 1.1 x 4.5 m): two upright frames (front and back posts with
+    zig-zag bracing), orange step beams at three levels, wire decks, a loaded pallet per bay level."""
+    parts: list[dict[str, Any]] = []
+    levels = (0.02, 0.35, 0.68)
+    for s, x in (("l", -0.485), ("r", 0.485)):
+        for f, y in (("f", -0.464), ("b", 0.464)):
+            parts.append(_box(f"post_{s}{f}", [0.03, 0.072, 1.0], [x, y, 0], _BLUE))
+            parts.append(_box(f"foot_{s}{f}", [0.05, 0.1, 0.006], [x, y, 0], _STEEL))
+        zs = [0.05 + k * 0.1125 for k in range(9)]
+        for k in range(8):
+            ya, yb = (-0.43, 0.43) if k % 2 == 0 else (0.43, -0.43)
+            parts.append(_brace(f"brace_{s}_{k}", x, ya, zs[k], yb, zs[k + 1], 0.012, 0.01, _BLUE))
+        parts.append(_box(f"tie_{s}", [0.012, 0.86, 0.01], [x, 0, 0.05], _BLUE))
+    for k, z in enumerate(levels[1:] + (0.97,), 1):
+        for f, y in (("f", -0.464), ("b", 0.464)):
+            parts.append(_box(f"beam_{k}{f}", [1.0, 0.045, 0.027], [0, y, z], _ORANGE))
+        if z < 0.9:
+            parts.append(_box(f"deck_{k}", [0.94, 0.89, 0.004], [0, 0, z + 0.027], "metal:brushed"))
+    for k, z in enumerate(levels):
+        base = 0.0 if k == 0 else z + 0.031  # ground level: pallets on the floor
+        for i, x in enumerate((-0.24, 0.24)):
+            parts.append(_box(f"load_pallet_{k}_{i}", [0.36, 0.85, 0.033], [x, 0, base], "wood:pine"))
+            parts.append(_box(f"load_{k}_{i}", [0.34, 0.8, 0.2], [x, 0, base + 0.033], _CARDBOARD))
     return parts
 
 
@@ -109,10 +153,7 @@ _RECIPES: dict[str, Any] = {
         _box("split", [1.0, 0.02, 0.01], [0, -0.505, 0.62], _DARK),
         _box("handle", [0.03, 0.04, 0.3], [0.38, -0.52, 0.65], "metal:chrome"),
         _box("handle_low", [0.03, 0.04, 0.2], [0.38, -0.52, 0.35], "metal:chrome")],
-    "pallet_rack": lambda: [
-        *[_box(f"post_{i}", [0.04, 0.06, 1.0], [sx * 0.48, sy * 0.47, 0], "color:#1f4fa0")
-          for i, (sx, sy) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))],
-        *[_box(f"beam_{k}", [1.0, 1.0, 0.03], [0, 0, z], "color:#e06a00") for k, z in enumerate((0.05, 0.36, 0.67, 0.97))]],
+    "pallet_rack": _rack,
     "bench": lambda: [
         # two side frames carry the seat; posts rise from them and carry the backrest
         _box("frame_l", [0.05, 0.55, 0.42], [-0.47, 0.02, 0], _DARK),
@@ -124,22 +165,40 @@ _RECIPES: dict[str, Any] = {
     "trash_can": lambda: [
         _cyl("bin", [1.0, 1.0, 0.92], [0, 0, 0], "metal:steel"),
         _cyl("lid", [1.04, 1.04, 0.08], [0, 0, 0.92], _DARK)],
+    # steel safety barrier: two round posts on bolted base plates, a top rail and a lower
+    # kick rail in safety yellow, black end caps
     "safety_barrier": lambda: [
-        _box("post_l", [0.06, 1.0, 1.0], [-0.47, 0, 0], _YELLOW),
-        _box("post_r", [0.06, 1.0, 1.0], [0.47, 0, 0], _YELLOW),
-        _box("rail_top", [1.0, 0.8, 0.08], [0, 0, 0.9], _YELLOW),
-        _box("rail_mid", [1.0, 0.8, 0.08], [0, 0, 0.5], _DARK)],
+        *[p for s, x in (("l", -0.45), ("r", 0.45)) for p in (
+            _box(f"plate_{s}", [0.12, 1.0, 0.02], [x, 0, 0], _STEEL),
+            _cyl(f"post_{s}", [0.067, 0.5, 0.96], [x, 0, 0.02], _YELLOW),
+            _cyl(f"cap_{s}", [0.07, 0.52, 0.02], [x, 0, 0.98], _DARK))],
+        _box("rail_top", [0.9, 0.4, 0.09], [0, 0, 0.82], _YELLOW),
+        _box("rail_kick", [0.9, 0.4, 0.09], [0, 0, 0.25], _YELLOW)],
+    # counterbalance forklift (1.2 x 2.8 x 2.2 m), front (forks) at -Y: chassis and rear
+    # counterweight, seat and steering column, overhead guard on four pillars, a two-channel mast
+    # with carriage and L-forks, big drive wheels at the front, small steer wheels at the back
     "forklift": lambda: [
-        _box("body", [1.0, 0.62, 0.45], [0, 0.18, 0.1], _YELLOW),
-        _box("counterweight", [0.9, 0.18, 0.35], [0, 0.42, 0.1], _DARK),
-        _box("roof", [0.9, 0.45, 0.03], [0, 0.2, 0.95], _DARK),
-        _box("pillar_l", [0.05, 0.05, 0.45], [-0.42, 0.0, 0.5], _DARK),
-        _box("pillar_r", [0.05, 0.05, 0.45], [0.42, 0.0, 0.5], _DARK),
-        _box("mast", [0.7, 0.05, 0.95], [0, -0.155, 0.05], _DARK),
-        _box("fork_l", [0.08, 0.32, 0.03], [-0.2, -0.34, 0.05], "metal:steel"),
-        _box("fork_r", [0.08, 0.32, 0.03], [0.2, -0.34, 0.05], "metal:steel"),
-        *[_cyl(f"wheel_{i}", [0.25, 0.25, 0.12], [x, y, 0.0], _DARK, rotation_deg=[0, 90, 0])
-          for i, (x, y) in enumerate(((-0.45, -0.1), (0.45, -0.1), (-0.45, 0.35), (0.45, 0.35)))]],
+        _box("chassis", [0.92, 0.56, 0.2], [0, 0.12, 0.09], _YELLOW),
+        _box("counterweight", [0.96, 0.17, 0.28], [0, 0.41, 0.07], _DARK),
+        _box("hood", [0.8, 0.26, 0.12], [0, 0.24, 0.29], _YELLOW),
+        _box("seat", [0.36, 0.11, 0.05], [0, 0.2, 0.41], "rubber"),
+        _box("seat_back", [0.36, 0.03, 0.13], [0, 0.265, 0.41], "rubber"),
+        _box("column", [0.05, 0.03, 0.2], [0, -0.06, 0.29], _DARK),
+        _cyl("steering", [0.22, 0.09, 0.012], [0, -0.06, 0.49], _DARK),
+        *[_box(f"pillar_{i}", [0.04, 0.018, 0.6], [x, y, 0.29], _DARK)
+          for i, (x, y) in enumerate(((-0.42, -0.1), (0.42, -0.1), (-0.42, 0.33), (0.42, 0.33)))],
+        *[_box(f"guard_{k}", [0.88, 0.02, 0.014], [0, round(-0.1 + k * 0.0717, 4), 0.89], _DARK) for k in range(7)],
+        *[_box(f"guard_side_{s}", [0.04, 0.45, 0.02], [x, 0.115, 0.88], _DARK) for s, x in (("l", -0.42), ("r", 0.42))],
+        _cyl("beacon", [0.06, 0.05, 0.03], [0.3, 0.3, 0.9], "plastic:#ff8c1a"),
+        *[_box(f"mast_{s}", [0.06, 0.03, 0.92], [x, -0.17, 0.04], _DARK) for s, x in (("l", -0.27), ("r", 0.27))],
+        *[_box(f"mast_tie_{k}", [0.6, 0.02, 0.03], [0, -0.17, z], _DARK) for k, z in enumerate((0.3, 0.93))],
+        _box("carriage", [0.62, 0.02, 0.14], [0, -0.195, 0.05], _DARK),
+        *[p for s, x in (("l", -0.17), ("r", 0.17)) for p in (
+            _box(f"fork_{s}_shank", [0.07, 0.016, 0.2], [x, -0.213, 0.03], _STEEL),
+            _box(f"fork_{s}", [0.07, 0.29, 0.016], [x, -0.355, 0.03], _STEEL))],
+        *[_cyl(f"wheel_{s}{i}", [w, w * 2.2 / 2.8, t], [x, y, 0.0], "rubber", rotation_deg=[0, 90, 0])
+          for i, (y, w, t) in enumerate(((-0.06, 0.29, 0.2), (0.33, 0.21, 0.15)))
+          for s, x in (("l", -0.4), ("r", 0.4))]],
     "fountain": lambda: [
         _cyl("basin", [1.0, 1.0, 0.25], [0, 0, 0], _STONE),
         _cyl("water", [0.92, 0.92, 0.02], [0, 0, 0.22], "glass:tinted"),
@@ -287,22 +346,41 @@ _RECIPES.update({
         *[_box(f"shelf_{k}", [1.0, 1.0, 0.02], [0, 0, z], _STEEL) for k, z in enumerate((0.05, 0.33, 0.62, 0.95))],
         *[_box(f"box_{k}", [0.3, 0.6, 0.15], [x, 0, z + 0.02], "color:#b08a5a")
           for k, (x, z) in enumerate(((-0.25, 0.05), (0.2, 0.33), (-0.1, 0.62)))]],
+    # slatted wooden crate: corner posts, three spaced slats per side (the gaps show the dark
+    # inside), a closed bottom and lid boards
     "crate": lambda: [
-        _box("body", [0.96, 0.96, 0.96], [0, 0, 0.02], "wood:pine"),
-        *[_box(f"slat_{k}", [1.0, 1.0, 0.06], [0, 0, z], "wood:dark") for k, z in enumerate((0.0, 0.47, 0.94))]],
+        _box("inside", [0.9, 0.86, 0.94], [0, 0, 0.03], "wood:dark"),
+        *[_box(f"post_{i}", [0.07, 0.1, 1.0], [x, y, 0], "wood:pine")
+          for i, (x, y) in enumerate(((-0.465, -0.45), (0.465, -0.45), (-0.465, 0.45), (0.465, 0.45)))],
+        *[_box(f"slat_{s}_{k}", [0.93, 0.05, 0.22], [0, y, z], "wood:pine")
+          for s, y in (("f", -0.475), ("b", 0.475)) for k, z in enumerate((0.04, 0.39, 0.74))],
+        *[_box(f"side_{s}_{k}", [0.05, 0.9, 0.22], [x, 0, z], "wood:pine")
+          for s, x in (("l", -0.475), ("r", 0.475)) for k, z in enumerate((0.04, 0.39, 0.74))],
+        _box("bottom", [1.0, 1.0, 0.03], [0, 0, 0], "wood:pine"),
+        *[_box(f"lid_{k}", [1.0, 0.3, 0.04], [0, y, 0.96], "wood:pine") for k, y in enumerate((-0.33, 0.0, 0.33))]],
     "pallet": lambda: [
-        _box("deck", [1.0, 1.0, 0.25], [0, 0, 0.75], "wood:pine"),
-        *[_box(f"block_{i}", [0.15, 1.0, 0.5], [x, 0, 0.25], "wood:pine") for i, x in enumerate((-0.42, 0, 0.42))],
-        _box("bottom", [1.0, 1.0, 0.25], [0, 0, 0], "wood:pine")],
+        *[_box(f"top_{k}", [0.1, 1.0, 0.15], [x, 0, 0.85], "wood:pine") for k, x in enumerate((-0.45, -0.225, 0.0, 0.225, 0.45))],
+        *[_box(f"cross_{k}", [1.0, 0.12, 0.15], [0, y, 0.7], "wood:pine") for k, y in enumerate((-0.44, 0.0, 0.44))],
+        *[_box(f"block_{i}_{j}", [0.145, 0.12, 0.55], [x, y, 0.15], "wood:pine")
+          for i, x in enumerate((-0.4275, 0.0, 0.4275)) for j, y in enumerate((-0.44, 0.0, 0.44))],
+        *[_box(f"bottom_{k}", [0.145, 1.0, 0.15], [x, 0, 0], "wood:pine") for k, x in enumerate((-0.4275, 0.0, 0.4275))]],
     "barrel": lambda: [
         _cyl("body", [1.0, 1.0, 1.0], [0, 0, 0], "color:#2f5d8a"),
         *[_cyl(f"rib_{k}", [1.03, 1.03, 0.03], [0, 0, z], _DARK) for k, z in enumerate((0.25, 0.72))]],
+    # roller conveyor (3.0 x 0.6 x 0.8 m typical): steel side channels, a bed of rollers between
+    # them, leg frames with cross braces and foot plates, a drive unit under the bed
     "conveyor": lambda: [
-        _box("belt", [1.0, 1.0, 0.1], [0, 0, 0.82], _DARK),
-        _box("side_l", [1.0, 0.04, 0.18], [0, -0.48, 0.78], _STEEL),
-        _box("side_r", [1.0, 0.04, 0.18], [0, 0.48, 0.78], _STEEL),
-        *[_box(f"leg_{i}", [0.04, 0.04, 0.78], [x, y, 0], _STEEL)
-          for i, (x, y) in enumerate(((-0.45, -0.45), (0.45, -0.45), (-0.45, 0.45), (0.45, 0.45)))]],
+        *[_box(f"rail_{s}", [1.0, 0.083, 0.15], [0, y, 0.85], _STEEL) for s, y in (("l", -0.4585), ("r", 0.4585))],
+        *[_cyl(f"roller_{k}", [0.017, 0.0625, 0.84], [round(-0.48 + k * 0.0331, 4), 0, 0.925], "metal:brushed",
+               rotation_deg=[90, 0, 0]) for k in range(30)],
+        *[p for i, x in enumerate((-0.46, 0.0, 0.46)) for p in (
+            _box(f"leg_{i}_l", [0.017, 0.083, 0.85], [x, -0.4585, 0], _BLUE),
+            _box(f"leg_{i}_r", [0.017, 0.083, 0.85], [x, 0.4585, 0], _BLUE),
+            _box(f"brace_{i}", [0.017, 0.84, 0.05], [x, 0, 0.3], _BLUE),
+            _box(f"foot_{i}_l", [0.04, 0.083, 0.015], [x, -0.4585, 0], _STEEL),
+            _box(f"foot_{i}_r", [0.04, 0.083, 0.015], [x, 0.4585, 0], _STEEL))],
+        _box("drive", [0.1, 0.84, 0.2], [0.25, 0, 0.65], _BLUE),
+        _cyl("motor", [0.06, 0.3, 0.12], [0.25, -0.25, 0.53], "metal:steel", rotation_deg=[90, 0, 0])],
     "fence_section": lambda: [
         _box("post_l", [0.06, 1.0, 1.0], [-0.47, 0, 0], "wood:pine"),
         _box("post_r", [0.06, 1.0, 1.0], [0.47, 0, 0], "wood:pine"),
