@@ -371,12 +371,16 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   line N. `tests/test_diff.py`.
 
 ### G8. Untracked new files are listed but not indexed
-- [ ] **Observed (hands-on):** create `new.py` in a git repo; `ai-db symbol gamma` → not found;
+- [x] **Observed (hands-on):** create `new.py` in a git repo; `ai-db symbol gamma` → not found;
   `inv --mode diff` lists `new.py L1` under changes but has no evidence for it. Also prints
   `investigate diff: ''`.
 - **Fix:** before answering in diff mode, `sync_paths` the untracked, non-ignored files
   (bounded by `STALE_RESYNC_MAX_FILES`). Print `investigate diff: since HEAD` instead of `''`.
 - **Check:** test in a temp git repo.
+- **Done 2026-10-11:** `Investigator._index_new_files` syncs changed files the index has
+  never seen (≤ `STALE_RESYNC_MAX_FILES`) before seeding; ignored ones stay out and are
+  flagged `unindexed` in `changes`. The header part had landed with G12 ("changes since
+  HEAD"). Test in `tests/test_diff.py`.
 
 ### G9. Ref ids collide
 - [x] **Observed:** analysis ref ids are `sha1[:8]` (32 bits) with `INSERT OR REPLACE`; ~10k

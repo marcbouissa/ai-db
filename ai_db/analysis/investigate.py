@@ -25,7 +25,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
-from ai_db.analysis.diff import changed_lines
+from ai_db.analysis.diff import changed_lines, repo_root
 from ai_db.analysis.pack import EntryPoint, Evidence, InvestigationPack
 from ai_db.analysis.resolve import Resolver, scope_of
 from ai_db.constants import (
@@ -42,6 +42,7 @@ from ai_db.constants import (
     MAX_TESTS,
     MODULE_SEED_FACTOR,
     SEED_K,
+    STALE_RESYNC_MAX_FILES,
     TRACE_CONTEXT_LINES,
     TRACE_DEPTH,
     TRACE_MAX_NODES,
@@ -152,10 +153,12 @@ class Investigator:
         if mode == "diff":
             # Seeds come from the diff, not from retrieval.
             spans = changed_lines(since or "", root or ".")
+            unindexed = self._index_new_files(spans, root or ".", project)
             seeds = self._diff_seeds(spans, query, allowed)
             changes = [{"filepath": path,
                         "lines": _line_ranges(lines),
-                        "changed_lines": len(lines)}
+                        "changed_lines": len(lines),
+                        **({"unindexed": True} if path in unindexed else {})}
                        for path, lines in sorted(spans.items())]
         else:
             seeds = self.vdb.query_engine.search(query, filters, SEED_K[mode])
@@ -221,6 +224,17 @@ class Investigator:
 
         self._pack(pack, items, edges, relative_to)
         return pack
+
+    def _index_new_files(self, spans: dict[str, list[int]], root: str,
+                         project: str | None) -> set[str]:
+        """Index changed files the index has never seen (a new, untracked file), so the
+        diff pack has evidence for them; ignored files stay out (``sync_paths`` applies
+        ``.aidbignore``). Above ``STALE_RESYNC_MAX_FILES`` nothing is synced inline.
+        Returns the changed files that are still not indexed."""
+        new = [p for p in spans if os.path.isfile(p) and self.db.get_file(p) is None]
+        if new and len(new) <= STALE_RESYNC_MAX_FILES:
+            self.vdb.sync_paths(repo_root(root), new, project=project)
+        return {p for p in new if self.db.get_file(p) is None}
 
     def _pick_entry_seed(self, seed_items: list[_Item]) -> _Item | None:
         """Pick the most entry-like seed for flow tracing.
