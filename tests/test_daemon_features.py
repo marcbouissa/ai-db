@@ -5,6 +5,7 @@ Runs the FastAPI app in-process (TestClient); no real socket, no real file event
 
 import asyncio
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +14,7 @@ from ai_db.config import load_config, parse_config
 from ai_db.config_template import build_template
 from ai_db.daemon import server
 from ai_db.errors import AiDbConfigError
+from ai_db.watcher import group_by_root
 
 
 def _write_config(tmp_path, auto_sync_paths=(), **daemon):
@@ -113,9 +115,10 @@ def test_daemon_users_config_is_validated():
     data["daemon"] = {"users": {"alice": {"projects": ["proj"], "admin": True}}}
     with pytest.raises(AiDbConfigError):
         parse_config(data)
-    data["daemon"] = {"users": {"alice": {"projects": ["proj"]}}}
+    data["daemon"] = {"users": {"alice": {"projects": ["proj"]}}, "watch_sync_paths": True}
     cfg = parse_config(data)
     assert cfg.daemon.users["alice"].allows("proj") and not cfg.daemon.users["alice"].allows("x")
+    assert cfg.daemon.watch_sync_paths is True
     assert cfg.daemon.to_dict()["users"] == {"alice": {"projects": ["proj"]}}
 
 
@@ -136,6 +139,7 @@ def test_status_page_for_loopback_clients(secured_cfg):
     page = resp.text
     assert "ai-db daemon" in page and "Up " in page
     assert "<td>proj</td><td>loaded</td>" in page and "<td>proj2</td><td>not loaded</td>" in page
+    assert "File watching is off" in page
     assert "pkey" not in page and "Bearer" not in page
 
 
@@ -189,6 +193,76 @@ def test_status_shows_the_running_call_and_the_queue(tmp_path):
 
 def test_status_page_escapes_everything():
     snap = {"uptime_s": 1.0, "auth": "open", "progress_streams": ["<b>tok</b>"],
-            "projects": [], "watch": None}
+            "projects": [], "watch": {"roots": {"/x/<y>": "y"}, "batches": 0, "files_synced": 0,
+                                      "last_sync": None, "errors": ["<script>alert(1)</script>"]}}
     page = server.render_status_page(snap)
-    assert "<b>tok</b>" not in page and "&lt;b&gt;tok&lt;/b&gt;" in page
+    assert "<script>" not in page and "&lt;script&gt;" in page
+    assert "<b>tok</b>" not in page and "/x/&lt;y&gt;" in page
+
+
+# --- watching auto_sync_paths ------------------------------------------------------
+
+
+def test_group_by_root_picks_the_deepest_root(tmp_path):
+    outer, inner = tmp_path / "a", tmp_path / "a" / "b"
+    grouped = group_by_root([str(outer), str(inner)],
+                            [str(inner / "x.py"), str(outer / "y.py"), str(tmp_path / "z.py")])
+    assert grouped == {str(inner): [str(inner / "x.py")], str(outer): [str(outer / "y.py")]}
+
+
+def test_watched_roots(tmp_path):
+    (tmp_path / "repo").mkdir()
+    cfg = load_config(str(_write_config(tmp_path, auto_sync_paths=[tmp_path / "repo",
+                                                                     tmp_path / "missing"])))
+    assert server.watched_roots(cfg) == {str(tmp_path / "repo"): "repo"}
+
+
+def _wait_for(predicate, timeout=10.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_watch_syncs_changed_files_into_their_project(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def before_start():\n    return 1\n")
+    cfg = _write_config(tmp_path, auto_sync_paths=[repo], watch_sync_paths=True, auto_discover=True)
+    _env(monkeypatch, cfg)
+    seen = []
+
+    async def fake_awatch(roots, debounce_ms):
+        seen.append((list(roots), debounce_ms))
+        (repo / "b.py").write_text("def after_change():\n    return 2\n")
+        yield {str(repo): [str(repo / "b.py")]}
+        await asyncio.Event().wait()  # no more events; cancelled at shutdown
+
+    monkeypatch.setattr(server, "awatch_roots", fake_awatch)
+    with TestClient(server.app, client=("127.0.0.1", 50000)) as client:
+        def indexed(name):
+            db = server._state.pool.projects.get("repo") if server._state.pool else None
+            return db is not None and db.backend.get_file(str(repo / name)) is not None
+
+        assert _wait_for(lambda: indexed("a.py")), "catch-up sync at start"
+        assert _wait_for(lambda: indexed("b.py")), "changed file synced"
+        assert _wait_for(lambda: server._state.watch.files_synced == 1)
+        page = client.get(server.STATUS_PAGE).text
+    assert seen == [([str(repo)], server.DAEMON_WATCH_DEBOUNCE_MS)]
+    assert f"<code>{repo}</code> &rarr; repo" in page and "1 file(s) synced" in page
+
+
+def test_no_watching_unless_configured(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _env(monkeypatch, _write_config(tmp_path, auto_sync_paths=[repo]))
+
+    async def never(roots, debounce_ms):
+        raise AssertionError("must not watch")
+        yield {}  # pragma: no cover
+
+    monkeypatch.setattr(server, "awatch_roots", never)
+    with TestClient(server.app):
+        assert server._state.watch is None and server._state.watch_task is None

@@ -19,7 +19,10 @@ user allowed that project, or the admin key; management routes (``/projects``,
 key whose user has no ``daemon.users`` entry opens nothing.
 
 ``GET /status/html`` is a read-only status page (projects, model load state, call queue
-and progress, uptime), served to loopback clients or with the admin key.
+and progress, file watching, uptime), served to loopback clients or with the admin key.
+
+``daemon.watch_sync_paths: true`` watches every ``auto_sync_paths`` directory
+(``ai_db.watcher``) and syncs changed files into the project named after the directory.
 """
 
 from __future__ import annotations
@@ -54,6 +57,7 @@ from ai_db.constants import (
     DAEMON_RATE_WINDOW_S,
     DAEMON_STATUS_REFRESH_S,
     DAEMON_WAL_CHECKPOINT_S,
+    DAEMON_WATCH_DEBOUNCE_MS,
     DEFAULT_DB_FILE,
 )
 from ai_db.daemon.models import (
@@ -74,6 +78,7 @@ from ai_db.dispatcher import ServiceDispatcher
 from ai_db.errors import AiDbError, UnknownToolError
 from ai_db.lazy import release_models
 from ai_db.storage.sqlite_backend import SQLiteBackend
+from ai_db.watcher import awatch_roots
 
 _logger = logging.getLogger("ai_db.daemon")
 
@@ -310,6 +315,20 @@ class ProjectPool:
             if not acquired:  # cancelled while queued
                 self.waiting[name] -= 1
 
+    async def sync_root(self, name: str, root: str) -> dict[str, int]:
+        """Full (incremental) sync of ``root`` into project ``name``."""
+        db, _ = await self.get_or_create(name)
+        async with self._exclusive(name, "watch sync"):
+            result: dict[str, int] = await asyncio.to_thread(db.sync, root, name, False)
+            return result
+
+    async def sync_paths(self, name: str, root: str, paths: list[str]) -> dict[str, int]:
+        """Sync only ``paths`` (changed under ``root``) into project ``name``."""
+        db, _ = await self.get_or_create(name)
+        async with self._exclusive(name, "watch sync"):
+            result: dict[str, int] = await asyncio.to_thread(db.sync_paths, root, paths, name)
+            return result
+
     def model_state(self, name: str) -> dict[str, Any]:
         """Configured models of a loaded project and whether they are in memory."""
         db = self.projects.get(name)
@@ -331,6 +350,16 @@ class ProjectPool:
 
 
 @dataclass
+class WatchState:
+    """``daemon.watch_sync_paths``: what is watched and what it did (status page)."""
+    roots: dict[str, str] = field(default_factory=dict)  # root -> project
+    batches: int = 0
+    files_synced: int = 0
+    last_sync: float | None = None
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
 class _State:
     pool: ProjectPool | None = None
     tasks: list[asyncio.Task[None]] = field(default_factory=list)
@@ -339,6 +368,8 @@ class _State:
     users: dict[str, DaemonUserConfig] = field(default_factory=dict)
     admin_key: str | None = None
     reload_lock: asyncio.Lock | None = None
+    watch_task: asyncio.Task[None] | None = None
+    watch: WatchState | None = None
 
 
 _state = _State()
@@ -396,9 +427,11 @@ async def reload_daemon_config() -> None:
         new_config = await asyncio.to_thread(load_config)
         new = ProjectPool(new_config, runtime_projects=old.runtime_projects)
         await _start_projects(new, previously_loaded=set(old.projects))
+        await _stop_watching()
         _state.pool = new
         _state.users = dict(new_config.daemon.users)
         await old.shutdown()
+        _start_watching(new_config)
         _logger.info("[daemon] configuration reloaded from %s", new_config.source_path)
 
 
@@ -409,6 +442,59 @@ async def _every(interval: float, job: Callable[[], Awaitable[None]], what: str)
             await job()
         except Exception:  # a periodic job failing must not stop the daemon
             _logger.exception("[daemon] %s failed", what)
+
+
+def watched_roots(config: AppConfig) -> dict[str, str]:
+    """``{root: project}`` for ``daemon.watch_sync_paths``: every existing
+    ``auto_sync_paths`` directory, synced into the project named after it."""
+    roots: dict[str, str] = {}
+    for path in config.auto_sync_paths:
+        root = os.path.abspath(os.path.expanduser(path))
+        if os.path.isdir(root):
+            roots[root] = os.path.basename(root)
+    return roots
+
+
+async def _watch_sync(roots: dict[str, str], state: WatchState) -> None:
+    """Catch up on changes made while the daemon was down, then sync what changes."""
+    def failed(what: str, exc: Exception) -> None:
+        _logger.error("[daemon] watch sync of %s failed: %s", what, exc, exc_info=exc)
+        state.errors = [*state.errors[-9:], f"{time.strftime('%H:%M:%S')} {what}: {exc}"]
+
+    for root, name in roots.items():
+        try:
+            await get_pool().sync_root(name, root)
+            state.last_sync = time.time()
+        except Exception as exc:  # noqa: BLE001 - one root failing must not stop watching
+            failed(root, exc)
+    async for batch in awatch_roots(list(roots), DAEMON_WATCH_DEBOUNCE_MS):
+        state.batches += 1
+        for root, paths in batch.items():
+            try:
+                await get_pool().sync_paths(roots[root], root, paths)
+                state.files_synced += len(paths)
+                state.last_sync = time.time()
+            except Exception as exc:  # noqa: BLE001 - one batch failing must not stop watching
+                failed(f"{len(paths)} file(s) under {root}", exc)
+
+
+def _start_watching(config: AppConfig) -> None:
+    if not config.daemon.watch_sync_paths:
+        _state.watch = None
+        return
+    roots = watched_roots(config)
+    _state.watch = WatchState(roots=roots)
+    if roots:
+        _state.watch_task = asyncio.create_task(_watch_sync(roots, _state.watch))
+        _logger.info("[daemon] watching %s", ", ".join(f"{r} -> {p}" for r, p in roots.items()))
+
+
+async def _stop_watching() -> None:
+    task, _state.watch_task = _state.watch_task, None
+    if task is not None:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 def _config_watcher(config_path: str | None) -> Callable[[], Awaitable[None]]:
@@ -435,6 +521,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _state.pool = ProjectPool(config)
     _state.reload_lock = asyncio.Lock()
     await _start_projects(_state.pool)
+    _start_watching(config)
     _state.tasks = [
         asyncio.create_task(_every(DAEMON_CONFIG_POLL_S, _config_watcher(config.source_path),
                                    "config reload")),
@@ -446,6 +533,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await _stop_watching()
+        _state.watch = None
         for task in _state.tasks:
             task.cancel()
         for task in _state.tasks:
@@ -649,6 +738,7 @@ def status_snapshot() -> dict[str, Any]:
             "running": ({"tool": running[0], "for_s": round(now - running[1], 1)} if running else None),
             "waiting": pool.waiting.get(name, 0),
         })
+    watch = _state.watch
     return {
         "uptime_s": round(now - pool.start_time, 1),
         "auth": ("open" if not _auth_enabled() else
@@ -656,6 +746,10 @@ def status_snapshot() -> dict[str, Any]:
                  f"admin key {'set' if _state.admin_key else 'not set'}"),
         "projects": rows,
         "progress_streams": sorted(pool._progress),
+        "watch": None if watch is None else {
+            "roots": dict(watch.roots), "batches": watch.batches,
+            "files_synced": watch.files_synced, "last_sync": watch.last_sync,
+            "errors": list(watch.errors)},
     }
 
 
@@ -681,6 +775,15 @@ def render_status_page(snap: dict[str, Any]) -> str:
                 p["symbols"], p["size_kb"], model(p["models"]["embedding"]),
                 model(p["models"]["rerank"]), "yes" if p["warmed"] else "no", running, p["waiting"],
                 p["requests"], p["errors"], p["avg_latency_ms"], _ago(p["last_access"]))) + "</tr>")
+    watch = snap["watch"]
+    if watch is None:
+        watch_html = "<p>File watching is off (<code>daemon.watch_sync_paths</code>).</p>"
+    else:
+        roots = "".join(f"<li><code>{e(r)}</code> &rarr; {e(p)}</li>" for r, p in watch["roots"].items())
+        errors = "".join(f"<li>{e(x)}</li>" for x in watch["errors"]) or "<li>none</li>"
+        watch_html = (f"<ul>{roots or '<li>no existing auto_sync_paths directory</li>'}</ul>"
+                      f"<p>{watch['batches']} change batch(es), {watch['files_synced']} file(s) synced, "
+                      f"last sync {_ago(watch['last_sync'])}.</p><p>Recent errors:</p><ul>{errors}</ul>")
     streams = ", ".join(e(t) for t in snap["progress_streams"]) or "none"
     head = ("Project", "State", "Files", "Chunks", "Symbols", "KB", "Embedding", "Rerank", "Warmed",
             "Running", "Queued", "Calls", "Errors", "Avg ms", "Last call")
@@ -700,6 +803,7 @@ th {{ background: #f2f2f2; }} code {{ font-size: 13px; }}
 {''.join(rows) or '<tr><td colspan="15">no project</td></tr>'}
 </table>
 <h2>Progress streams</h2><p>{streams}</p>
+<h2>File watching</h2>{watch_html}
 </body></html>
 """
 

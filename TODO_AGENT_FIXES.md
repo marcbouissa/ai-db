@@ -497,6 +497,15 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   memory, the running call and how many wait for the project lock, calls/errors/latency,
   open progress streams, auth mode (no keys); every value HTML-escaped; refreshes every
   `DAEMON_STATUS_REFRESH_S`. Tests: `tests/test_daemon_features.py`.
+- [x] Optional auto-watch: with `daemon.watch_sync_paths: true` the daemon watches
+  `auto_sync_paths` (reusing `ai_db/watcher.py`) and syncs changed files into their
+  projects. **Done 2026-10-11:** each existing `auto_sync_paths` directory syncs into the
+  project named after it (the auto-discover rule; with `auto_discover: false` it must be a
+  registered project); a catch-up sync at start, then `watcher.awatch_roots` batches
+  (`DAEMON_WATCH_DEBOUNCE_MS`, grouped by `watcher.group_by_root`, which `ai-db watch` now
+  uses too) go through `ProjectPool.sync_paths` under the project's lock; restarted on
+  config reload, stopped on shutdown; roots, batches, files synced and recent errors on the
+  status page. Tests (fake event source): `tests/test_daemon_features.py`.
 
 ## P1: Scene / video
 

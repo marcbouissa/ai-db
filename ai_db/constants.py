@@ -181,6 +181,7 @@ DAEMON_RATE_LIMIT = 100  # requests per DAEMON_RATE_WINDOW_S, per project and cl
 DAEMON_RATE_WINDOW_S = 60.0
 DAEMON_PROGRESS_KEEPALIVE_S = 30.0  # progress stream keepalive when no event arrives
 DAEMON_CLIENT_TIMEOUT_S = 30.0  # HTTP timeout of DaemonClient / DaemonManager requests
+DAEMON_WATCH_DEBOUNCE_MS = 300  # daemon.watch_sync_paths: changes batched over this window
 DAEMON_STATUS_REFRESH_S = 5  # GET /status/html reloads itself this often
 DAEMON_LOG_FILE = os.path.join(
     os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "ai-db", "daemon.log")

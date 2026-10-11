@@ -127,6 +127,8 @@ class DaemonConfig:
     auto_discover: bool = True
     shutdown_timeout: float = 30.0
     users: dict[str, DaemonUserConfig] = field(default_factory=dict)
+    # Watch `auto_sync_paths` and sync changed files into their projects.
+    watch_sync_paths: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -136,6 +138,7 @@ class DaemonConfig:
             "pid_file": self.pid_file,
             "auto_discover": self.auto_discover,
             "shutdown_timeout": self.shutdown_timeout,
+            "watch_sync_paths": self.watch_sync_paths,
             "projects": {
                 name: {"db_path": p.db_path, "config_path": p.config_path, "auto_start": p.auto_start}
                 for name, p in self.projects.items()
@@ -404,7 +407,7 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
     # Parse daemon configuration
     daemon_raw = _require_dict(data.get("daemon", {}), "daemon")
     _check_keys(daemon_raw, frozenset({"enabled", "host", "port", "pid_file", "projects", "auto_discover",
-                                       "shutdown_timeout", "users"}), "daemon")
+                                       "shutdown_timeout", "users", "watch_sync_paths"}), "daemon")
     daemon_enabled = bool(daemon_raw.get("enabled", False))
     daemon_host = daemon_raw.get("host", "127.0.0.1")
     if not isinstance(daemon_host, str):
@@ -444,6 +447,9 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         if not isinstance(allowed, list) or not all(isinstance(p, str) for p in allowed):
             raise AiDbConfigError(f"'daemon.users.{user_name}.projects' must be a list of project names")
         daemon_users[user_name] = DaemonUserConfig(projects=tuple(allowed))
+    watch_sync_paths = daemon_raw.get("watch_sync_paths", False)
+    if not isinstance(watch_sync_paths, bool):
+        raise AiDbConfigError("'daemon.watch_sync_paths' must be true or false")
 
     daemon = DaemonConfig(
         enabled=daemon_enabled,
@@ -454,6 +460,7 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         auto_discover=daemon_auto_discover,
         shutdown_timeout=daemon_shutdown_timeout,
         users=daemon_users,
+        watch_sync_paths=watch_sync_paths,
     )
 
     return AppConfig(
