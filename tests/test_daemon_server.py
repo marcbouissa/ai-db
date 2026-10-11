@@ -238,3 +238,15 @@ def test_client_sends_cwd_and_does_not_mutate_arguments(monkeypatch, tmp_path):
     assert args == {"project": "proj", "path": "."}
     assert sent["path"] == "/projects/proj/tools/call"
     assert sent["body"]["arguments"] == {"path": ".", "cwd": str(tmp_path)}
+
+
+def test_checkpoint_skips_a_project_closed_while_waiting(tmp_path):
+    async def scenario():
+        pool = server.ProjectPool(load_config(str(_write_config(tmp_path))))
+        db, _ = await pool.get_or_create("proj")
+        db.backend.close()  # what idle cleanup does between the snapshot and the lock
+        await pool.checkpoint_all()  # used to raise "Storage backend is closed"
+        pool.projects.pop("proj", None)
+        await pool.shutdown()
+
+    asyncio.run(scenario())

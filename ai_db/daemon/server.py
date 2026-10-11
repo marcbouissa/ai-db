@@ -219,6 +219,9 @@ class ProjectPool:
             if not isinstance(db.backend, SQLiteBackend):
                 continue  # only SQLite has a WAL to checkpoint
             async with self._exec_lock(name):
+                # Idle cleanup may have closed and dropped it while this loop waited for the lock.
+                if self.projects.get(name) is not db or db.backend.closed:
+                    continue
                 await asyncio.to_thread(db.backend.wal_checkpoint, "TRUNCATE")
 
     def list_projects(self) -> dict[str, ProjectStatus]:

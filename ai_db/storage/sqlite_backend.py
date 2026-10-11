@@ -167,6 +167,10 @@ class SQLiteBackend(ChunkRepository, VectorRepository, GraphRepository, MemoryRe
     def backend_name(self) -> str:
         return "sqlite"
 
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
     def _check_closed(self) -> None:
         if self._closed:
             raise RuntimeError("Storage backend is closed")
