@@ -14,7 +14,7 @@ Core tenets of the architecture:
 - **No Heavy Runtime Dependencies**: The core package needs only a small declared stack (tree-sitter, sqlite-vec, tiktoken, watchfiles, numpy) on top of the Python 3.10+ Standard Library (`ast`, `sqlite3`, `zlib`, `argparse`, `typing`, `json`, `hashlib`, `threading`). Torch and sentence-transformers are optional.
 - **Token Optimization First**: AI agents pay heavily for context window consumption. `ai-db` optimizes token consumption through progressive disclosure (`summary` -> `structure` -> `targeted` -> `full`) and alternative serialization formats (Stub skeletons and S-Expressions), achieving 50% to 70% token reductions.
 - **SOLID and KISS Design**: Clear layer boundaries, protocol-based abstractions, interchangeable storage engines, uniform cross-transport dispatching, and dependency injection.
-- **Sub-Millisecond Retrieval**: High-throughput SQLite WAL mode with FTS5 BM25 ranking, zlib level 9 compression for code chunk payloads, and in-memory semantic caching.
+- **Sub-Millisecond Retrieval**: High-throughput SQLite WAL mode with FTS5 BM25 ranking, zlib compression (`ZLIB_LEVEL`) for code chunk payloads, and a query-result cache invalidated by index generation.
 
 ### 1.1 High-Level Block Diagram
 
@@ -22,33 +22,34 @@ Core tenets of the architecture:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          Clients & AI Agent IDEs                            │
 │           (Claude Desktop, Cursor, Antigravity, Terminal CLI, Scripts)      │
-└───────────────────┬───────────────────────────────────────────┘
-                    │
-    ┌───────────────▼───────────────┐     ┌───────────────────────────────┐
-    │       CLI Interface           │     │      Stdio MCP Server         │
-    │     (ai-db / vectordb)        │     │    (JSON-RPC 2.0 stdio)       │
-    └───────────────┬───────────────┘     └───────────────┬───────────────┘
-                    │                                       │
-                    └───────────────────┬───────────────────┘
-                                        │
-                              ┌───────────────▼───────────────┐
+└───────────────────┬───────────────────────┬───────────────────┬─────────────┘
+                    │                       │                   │
+    ┌───────────────▼──────────┐ ┌──────────▼───────────┐ ┌─────▼───────────────────┐
+    │      CLI Interface       │ │   Stdio MCP Server   │ │   HTTP daemon (opt-in)  │
+    │     (ai_db/cli.py)       │ │(ai_db/transports/    │ │   (ai_db/daemon/)       │
+    │                          │ │       mcp.py)        │ │ warm VectorDB / project │
+    └───────────────┬──────────┘ └──────────┬───────────┘ └─────┬───────────────────┘
+                    └───────────────────────┼───────────────────┘
+                                            │
+                              ┌─────────────▼─────────────────┐
                               │   Unified ServiceDispatcher   │
                               │     (ai_db/dispatcher.py)     │
+                              │  + tool plugins (ai_db.tools) │
                               └───────────────┬───────────────┘
                                               │
          ┌────────────────────────────────────┼────────────────────────────────────┐
          │                                    │                                    │
 ┌────────▼────────┐                  ┌────────▼────────┐                  ┌────────▼────────┐
-│  Parser Subsys  │                  │  Search Engine  │                  │ Analyzer Engine │
-│ (ai_db/parser/) │                  │ (ai_db/search/) │                  │(ai_db/analyzer/)│
-│ AST & Chunking  │                  │ Indexer & BM25  │                  │Token Progressive│
-└────────┬────────┘                  └────────┬────────┘                  └────────┬────────┘
-         │                                    │                                    │
+│  Parser Subsys  │                  │  Search Engine  │                  │    Analysis     │
+│ (ai_db/parser/) │                  │ (ai_db/search/) │                  │(ai_db/analysis/)│
+│ AST & Chunking  │                  │ Indexer & BM25  │                  │ investigate,    │
+└────────┬────────┘                  └────────┬────────┘                  │ trace, analyze  │
+         │                                    │                           └────────┬────────┘
          └────────────────────────────────────┼────────────────────────────────────┘
                                               │
                               ┌───────────────▼───────────────┐
                               │   VectorDB Facade / Domain    │
-                              │       (ai_db/__init__.py)     │
+                              │       (ai_db/facade.py)       │
                               └───────────────┬───────────────┘
                                               │
                               ┌───────────────▼───────────────┐
@@ -70,11 +71,11 @@ Core tenets of the architecture:
 
 | Principle | Architectural Implementation in `ai-db` | Primary File Locations |
 |-----------|------------------------------------------|------------------------|
-| **Single Responsibility Principle (SRP)** | Every module has one, and only one, reason to change. Parsing ASTs does not query databases; storage backends do not format CLI output; transports do not parse ASTs. | `ai_db/parser/` (AST parsing only)<br>`ai_db/storage/` (persistence only)<br>`ai_db/search/` (indexing/ranking only)<br>`mcp_server.py`, `ai_db/daemon/` (protocol handling only) |
+| **Single Responsibility Principle (SRP)** | Every module has one, and only one, reason to change. Parsing ASTs does not query databases; storage backends do not format CLI output; transports do not parse ASTs. | `ai_db/parser/` (AST parsing only)<br>`ai_db/storage/` (persistence only)<br>`ai_db/search/` (indexing/ranking only)<br>`ai_db/transports/mcp.py`, `ai_db/daemon/` (protocol handling only) |
 | **Open/Closed Principle (OCP)** | Core indexing, querying, and analysis services are closed for modification but open for extension. New storage engines (e.g. DuckDB, PostgreSQL) and new transport adapters (e.g. WebSocket, gRPC) can be plugged in without modifying existing domain code. | `ai_db/storage/backend.py`<br>`ai_db/storage/factory.py`<br>`ai_db/dispatcher.py` |
 | **Liskov Substitution Principle (LSP)** | Any storage backend implementing `StorageBackend` can be substituted into `VectorDB` or `Indexer` without altering the correctness of the system. Implementations communicate strictly through typed `slots=True` domain DTOs. | `ai_db/storage/models.py`<br>`ai_db/storage/sqlite_backend.py`<br>`ai_db/storage/conformance.py` |
 | **Interface Segregation Principle (ISP)** | The storage contract is cleanly segregated into focused functional areas (Files, Chunks, Symbols, Cross-Refs, Diagnostics, Skills, Context Memory, Analysis Refs, State/Cache). Domain services invoke only the interface subsets they need. | `ai_db/storage/backend.py` |
-| **Dependency Inversion Principle (DIP)** | High-level business logic (`VectorDB`, `Indexer`, `QueryEngine`, `SkillRouter`, `ContextMemory`, `AnalyzerEngine`) depends on the abstract `StorageBackend` contract, never on concrete database connection drivers (`sqlite3.Connection`). Dependencies are injected via constructors. | `ai_db/__init__.py`<br>`ai_db/search/indexer.py`<br>`ai_db/search/query.py` |
+| **Dependency Inversion Principle (DIP)** | High-level business logic (`VectorDB`, `Indexer`, `QueryEngine`, `SkillRouter`, `ContextMemory`, `AnalyzerEngine`) depends on the abstract `StorageBackend` contract, never on concrete database connection drivers (`sqlite3.Connection`). Dependencies are injected via constructors. | `ai_db/facade.py`<br>`ai_db/search/indexer.py`<br>`ai_db/search/query.py` |
 
 ---
 
@@ -97,7 +98,7 @@ To satisfy LSP and eliminate database row coupling (`sqlite3.Row`, raw tuples, o
 
 ### 3.2 StorageBackend Abstract Base Class
 
-`StorageBackend` (`ai_db/storage/backend.py`) defines the contract that every storage engine must implement:
+`StorageBackend` (`ai_db/storage/backend.py`) defines the contract that every storage engine must implement. Every method is abstract (there are no `NotImplementedError` defaults); an excerpt:
 
 ```python
 from abc import ABC, abstractmethod
@@ -162,8 +163,16 @@ class StorageBackend(ABC):
 The default engine (`ai_db/storage/sqlite_backend.py`) provides embedded persistence with no server to run:
 - **Write-Ahead Logging (WAL)**: `PRAGMA journal_mode=WAL` enables concurrent readers alongside writers without mutual locking.
 - **FTS5 Full-Text Indexing**: Fast BM25 keyword matching across code tokens and skill documentation.
-- **zlib Level 9 Compression**: Code chunks are compressed into binary blobs (`zcontent`) upon insertion and decompressed transparently on retrieval, saving 60–80% disk space.
+- **zlib Compression** (`ZLIB_LEVEL`): Code chunks are compressed into binary blobs (`zcontent`) upon insertion and decompressed transparently on retrieval, saving 60–80% disk space.
 - **Cascading Deletions**: Deleting a file cascades to associated chunks, symbols, and cross-references.
+- **One write path**: every public write method runs as one `transaction()` (`@_writes`,
+  process-wide `_WRITE_LOCK`, savepoints when nested), so a failed write never leaves rows behind.
+- **Repositories**: `SQLiteBackend` (`sqlite_backend.py`) owns the connection, schema,
+  transactions, `status`/`optimize`; the data access is split into one mixin per concern in
+  `ai_db/storage/sqlite_repos/` (`chunks`: files, chunks, FTS, diagnostics, annotations;
+  `vectors`; `graph`: symbols, refs, centrality; `memory`: skills, contexts, recall vectors;
+  `cache`: query cache, query log, analysis refs, semantic cache; `state`), all sharing the
+  backend's connection and `transaction()`.
 
 ### 3.5 Recall extensions (`ai_db/ext/recall.py`)
 Skill routing (`route_skills`) and context recall (`query_contexts`) always run keyword
@@ -296,12 +305,17 @@ class ServiceDispatcher:
 
 ### 4.2 Transport Adapters
 - **CLI (`ai_db/cli.py`)**: Translates argparse commands to dispatcher tool calls. Formats output for terminal consumption (colored tables, text outlines) or JSON (`--format json`).
-- **MCP Server (`mcp_server.py`)**: Exposes registered tools over stdio JSON-RPC 2.0. Dynamically exports all tools in `tools/list` and executes calls via `dispatcher.execute()`. A `tools/call` carrying `params._meta.progressToken` streams `notifications/progress` frames while a long `sync` runs.
+- **MCP Server (`ai_db/transports/mcp.py`, `ai-db mcp`)**: Exposes registered tools over stdio JSON-RPC 2.0. Dynamically exports all tools in `tools/list` and executes calls via `dispatcher.execute()`. A `tools/call` carrying `params._meta.progressToken` streams `notifications/progress` frames while a long `sync` runs. The root `mcp_server.py` is a shim for existing `python mcp_server.py` client configs.
 - **Daemon (`ai_db/daemon/`)**: a FastAPI server holding one warm `VectorDB` +
   `ServiceDispatcher` per project. Tool calls run in worker threads under a per-project
   lock; the client's cwd travels with each call (`ai_db.utils.client_cwd`) so relative
   paths resolve as they would in the CLI. Auth, rate limiting and the request log are one
-  middleware (`guard`). See README "Daemon Mode".
+  middleware (`guard`). Auth fails closed once any key is set: per-project keys
+  (`AI_DB_API_KEYS`), per-user keys (`AI_DB_USER_KEYS`, each user's allowed projects in
+  `daemon.users`) and the admin key (`AI_DB_ADMIN_KEY`, the only key for management
+  routes). `GET /status/html` is a read-only status page (loopback clients or the admin
+  key). With `daemon.watch_sync_paths` the daemon watches `auto_sync_paths`
+  (`ai_db/watcher.py`) and syncs changed files into their projects. See README "Daemon Mode".
 
 ### 4.2a Tool plugins (`ai_db/plugins.py`)
 A package adds tools by declaring an entry point in the `ai_db.tools` group whose value is
@@ -409,69 +423,40 @@ receiver TEXT              -- e.g., 'self.db', 'asyncio', 'module.func'
 
 ## 6. Performance & Telemetry Subsystem
 
-The telemetry subsystem (`ai_db/telemetry/`) provides non-intrusive, zero-overhead observability for search latency, token compression efficiency, cache hit rates, and codebase weak points.
+Telemetry (`ai_db/telemetry/`) is derived from the query log: every logged tool call
+(`query`, `investigate`, `analyze`, ...) is one `query_log` row (the newest
+`QUERY_LOG_KEEP`), written by `VectorDB` with its latency, cache hit and per-stage timings.
+`TelemetryTracker` only reads: every figure covers the same window, concurrent processes
+append rows instead of overwriting a shared blob, and `--reset` clears the log.
 
-### 6.1 Telemetry Metrics Data Structure
+### 6.1 Telemetry Summary
 
 ```json
 {
+  "window": {"calls": 420, "oldest": 1760000000.0, "newest": 1760003600.0, "keep": 10000},
   "latency": {
-    "sqlite_wal": {
-      "count": 420,
-      "min_ms": 0.45,
-      "max_ms": 12.30,
-      "avg_ms": 1.82,
-      "p50_ms": 1.40,
-      "p95_ms": 3.80,
-      "p99_ms": 6.20,
-      "qps": 549.45
-    }
+    "count": 420, "min_ms": 0.45, "max_ms": 12.3, "avg_ms": 1.82,
+    "p50_ms": 1.4, "p95_ms": 3.8, "p99_ms": 6.2,
+    "by_tool": {"query": {"count": 300, "avg_ms": 1.2, "p50_ms": 1.0, "p95_ms": 2.9, "...": "..."}}
   },
-  "tokens": {
-    "raw_tokens": 125000,
-    "stub_tokens": 62500,
-    "sexp_tokens": 46250,
-    "json_tokens": 156250,
-    "net_saved_tokens": 62500,
-    "savings_pct": 50.0,
-    "estimated_cost_saved_usd": 0.1875
-  },
-  "cache": {
-    "lookups": 85,
-    "hits": 68,
-    "misses": 17,
-    "hit_rate_pct": 80.0,
-    "tokens_saved": 45200
-  },
-  "storage": {
-    "db_size_kb": 1420.0,
-    "table_rows": {
-      "files": 45,
-      "chunks": 320,
-      "symbols": 510
-    }
-  },
-  "weak_points": {
-    "syntax_error_density_pct": 2.2,
-    "complexity_hotspots": [
-      { "filepath": "src/core.py", "chunks": 48, "symbols": 62 }
-    ],
-    "unindexed_or_stale_files": 0
-  }
+  "cache": {"lookups": 420, "hits": 336, "misses": 84, "hit_rate_pct": 80.0},
+  "stages": {"total": {"count": 420, "p50_ms": 1.4, "p95_ms": 3.8}, "bm25": {"...": "..."}},
+  "storage": {"db_size_kb": 1420.0, "table_rows": {"files": 45, "chunks": 320, "symbols": 510}}
 }
 ```
 
-### 6.2 Zero-Overhead Guarantees
-- **In-Memory Tracking**: Latency measurements use `time.perf_counter()`. Percentiles and metrics are accumulated in lightweight in-memory ring buffers with O(1) appending overhead.
-- **Persistence Without Background Threads**: Metrics persist into the database's `session_state` table upon explicit flush or session close, requiring no background monitoring threads.
-- **Zero-Division Protection**: All ratios and averages explicitly guard against zero samples, returning clean `0.0` or `1.0` defaults.
+Weak points (syntax error density, complexity hotspots, unindexed/stale files) come from
+`TelemetryTracker.compute_weak_points()` (`StorageBackend.get_weak_points`).
+
+### 6.2 Guarantees
+- **One row per call**: the only write is the query-log row the call already produces.
+- **Zero-Division Protection**: an empty log reports zeros, not errors.
 - **Memory Database Safe**: Functions safely when running against `:memory:` databases.
 
 ---
 
 ## 7. Repository Directory Breakdown
 
-```
 ```
 ai-db/
 ├── pyproject.toml              # PEP 517/518 build config, metadata, console scripts, extras
@@ -480,127 +465,94 @@ ai-db/
 ├── LICENSE                     # MIT Open-Source License
 ├── README.md                   # Public user guide, quickstart, MCP setup, CLI reference
 ├── ARCHITECTURE.md             # This document: architectural specification and SOLID design
-├── vectordb.py                 # Backward-compatible CLI and import facade
-├── mcp_server.py               # Model Context Protocol stdio JSON-RPC server
+├── vectordb.py                 # Backward-compatible CLI and import facade (root py-module)
+├── mcp_server.py               # Shim: `python mcp_server.py` runs ai_db.transports.mcp
 ├── watch_sync.sh               # Portable filesystem auto-sync script
 │
 ├── ai_db/                      # Core package
-│   ├── __init__.py             # VectorDB facade: the object the transports hold
+│   ├── __init__.py             # Lazy public exports (ai_db/_lazy.py)
+│   ├── facade.py               # VectorDB: the object the transports hold
 │   ├── cli.py                  # CLI argument parsing, subcommands, output formatting
 │   ├── dispatcher.py           # Unified ServiceDispatcher tool registry
+│   ├── plugins.py              # `ai_db.tools` entry points (tool plugins)
 │   ├── config.py               # AppConfig loading and validation (CONFIG_VERSION = 2)
-│   ├── config_template.py      # Fresh-config builder and v1 -> v2 migration
-│   ├── constants.py            # All tunable numbers, per TODO rule 5
+│   ├── config_template.py      # Fresh-config builder and migrations
+│   ├── constants.py            # All tunable numbers
 │   ├── device.py               # torch device resolution for embed/rerank
 │   ├── errors.py               # The project's exception types
 │   ├── health.py               # Health and readiness reporting
 │   ├── http_client.py          # JSON-over-HTTPS client for hosted model providers
-│   ├── ignorer.py              # Gitignore and path exclusion rules
+│   ├── ignorer.py              # .aidbignore and path exclusion rules
+│   ├── lazy.py                 # Lazy embedder/reranker (models load on first use)
 │   ├── logger.py               # Standardized logging utilities
+│   ├── mcp_config.py           # MCP client config snippets (`ai-db init-agent`)
+│   ├── output_filter.py        # `ai-db run` / `filter`: command output under a budget
+│   ├── output_store.py         # Stored raw outputs for re-filtering
+│   ├── quiet.py                # Quiet stderr for third-party libraries
+│   ├── tokens.py               # count_tokens (tiktoken), the one token counter
 │   ├── utils.py                # Hashing, tokenization, project detection utilities
-│   ├── watcher.py              # File change polling and watch daemon
+│   ├── watcher.py              # watchfiles: `ai-db watch` and the daemon's auto-watch
+│   │
+│   ├── transports/             # Protocol adapters over the dispatcher
+│   │   └── mcp.py              # Stdio MCP server (JSON-RPC 2.0)
+│   │
+│   ├── daemon/                 # Opt-in HTTP daemon (FastAPI)
+│   │   ├── server.py           # Project pool, auth, status page, auto-watch, routes
+│   │   ├── client.py           # DaemonClient (the CLI/MCP side)
+│   │   ├── manager.py          # start/stop/register (`ai-db daemon ...`)
+│   │   ├── models.py           # Request/response models
+│   │   └── _json.py            # JSON helpers
 │   │
 │   ├── storage/                # Pluggable storage layer
-│   │   ├── __init__.py         # Storage exports
-│   │   ├── backend.py          # StorageBackend ABC contract
+│   │   ├── backend.py          # StorageBackend ABC contract (all abstract)
 │   │   ├── models.py           # Strongly typed slots=True domain DTOs
 │   │   ├── factory.py          # StorageBackendFactory (URI & connection resolution)
-│   │   ├── sqlite_backend.py   # SQLite backend (WAL, FTS5, BM25, zlib, vec0)
+│   │   ├── sqlite_backend.py   # SQLiteBackend: connection, schema, transactions
+│   │   ├── sqlite_repos/       # SQLite repositories: chunks, vectors, graph, memory, cache, state
 │   │   ├── conformance.py      # Backend-agnostic contract suite
 │   │   └── database.py         # Backward-compatible Database wrapper
 │   │
 │   ├── parser/                 # Tree-sitter parsing, symbols and chunking
-│   │   ├── __init__.py         # Parser exports
+│   │   ├── languages.py        # Extension -> grammar map, per-language selection
+│   │   ├── naming.py           # One naming rule for chunks and call-graph scopes
 │   │   ├── ts_graph.py         # extract_graph: symbols, cross-refs, syntax errors
-│   │   ├── queries/            # One .scm per language (9 languages)
-│   │   ├── ast_visitor.py      # Non-tree-sitter outline extraction
+│   │   ├── receiver_types.py   # Python receiver -> class resolution
+│   │   ├── queries/            # One .scm per language
+│   │   ├── ast_visitor.py      # File outlines
 │   │   ├── chunker.py          # Tree-sitter-backed code block chunker
 │   │   ├── annotations.py      # Inline annotation scanner (TODO, FIXME, HACK)
-│   │   └── linters.py          # Multi-language external linter runners
+│   │   └── linters.py          # parse_source and external linters for non-grammar files
 │   │
 │   ├── search/                 # Search orchestration & ranking
-│   │   ├── __init__.py         # Search exports
 │   │   ├── indexer.py          # Incremental indexer, post-sync hooks, progress
 │   │   ├── retriever.py        # Retrieval stages and snippet generation
 │   │   ├── query.py            # QueryEngine: lexical / hybrid / vector
-│   │   ├── query_builder.py    # SQL construction for the FTS and vector paths
+│   │   ├── query_builder.py    # FTS query construction
 │   │   ├── ranking.py          # Score fusion, RRF, exact-symbol boost
+│   │   ├── freshness.py        # Stale result files: re-sync or flag
 │   │   ├── cache.py            # Query cache keys and generation invalidation
 │   │   └── skills.py           # SKILL.md parsing and skill routing
 │   │
-│   ├── analysis/               # Investigation packs and call-flow tracing
-│   │   ├── __init__.py         # Analysis exports
+│   ├── analysis/               # Investigation, tracing, per-file analysis
 │   │   ├── investigate.py      # Investigator: locate/explain/impact/flow/diff packs
 │   │   ├── pack.py             # InvestigationPack / EntryPoint / Evidence DTOs
 │   │   ├── resolve.py          # Qualified-name resolver
 │   │   ├── trace.py            # TraceEngine: call-flow execution order
-│   │   └── trace_format.py     # text / json / mermaid trace renderers
+│   │   ├── trace_format.py     # text / json / mermaid trace renderers
+│   │   ├── analyze.py          # AnalyzerEngine: analyze / locate (progressive disclosure)
+│   │   ├── refs.py             # ReferenceStore: `ref:<hash>` handles for `expand`
+│   │   ├── diff.py             # The one diff engine (git hunks, index comparison)
+│   │   └── formatters.py       # Pack/analysis serializers (stub, sexp, json)
 │   │
-│   ├── embed/                  # Embedding providers
-│   │   ├── __init__.py         # Embed exports
-│   │   ├── base.py             # EmbeddingProvider protocol
-│   │   ├── registry.py         # Provider resolution
-│   │   ├── st_provider.py      # sentence-transformers (the [local-embed] extra)
-│   │   ├── hosted.py           # Hosted embedding API providers
-│   │   ├── indexing.py         # Bulk vector backfill
-│   │   └── defaults.py         # Suggested model / weight defaults
-│   │
-│   ├── rerank/                 # Reranking providers
-│   │   ├── __init__.py         # Rerank exports
-│   │   ├── base.py             # RerankProvider protocol
-│   │   ├── registry.py         # Provider resolution
-│   │   └── providers.py        # Cross-encoder rerankers
-│   │
-│   ├── eval/                   # Offline evaluation harness
-│   │   ├── __init__.py         # Eval exports
-│   │   ├── harness.py          # Golden-set runners (retrieval, pack, skills)
-│   │   └── metrics.py          # recall@k, MRR, nDCG, RRF, LCS order accuracy
-│   │
-│   ├── analyzer/               # Token-optimized progressive disclosure
-│   │   ├── __init__.py         # Analyzer exports
-│   │   ├── engine.py           # AnalyzerEngine (multi-depth AST inspection)
-│   │   ├── formatters.py       # Serializers (stub skeleton, sexp, json)
-│   │   └── references.py       # Progressive disclosure handle store (ref:<hash>)
-│   │
-│   ├── memory/                 # Session context memory
-│   │   ├── __init__.py         # Memory exports
-│   │   └── context.py          # ContextMemory (session snapshots and recall)
-│   │
-│   │
-│   └── telemetry/              # Performance & token telemetry
-│       ├── __init__.py         # Telemetry exports
-│       ├── stages.py           # Per-stage timing attribution
-│       └── tracker.py          # TelemetryTracker collection coordinator
+│   ├── embed/                  # Embedding providers (base, registry, st_provider, hosted, indexing, defaults)
+│   ├── rerank/                 # Reranking providers (base, registry, providers)
+│   ├── ext/                    # Extensions: recall providers (recall.py, vector_recall.py), chunker base
+│   ├── eval/                   # Offline evaluation harness (harness.py, metrics.py)
+│   ├── memory/                 # Session context memory (context.py)
+│   └── telemetry/              # Telemetry derived from the query log (tracker.py, stages.py)
 │
-├── tests/                      # Automated test suite
-│   ├── conftest.py             # Hermetic isolation fixtures and CLI runner
-│   ├── fake_providers.py       # Deterministic embedding/rerank stand-ins
-│   ├── test_packaging.py       # Packaging, entry points, extras, gitignore
-│   ├── test_storage.py         # StorageBackend, SQLite, Factory, DTOs
-│   ├── test_storage_conformance.py  # Backend-agnostic contract suite
-│   ├── test_storage_adversarial_m2.py # Adversarial storage cases
-│   ├── test_transports.py      # CLI, MCP, ServiceDispatcher parity
-│   ├── test_telemetry.py       # Latency, token compression, cache, weak points
-│   ├── test_parser.py          # Parsing, outlines, syntax diagnostics, chunking
-│   ├── test_ts_graph.py        # Tree-sitter queries for all 9 languages
-│   ├── test_chunker_ts.py      # Tree-sitter-backed chunking
-│   ├── test_search.py          # Incremental indexing, BM25 ranking, skill routing
-│   ├── test_lexical.py         # Lexical-only retrieval paths
-│   ├── test_investigate.py     # Investigation packs, modes, budgets
-│   ├── test_config.py          # Config v2 validation and migration
-│   ├── test_embeddings.py      # Embedding providers and vector search
-│   ├── test_rerank.py          # Rerank providers
-│   ├── test_cache_watch.py     # Query cache and file watcher
-│   ├── test_observability.py   # Health and telemetry surfaces
-│   ├── test_eval_metrics.py    # Eval harness and baseline comparison
-│   ├── test_sanitization.py    # Zero personal paths, hygiene audit
-│   ├── test_phase11.py         # Config migration, skills, context vectors
-│   ├── test_phase13.py         # Device resolution, write lock, incremental centrality
-│   ├── test_phase14.py         # MCP progress, diff mode, cache isolation
-│   ├── test_bench_index.py     # Indexer benchmark (marked `bench`)
-│   ├── test_bench_vectors.py   # exact vs vec0 vector benchmark (marked `bench`)
-│   └── test_bench_gpu.py       # CPU vs CUDA embedding benchmark (marked `bench`)
-│
+├── packages/ai-db-scene/       # Plugin package: 3D scene and video tools (`ai_db.tools`)
+├── tests/                      # Automated test suite (core; the plugin has its own)
 ├── eval/                       # Golden sets, baselines and recorded results
 │   ├── golden/                 # Query sets per eval kind
 │   ├── baseline*.json          # CI regression gates
@@ -609,6 +561,11 @@ ai-db/
 └── .github/workflows/ci.yml    # pytest, ruff, mypy and the eval gates
 ```
 
+### 7.1 Scene and video (plugin)
+The 3D scene and video tools live in `packages/ai-db-scene/` (its own `pyproject.toml`,
+tests and docs). Core knows nothing about them: the plugin registers its tools through
+the `ai_db.tools` entry point (§4.2a) and reads its settings from `plugins.scene`. Core
+runs, and its tests pass, with the plugin uninstalled.
 
 ---
 

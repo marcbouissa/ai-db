@@ -58,8 +58,8 @@ depends on is complete.
 | Skills / memory | `ai_db/search/skills.py`, `ai_db/memory/context.py` |
 | Analyzer | `ai_db/analysis/analyze.py`, `ai_db/analysis/refs.py` |
 | Eval | `ai_db/eval/harness.py`, `eval/golden/*.jsonl`, `eval/results/*.json` |
-| Transports | `ai_db/dispatcher.py`, `mcp_server.py` (the HTTP server was removed) |
-| Root facades | `vectordb.py` (restored as a Python module in `0dc9923`), `mcp_server.py` |
+| Transports | `ai_db/dispatcher.py`, `ai_db/transports/mcp.py`, `ai_db/daemon/` (the old `ai-db serve` HTTP server was removed; the daemon is the HTTP transport) |
+| Root facades | `vectordb.py` (restored as a Python module in `0dc9923`), `mcp_server.py` (shim) |
 
 ---
 

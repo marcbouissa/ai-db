@@ -720,12 +720,20 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   root facade in `TODO_NEXT.md`); deleting it reverses that decision, so the user decides.
 
 ### K8. Docs drift
-- [ ] `ARCHITECTURE.md`: HTTP "removed" claim (§4) vs the daemon (per H decision);
+- [x] `ARCHITECTURE.md`: HTTP "removed" claim (§4) vs the daemon (per H decision);
   nonexistent `ai_db/transports/` (until K4); `vectordb` console script not in
   `pyproject.toml`; daemon, scene and video subsystems undocumented. Same "HTTP removed" claim
   in `TODO_NEXT.md` orientation.
 - **Check:** every path mentioned in `ARCHITECTURE.md` exists
   (`grep -o 'ai_db/[a-z_/]*\.py' ARCHITECTURE.md | xargs ls`).
+- **Done 2026-10-11:** §4 already framed the daemon as the HTTP transport that replaced
+  `ai-db serve`; now the diagram has the daemon and `ai_db/transports/mcp.py`, §3.3 the
+  write path and the `sqlite_repos/` split, §4.2 the daemon's auth (user keys), status page
+  and auto-watch, §6 the query-log telemetry, §7 the real tree (facade, transports,
+  daemon, analysis after K1, naming/languages, `sqlite_repos`) plus §7.1 for the
+  scene/video plugin. The `vectordb` console script is in `pyproject.toml` (the claim was
+  stale). `TODO_NEXT.md` orientation updated; README "Daemon Mode" documents the new
+  daemon features. Check passes (every `ai_db/...py` path exists).
 
 ### K9. Repo hygiene (binaries done)
 - [x] ~12.5 MB of renders/`.blend` tracked under `eval/showcase/oval_office_v2_out/`; ~19 MB
@@ -757,6 +765,8 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   Core runs and its tests pass with the plugin uninstalled (24 tools; 65 with it). CI
   installs and type-checks both. Remaining K10 debt: K7 decides what happens to the
   `ai_db.chunkers` USD/segmentation chunkers that moved with it.
+  **Skipped 2026-10-11 (debt):** still open with the K7 `ai_db.chunkers` bullet, which needs
+  a decision spanning core and the plugin (see the skip note there).
 
 ### K11. Showcase scripts bypass the pipeline
 - [ ] `eval/showcase/oval_office_v2.py` is hand-authored by the lead model (hardcoded

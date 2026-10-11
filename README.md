@@ -334,6 +334,18 @@ ai-db daemon status
   routes take that project's key or the admin key; management routes (`/projects`,
   `/metrics`, `/query/cross-project`, `/daemon/*`) take only the admin key. Clients read
   `AI_DB_API_KEY` and `AI_DB_ADMIN_KEY`.
+- **Per-user keys (shared machines)**: `AI_DB_USER_KEYS="alice=key1,bob=key2"` plus, in the
+  config, the projects each user may use (`"*"` = all):
+  `"daemon": {"users": {"alice": {"projects": ["web", "api"]}, "bob": {"projects": ["*"]}}}`.
+  Setting it turns auth on (fail closed); a user key opens only that user's project routes,
+  never management routes, and a key without a `daemon.users` entry opens nothing. The
+  access log names the caller (`user:alice`), never the key.
+- **Status page**: `GET /status/html` (read-only, refreshes itself): projects, model load
+  state, the running call and the queue per project, progress streams, uptime, file
+  watching. Served to loopback clients; anyone else needs the admin key.
+- **Auto-watch**: `"daemon": {"watch_sync_paths": true}` watches every `auto_sync_paths`
+  directory and syncs changed files into the project named after the directory (catch-up
+  sync at start, then debounced batches).
 - **Rate limiting**: per project and client IP (default 100 req/min), `429` when exceeded
 - **Logs**: `~/.local/state/ai-db/daemon.log` (`$XDG_STATE_HOME`) when run in the background
 - **WAL checkpointing**: periodic SQLite `PRAGMA wal_checkpoint(TRUNCATE)`
