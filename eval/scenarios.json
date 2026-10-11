@@ -354,13 +354,13 @@
           "query": "embed_missing",
           "ground_truth": {
             "recall": [
-              "ai_db/__init__.py"
+              "ai_db/facade.py"
             ],
             "symbol_recall": []
           }
         },
         {
-          "query": "materialize_tracked",
+          "query": "git_worktree",
           "ground_truth": {
             "recall": [
               "ai_db/cli.py"

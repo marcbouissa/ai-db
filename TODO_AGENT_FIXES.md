@@ -394,9 +394,10 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - **Done 2026-10-11:** exact matching (chunk labels `def X (part i/n)` reduced first);
   `harness.git_worktree()` (detached, removed on exit) replaces `materialize_tracked`;
   `A..B` diff items are indexed from a worktree at B (own project) and diffed against A.
-  Stale golden entries fixed (`VectorDB.embed_missing` lives in `ai_db/facade.py`; the
-  removed `ai_db/server/http_server.py` → `ai_db/daemon/server.py`; `materialize_tracked`
-  → `git_worktree`). Baselines: lexical recall@10 0.825 → 0.8 (two class expectations,
+  Stale golden entries fixed (`VectorDB.embed_missing` lives in `ai_db/facade.py`;
+  `materialize_tracked` → `git_worktree`; `eval/scenarios.json` follows; the documented
+  known-unreachable `http_server.py` entry is kept). Baselines: lexical recall@10
+  0.825 → 0.775 (two class expectations,
   `ExternalLinter` and `AidbIgnore`, were only "hit" by their methods), pack 0.9 → 0.9,
   polyglot 1.0 → 1.0, diff 1.0 → 1.0. Note: the lexical/pack corpus is this repo, so
   unrelated commits move these numbers by a query or two (one BM25 near-tie,

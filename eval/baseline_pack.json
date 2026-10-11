@@ -127,5 +127,5 @@
       "tokens": 7951
     }
   ],
-  "_note": "Re-recorded 2026-10-11 (G10): exact symbol matching (the last dotted component, or the qualified name for a dotted expectation; it was a substring test), the corpus materialised as a git worktree at HEAD, and stale golden entries fixed (VectorDB.embed_missing moved to ai_db/facade.py; the removed ai_db/server/http_server.py -> ai_db/daemon/server.py; materialize_tracked -> git_worktree). pack_recall 0.9 -> 0.9."
+  "_note": "Re-recorded 2026-10-11 (G10): exact symbol matching (the last dotted component, or the qualified name for a dotted expectation; it was a substring test), the corpus materialised as a git worktree at HEAD, and stale golden entries fixed (VectorDB.embed_missing moved to ai_db/facade.py; materialize_tracked -> git_worktree; the known-unreachable http_server.py entry is kept, see eval/scenarios.json). pack_recall 0.9 -> 0.9."
 }
