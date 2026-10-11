@@ -1,0 +1,61 @@
+{
+ "spec": {
+  "setting": {
+   "kind": "outdoor",
+   "bounds_m": [
+    20,
+    16,
+    8
+   ]
+  },
+  "objects": [
+   {
+    "id": "bench",
+    "category": "bench",
+    "count": 2
+   },
+   {
+    "id": "tree",
+    "category": "tree",
+    "count": 3
+   },
+   {
+    "id": "lamp",
+    "category": "street_lamp"
+   },
+   {
+    "id": "bin",
+    "category": "trash_can"
+   },
+   {
+    "id": "fountain",
+    "category": "fountain",
+    "hero": true
+   }
+  ],
+  "relations": [
+   {
+    "a": "fountain",
+    "rel": "centered_in",
+    "b": "room"
+   },
+   {
+    "a": "bench",
+    "rel": "facing",
+    "b": "fountain"
+   },
+   {
+    "a": "bin",
+    "rel": "beside",
+    "b": "bench"
+   }
+  ]
+ },
+ "expect": {
+  "instances": 8,
+  "categories": {
+   "tree": 3,
+   "bench": 2
+  }
+ }
+}

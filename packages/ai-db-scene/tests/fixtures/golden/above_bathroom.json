@@ -1,0 +1,55 @@
+{
+ "spec": {
+  "setting": {
+   "kind": "indoor",
+   "bounds_m": [
+    3,
+    2.5,
+    2.6
+   ],
+   "style": "modern"
+  },
+  "objects": [
+   {
+    "id": "sink",
+    "category": "sink"
+   },
+   {
+    "id": "mirror",
+    "category": "mirror"
+   },
+   {
+    "id": "toilet",
+    "category": "toilet"
+   }
+  ],
+  "relations": [
+   {
+    "a": "sink",
+    "rel": "against_wall",
+    "b": "wall_north"
+   },
+   {
+    "a": "mirror",
+    "rel": "against_wall",
+    "b": "wall_north"
+   },
+   {
+    "a": "mirror",
+    "rel": "above",
+    "b": "sink"
+   },
+   {
+    "a": "toilet",
+    "rel": "against_wall",
+    "b": "wall_east"
+   }
+  ]
+ },
+ "expect": {
+  "instances": 3,
+  "categories": {
+   "mirror": 1
+  }
+ }
+}

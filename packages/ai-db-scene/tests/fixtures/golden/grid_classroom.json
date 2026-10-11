@@ -1,0 +1,54 @@
+{
+ "spec": {
+  "setting": {
+   "kind": "indoor",
+   "bounds_m": [
+    10,
+    8,
+    3
+   ]
+  },
+  "objects": [
+   {
+    "id": "whiteboard",
+    "category": "whiteboard"
+   },
+   {
+    "id": "teacher_desk",
+    "category": "desk"
+   },
+   {
+    "id": "desk",
+    "category": "desk",
+    "grid": {
+     "rows": 3,
+     "cols": 4
+    }
+   }
+  ],
+  "relations": [
+   {
+    "a": "whiteboard",
+    "rel": "against_wall",
+    "b": "wall_north"
+   },
+   {
+    "a": "teacher_desk",
+    "rel": "in_front_of",
+    "b": "whiteboard",
+    "gap_m": 1.0
+   },
+   {
+    "a": "desk",
+    "rel": "facing",
+    "b": "whiteboard"
+   }
+  ]
+ },
+ "expect": {
+  "instances": 14,
+  "categories": {
+   "desk": 13
+  }
+ }
+}

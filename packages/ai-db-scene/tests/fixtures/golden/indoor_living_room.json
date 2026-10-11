@@ -1,0 +1,81 @@
+{
+ "spec": {
+  "setting": {
+   "kind": "indoor",
+   "bounds_m": [
+    6,
+    5,
+    2.8
+   ],
+   "style": "scandinavian"
+  },
+  "objects": [
+   {
+    "id": "sofa",
+    "category": "sofa",
+    "hero": true
+   },
+   {
+    "id": "table",
+    "category": "coffee_table"
+   },
+   {
+    "id": "rug",
+    "category": "rug"
+   },
+   {
+    "id": "armchair",
+    "category": "armchair",
+    "count": 2
+   },
+   {
+    "id": "tv",
+    "category": "tv_stand"
+   },
+   {
+    "id": "lamp",
+    "category": "floor_lamp"
+   }
+  ],
+  "relations": [
+   {
+    "a": "sofa",
+    "rel": "against_wall",
+    "b": "wall_north"
+   },
+   {
+    "a": "tv",
+    "rel": "against_wall",
+    "b": "wall_south"
+   },
+   {
+    "a": "sofa",
+    "rel": "facing",
+    "b": "tv"
+   },
+   {
+    "a": "table",
+    "rel": "in_front_of",
+    "b": "sofa",
+    "gap_m": 0.45
+   },
+   {
+    "a": "armchair",
+    "rel": "beside",
+    "b": "table"
+   },
+   {
+    "a": "lamp",
+    "rel": "beside",
+    "b": "sofa"
+   }
+  ]
+ },
+ "expect": {
+  "instances": 7,
+  "categories": {
+   "armchair": 2,
+   "sofa": 1
+  }
+ }
+}

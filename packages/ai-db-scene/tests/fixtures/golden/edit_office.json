@@ -1,0 +1,84 @@
+{
+ "spec": {
+  "setting": {
+   "kind": "indoor",
+   "bounds_m": [
+    5,
+    4,
+    2.7
+   ]
+  },
+  "objects": [
+   {
+    "id": "desk",
+    "category": "desk",
+    "hero": true
+   },
+   {
+    "id": "chair",
+    "category": "office_chair"
+   },
+   {
+    "id": "shelf",
+    "category": "bookshelf"
+   }
+  ],
+  "relations": [
+   {
+    "a": "desk",
+    "rel": "against_wall",
+    "b": "wall_north"
+   },
+   {
+    "a": "chair",
+    "rel": "in_front_of",
+    "b": "desk",
+    "gap_m": 0.1
+   },
+   {
+    "a": "shelf",
+    "rel": "against_wall",
+    "b": "wall_west"
+   }
+  ]
+ },
+ "expect": {
+  "instances": 3,
+  "categories": {
+   "desk": 1
+  }
+ },
+ "edit_steps": [
+  {
+   "op": "add_object",
+   "object": {
+    "id": "plant",
+    "category": "potted_plant"
+   },
+   "relations": [
+    {
+     "a": "plant",
+     "rel": "beside",
+     "b": "shelf"
+    }
+   ]
+  },
+  {
+   "op": "remove_object",
+   "id": "shelf"
+  },
+  {
+   "op": "update_setting",
+   "set": {
+    "style": "industrial"
+   }
+  }
+ ],
+ "expect_after_edit": {
+  "instances": 3,
+  "categories": {
+   "potted_plant": 1,
+   "bookshelf": 0
+  }
+ }
+}

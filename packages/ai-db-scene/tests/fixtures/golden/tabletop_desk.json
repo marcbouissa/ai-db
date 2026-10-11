@@ -1,0 +1,64 @@
+{
+ "spec": {
+  "setting": {
+   "kind": "tabletop",
+   "bounds_m": [
+    2.5,
+    2.0,
+    1.5
+   ]
+  },
+  "objects": [
+   {
+    "id": "desk",
+    "category": "desk",
+    "hero": true
+   },
+   {
+    "id": "monitor",
+    "category": "monitor"
+   },
+   {
+    "id": "laptop",
+    "category": "laptop"
+   },
+   {
+    "id": "lamp",
+    "category": "table_lamp"
+   },
+   {
+    "id": "books",
+    "category": "book_stack"
+   }
+  ],
+  "relations": [
+   {
+    "a": "monitor",
+    "rel": "on",
+    "b": "desk"
+   },
+   {
+    "a": "laptop",
+    "rel": "on",
+    "b": "desk"
+   },
+   {
+    "a": "lamp",
+    "rel": "on",
+    "b": "desk"
+   },
+   {
+    "a": "books",
+    "rel": "on",
+    "b": "desk"
+   }
+  ]
+ },
+ "expect": {
+  "instances": 5,
+  "categories": {
+   "desk": 1,
+   "monitor": 1
+  }
+ }
+}

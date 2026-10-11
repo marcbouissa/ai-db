@@ -480,7 +480,7 @@ def build_layout_commands(
         st = spec.setting
         indoor_style = st.style if st.kind == "indoor" else None  # outdoor ground stays ground
         floor = st.floor_material or style_material(indoor_style, "floor") or FLOOR_MATERIALS.get(st.kind, "plaster")
-        surfaces = [("floor" if st.kind == "outdoor" and st.shape == "rect" else "Room_Floor", floor)]
+        surfaces = [("floor" if st.kind != "indoor" and st.shape == "rect" else "Room_Floor", floor)]
         if st.kind == "indoor":
             surfaces.append(("Room_Walls", st.wall_material or style_material(st.style, "wall") or WALL_MATERIAL))
         for obj, mat in surfaces:
