@@ -69,6 +69,10 @@ Optional `build_scene` arguments:
      are that room's wall_north..). Rooms sharing a wall get a door; each is solved on its own.
    - `objects`: `id`, `category`, `count`, `hero`, `material` (see blender-material-library),
      `grid: {rows, cols, gap_m}` for rows of desks, tables or racks (solved as one block).
+   - Ellipse rooms have one wall, `wall`, placed by `at_deg` (0 = east, 90 = north); polygon
+     rooms `wall_<n>` (edge n) or `wall` + `at_deg` (ray from the centre). A window or door
+     there gets its wall opening cut, curved walls included; `count: 3` at one `at_deg` puts the
+     copies side by side along the wall (an oval office: 3 windows at 90, doors at 0 and 270).
    - `relations`: `against_wall` (wall_north/south/east/west), `in_front_of` (A faces B at
      `gap_m`), `beside`, `facing`, `centered_in` (a room or a rug: on the rug's footprint), `on`,
      `under`, `around` (chairs around a table), `above` (a wall-mounted object straight over

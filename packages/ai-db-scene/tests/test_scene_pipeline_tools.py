@@ -639,3 +639,49 @@ def test_live_classic_oval_mouldings(private_blender, mem, tmp_path):
         "    if k:\n        result.setdefault(k, []).append(len(o.data.polygons))")
     assert len(got["crown"]) == 1 and len(got["baseboard"]) == 2 and len(got["chair_rail"]) == 5, got
     assert all(n > 20 for faces in got.values() for n in faces), got
+
+
+_OVAL_OFFICE = dict(_OVAL, objects=[*_OVAL["objects"][:3], {"id": "window", "category": "window", "count": 3}],
+                    relations=[*_OVAL["relations"][:3], {"a": "window", "rel": "against_wall", "b": "wall", "at_deg": 90}])
+
+
+@pytest.mark.parametrize("shape", ["ellipse", "polygon"])
+def test_copies_at_one_at_deg_spread_along_a_curved_wall(shape):
+    import math
+
+    data = _OVAL_OFFICE if shape == "ellipse" else dict(
+        _OVAL_OFFICE, setting={"kind": "indoor", "bounds_m": [10, 8, 3.6], "shape": "polygon",
+                               "points": [[0, 0], [10, 0], [10, 5], [8, 8], [2, 8], [0, 5]]})
+    res = sp._handle_solve_layout({"spec": data})
+    assert res.get("status") == "ok", res
+    spec, _ = sp._parse_spec(data)
+    pls = sp.parse_placements(res["placements"])
+    wins = [o for o in sp._openings(spec, pls) if o["kind"] == "window"]
+    assert len(wins) == 3
+    for i, a in enumerate(wins):
+        for b in wins[i + 1:]:
+            assert math.dist(a["at"], b["at"]) >= a["width"] + 0.3  # side by side, not stacked
+    assert all(o["wall"] == "wall" for o in wins)
+
+
+@pytest.mark.blender
+def test_live_oval_office_openings_are_cut(private_blender, mem):
+    from ai_db_scene.blender_client import BlenderClient
+
+    res = sp._handle_build_scene({"spec": _OVAL_OFFICE, "clear": True, "snapshot": False, "exposure_check": False})
+    assert not res["failed_commands"] and not res["repairs"], res
+    spec, _ = sp._parse_spec(_OVAL_OFFICE)
+    pls = sp.parse_placements(sp._handle_solve_layout({"spec": _OVAL_OFFICE})["placements"])
+    ops = [{"at": o["at"], "z": o["sill"] + o["height"] / 2} for o in sp._openings(spec, pls)]
+    assert len(ops) == 5
+    # a ray from the room centre through each opening's middle leaves the walls without hitting them
+    blocked = BlenderClient().run_code(
+        "import bpy, json\nfrom mathutils import Vector\nwalls = bpy.data.objects['Room_Walls']\n"
+        "inv = walls.matrix_world.inverted()\nout = []\n"
+        f"for op in json.loads({json.dumps(json.dumps(ops))}):\n"
+        "    end = Vector((op['at'][0], op['at'][1], op['z']))\n"
+        "    d = Vector((end.x, end.y, 0)).normalized()\n"
+        "    start = end - d * 0.6\n"
+        "    hit, *_ = walls.ray_cast(inv @ start, (inv.to_3x3() @ d).normalized(), distance=1.2)\n"
+        "    out.append(hit)\nresult = out")
+    assert blocked == [False] * 5, blocked

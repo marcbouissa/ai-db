@@ -8,7 +8,8 @@ Conventions
   object is its local -Y side (shared asset convention). ``rotation_deg_z`` is the yaw
   (counter-clockwise, 0 = front faces -y; front vector = (sin yaw, -cos yaw)).
 * Room shape ``rect`` (default) | ``ellipse`` | ``polygon`` inside the box [0,W]x[0,D]. Rect walls
-  are the four named walls; ellipse has ``wall`` (+ ``at_deg`` = ellipse parameter angle);
+  are the four named walls; ellipse has ``wall`` (+ ``at_deg`` = ellipse parameter angle; copies
+  of one object at one at_deg stand side by side along the wall);
   polygons have ``wall_<n>`` (edge n, 1-based) and ``wall`` with ``at_deg`` (ray from the center). ``location`` is the center of the bounding box (z included).
 * ``A above B``: A is wall-mounted (support ``wall``, with its against_wall relation) straight
   above B: the same position along the wall, A's base ``gap_m`` (default 0.25 m) over B's top.
@@ -80,6 +81,9 @@ class LayoutError(Exception):
     def __init__(self, message: str, conflicts: list[str]) -> None:
         super().__init__(message)
         self.conflicts = conflicts
+
+
+_SPREAD_GAP_M = 0.6  # between copies of one object placed along a curved wall at one at_deg
 
 
 @dataclass(frozen=True)
@@ -226,7 +230,8 @@ class _Problem:
                            "around": LAYOUT_DEFAULT_AROUND_GAP_M, "above": LAYOUT_DEFAULT_ABOVE_GAP_M}.get(r.rel, 0.0)
                 gap = default if r.gap_m is None else r.gap_m
                 label = f"{ai} {r.rel} {bi}" + (f" (gap {gap:g} m)" if r.rel in (*_GAP_RELS, "above") else "")
-                self.rels.append(_Rel(ai, r.rel, bi, gap, a.idx, a.n, label, r.at_deg))
+                at = self._spread_at(a, r.b, r.at_deg) if r.rel == "against_wall" else r.at_deg
+                self.rels.append(_Rel(ai, r.rel, bi, gap, a.idx, a.n, label, at))
         self.by_a: dict[str, list[_Rel]] = {}
         self.by_b: dict[str, list[_Rel]] = {}
         for rl in self.rels:
@@ -279,6 +284,17 @@ class _Problem:
                 raise LayoutError(f"relation '{r.label}': '{r.a}' is as tall as or taller than '{r.b}'", [r.label])
 
     # ---- walls ---------------------------------------------------------------------------
+    def _spread_at(self, inst: _Inst, wall: str, at_deg: float | None) -> float | None:
+        """at_deg of copy idx of n against a curved/polygon ``wall``: the copies side by side
+        along the wall (widths + _SPREAD_GAP_M apart), centred on at_deg. One at_deg put every
+        copy on the same spot (three windows of an oval room could never be placed)."""
+        if at_deg is None or inst.n <= 1 or self.shape.kind == "rect" or wall != "wall":
+            return at_deg
+        a, _n = self.shape.wall_ref(wall, at_deg - 0.5, 0.0, 0.0)
+        b, _n = self.shape.wall_ref(wall, at_deg + 0.5, 0.0, 0.0)
+        step = (inst.dims[0] + _SPREAD_GAP_M) / max(math.dist(a, b), 1e-6)
+        return round(at_deg + (inst.idx - (inst.n - 1) / 2) * step, 3)
+
     def wall(self, name: str, at_deg: float | None = None, x: float = 0.0, y: float = 0.0) -> tuple[tuple[float, float], tuple[float, float], float]:
         """(inward normal, point on wall, yaw whose front faces inward). (x, y) = object center."""
         if self.shape.kind != "rect":
