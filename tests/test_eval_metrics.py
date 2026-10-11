@@ -49,6 +49,13 @@ def test_symbol_match_is_exact_not_substring():
     assert relevance_vector([("a.py", "MyCls.run")], [("a.py", "Cls.run")]) == [0]
 
 
+def test_a_member_hit_finds_its_class():
+    """Methods are chunked apart from the class header: a hit on Cls.run finds Cls."""
+    assert relevance_vector([("a.py", "def MyCls.run"), ("a.py", "def Cls.run")],
+                            [("a.py", "Cls")]) == [0, 1]
+    assert relevance_vector([("a.py", "def Outer.Cls.run")], [("a.py", "Cls")]) == [1]
+
+
 def test_git_worktree_materializes_head_as_a_checkout(tmp_path):
     import subprocess
 

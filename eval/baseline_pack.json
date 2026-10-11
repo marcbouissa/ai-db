@@ -1,7 +1,7 @@
 {
   "queries": 20,
   "budget_tokens": 8000,
-  "pack_recall": 0.925,
+  "pack_recall": 0.9,
   "tokens_mean": 7593.5,
   "latency_ms_p50": 50.32,
   "latency_ms_p95": 79.28,
@@ -127,5 +127,5 @@
       "tokens": 8000
     }
   ],
-  "_note": "Re-recorded 2026-10-11 after the K1/K2/K4/K5 refactors: golden entries follow the moved symbols (SQLiteBackend methods -> ai_db/storage/sqlite_repos/*.py, mcp_server.py -> ai_db/transports/mcp.py, count_tokens -> ai_db/tokens.py, telemetry latency -> tracker._latency); the deleted record_token_compression query now targets analysis/formatters.annotate_formatted_tokens. pack_recall 0.9 -> 0.925.\n\nRe-recorded 2026-10-11 (G10): exact symbol matching (the last dotted component, or the qualified name for a dotted expectation; it was a substring test), the corpus materialised as a git worktree at HEAD, and stale golden entries fixed (VectorDB.embed_missing moved to ai_db/facade.py; materialize_tracked -> git_worktree; the known-unreachable http_server.py entry is kept, see eval/scenarios.json). pack_recall 0.9 -> 0.9."
+  "_note": "Re-recorded 2026-10-11 after merging the core backlog into feature/3d-persistence: 'how is the config file validated' 1.0 -> 0.5 because the merged corpus adds the scene plugin's config validation (packages/ai-db-scene/ai_db_scene/config.py) and skill validation (ai_db/skill_gen.py), which share the pack budget. Same code on the core branch corpus (b7a8be5) measures 0.925; on the merge commit 3d225ac 0.9.\n\nRe-recorded 2026-10-11 after the K1/K2/K4/K5 refactors: golden entries follow the moved symbols (SQLiteBackend methods -> ai_db/storage/sqlite_repos/*.py, mcp_server.py -> ai_db/transports/mcp.py, count_tokens -> ai_db/tokens.py, telemetry latency -> tracker._latency); the deleted record_token_compression query now targets analysis/formatters.annotate_formatted_tokens. pack_recall 0.9 -> 0.925.\n\nRe-recorded 2026-10-11 (G10): exact symbol matching (the last dotted component, or the qualified name for a dotted expectation; it was a substring test), the corpus materialised as a git worktree at HEAD, and stale golden entries fixed (VectorDB.embed_missing moved to ai_db/facade.py; materialize_tracked -> git_worktree; the known-unreachable http_server.py entry is kept, see eval/scenarios.json). pack_recall 0.9 -> 0.9."
 }

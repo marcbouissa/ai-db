@@ -5,7 +5,8 @@ A ranked item is a ``(filepath, name)`` tuple. An expected item is a
 the filepaths are equal and, if a symbol is given, the ranked name *is* that symbol:
 its last dotted component equals it (``run`` matches ``Cls.run``, never ``prune``),
 or, for a dotted expectation (``Cls.run``), the ranked qualified name is it or ends
-with ``.Cls.run``. Chunk labels (``def X``, ``class X``, ``X (part 1/2)``) are reduced
+with ``.Cls.run``. A member of the expected symbol counts too (``Cls`` is found by a hit
+on ``Cls.run``: methods are chunked apart from their class header). Chunk labels (``def X``, ``class X``, ``X (part 1/2)``) are reduced
 to the qualified name first.
 """
 
@@ -24,6 +25,8 @@ def _matches(item: tuple[str, str], exp: tuple[str, str | None]) -> bool:
     if exp_symbol is None:
         return True
     qualified = _qualified(name)
+    if qualified.startswith(exp_symbol + ".") or ("." + exp_symbol + ".") in qualified:
+        return True
     if "." in exp_symbol:
         return qualified == exp_symbol or qualified.endswith("." + exp_symbol)
     return qualified.rsplit(".", 1)[-1] == exp_symbol
