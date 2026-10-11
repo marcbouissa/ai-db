@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,7 @@ from ai_db_scene.constants import (
     SCENE_REF_FLOOR_M2,
     SCENE_RUG_PILE_DENSITY,
     SCENE_SUN_ENERGY,
+    TREE_BARK_MATERIAL,
 )
 from ai_db_scene.layout import LayoutError, Placement, solve_layout
 from ai_db_scene.materials import (
@@ -508,6 +510,11 @@ def leaf_object():
     if coll.name not in bpy.context.scene.collection.children:
         bpy.context.scene.collection.children.link(coll)
     coll.objects.link(ob)
+    holder = bpy.data.objects.new("ai_db_templates", None)  # asset-marked: checks skip the template
+    holder["asset"] = "templates"
+    coll.objects.link(holder)
+    ob.parent = holder
+    holder.location = (0.0, 0.0, -1000.0)  # far from every scene; instances use its shape only
     coll.hide_render = True
     coll.hide_viewport = True
     return ob
@@ -577,6 +584,113 @@ for k, name in enumerate(meshes):
             leaf_ob.data.materials.append(ob.active_material)
     done.append({{"name": name, "leaves": int(density_world * area)}})
 result = {{"foliage": done}}
+"""
+
+#: a tree grown from its skeleton (modelling guides: trunk tapering and splitting at the crown,
+#: recursive limbs - momentum + upward pull + jitter, thinner and shorter per level, side shoots,
+#: kept inside a crown envelope - leaf clumps at the tips with gaps), skinned with tapered cones,
+#: fitted to the placement's height and footprint. Leaves come from _FOLIAGE on the clumps.
+_TREE = """
+import bpy, bmesh, json, math, random
+from mathutils import Vector, Matrix
+cfg = json.loads({payload!r})
+rng = random.Random(cfg["seed"])
+H = cfg["dims"][2]
+RX, RY = cfg["dims"][0] / 2, cfg["dims"][1] / 2
+crown_lo = H * cfg.get("crown_start", 0.38)
+cz = (crown_lo + H) / 2
+segs, tips = [], []
+
+def jitter(s):
+    return Vector((rng.uniform(-s, s), rng.uniform(-s, s), rng.uniform(-s, s)))
+
+def in_crown(p):
+    return (p.x / RX) ** 2 + (p.y / RY) ** 2 + ((p.z - cz) / ((H - crown_lo) / 2)) ** 2
+
+def grow(p, d, length, r, depth):
+    n = 4
+    for i in range(n):
+        d = (d + jitter(0.28) + Vector((0, 0, 0.12 - 0.06 * depth))).normalized()  # upward pull, droop when thin
+        if depth and in_crown(p) > 0.85:  # bend back into the crown envelope
+            d = (d + (Vector((0, 0, cz)) - p).normalized() * 0.6).normalized()
+        q = p + d * (length / n)
+        r2 = r * (0.86 if i < n - 1 else 0.8)
+        segs.append((p.copy(), q.copy(), r, r2))
+        if depth >= 1 and i in (1, 2) and rng.random() < 0.55 and depth < 3:  # side shoots along the limb
+            side = (d.cross(Vector((rng.uniform(-1, 1), rng.uniform(-1, 1), 0.3))) + d * 0.4).normalized()
+            grow(q, side, length * 0.45, r2 * 0.55, depth + 1)
+        p, r = q, r2
+    if depth < 3:
+        for _ in range(rng.choice((2, 2, 3))):
+            axis = d.orthogonal().normalized()
+            axis.rotate(Matrix.Rotation(rng.uniform(0, math.tau), 3, d))
+            child = d.copy()
+            child.rotate(Matrix.Rotation(math.radians(rng.uniform(25, 50)), 3, axis))
+            grow(p, child, length * rng.uniform(0.6, 0.75), r * 0.62, depth + 1)
+    if depth >= 2:
+        tips.append(p.copy())
+
+# trunk: slight lean and wobble up to the crown, then 3-4 limbs
+r0 = cfg.get("trunk_r", max(0.06, 0.035 * H))
+p, d = Vector((0, 0, 0)), Vector((rng.uniform(-0.05, 0.05), rng.uniform(-0.05, 0.05), 1)).normalized()
+steps = 5
+for i in range(steps):
+    q = p + (d + jitter(0.05)).normalized() * (crown_lo / steps)
+    segs.append((p.copy(), q.copy(), r0 * (1.35 if i == 0 else 1.0) * (1 - 0.06 * i), r0 * (1 - 0.06 * (i + 1))))
+    p = q
+limb = (H - crown_lo) * 0.5
+for k in range(rng.choice((3, 3, 4))):
+    ang = k / 3.5 * math.tau + rng.uniform(-0.4, 0.4)
+    ld = Vector((math.cos(ang) * 1.1, math.sin(ang) * 1.1, 1.0)).normalized()
+    grow(p.copy(), ld, limb, r0 * 0.7, 1)
+
+def skin(name, items, mat_slot=None):
+    bm = bmesh.new()
+    for a, b, ra, rb in items:
+        v = b - a
+        L = v.length
+        if L < 1e-5:
+            continue
+        rot = v.to_track_quat("Z", "Y").to_matrix().to_4x4()
+        m = Matrix.Translation((a + b) / 2) @ rot
+        bmesh.ops.create_cone(bm, cap_ends=False, segments=8 if ra > 0.03 else 5, radius1=ra, radius2=rb, depth=L, matrix=m)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    for poly in me.polygons:
+        poly.use_smooth = True
+    return me
+
+root = bpy.data.objects.new(cfg["name"], None)
+bpy.context.scene.collection.objects.link(root)
+root["asset"] = cfg["name"]  # one asset: the validator checks its parts together, not against each other
+wood = bpy.data.objects.new(cfg["name"] + "_wood", skin(cfg["name"] + "_wood", segs))
+# leaf clumps at the tips: uneven sizes, a few gaps left on purpose
+bm = bmesh.new()
+cr = max(0.14, 0.065 * H) * cfg.get("clump", 1.0)
+for t in tips:
+    if rng.random() < 0.2:  # gaps: sky and branches show through
+        continue
+    s = cr * rng.uniform(0.7, 1.25)
+    bmesh.ops.create_icosphere(bm, subdivisions=2, radius=s, matrix=Matrix.Translation(t + jitter(s * 0.3)))
+me = bpy.data.meshes.new(cfg["name"] + "_leaves")
+bm.to_mesh(me)
+bm.free()
+leaves = bpy.data.objects.new(cfg["name"] + "_leaves", me)
+for ob in (wood, leaves):
+    bpy.context.scene.collection.objects.link(ob)
+    ob.parent = root
+# fit: height to H, crown within the footprint
+pts = [Vector(c) for ob in (wood, leaves) for c in ((ob.matrix_world @ Vector(v.co)) for v in ob.data.vertices)]
+zmax = max(p.z for p in pts)
+xr = max(abs(p.x) for p in pts) or 1.0
+yr = max(abs(p.y) for p in pts) or 1.0
+sz = H / zmax
+for ob in (wood, leaves):
+    ob.scale = (min(sz, RX / xr), min(sz, RY / yr), sz)
+root.location = cfg["location"]
+root.rotation_euler[2] = math.radians(cfg.get("rot_z", 0.0))
+result = {{"segments": len(segs), "tips": len(tips)}}
 """
 
 _ROOM_MATERIAL = """
@@ -800,6 +914,16 @@ def build_layout_commands(
                 "filepath": asset["filepath"], "asset_name": asset["asset_name"], "location": _shift(pl.location, off)}})
             tag.append({"name": pl.id, "asset_name": asset["asset_name"], "location": _shift(pl.location, off),
                         "rot_z": math.radians(pl.rotation_deg_z), "props": props})
+        elif geometry == "generated" and pl.category == "tree" and not user_overrides("tree"):
+            loc = _shift(pl.location, off)
+            seed = (_variation(spec, "tree", base)["seed"] + zlib.crc32(pl.id.encode())) % (2**31)  # every tree differs
+            cmds.append({"type": "run_code", "params": {"code": _TREE.format(payload=json.dumps({
+                "name": pl.id, "dims": list(pl.dims), "seed": seed,
+                "location": [loc[0], loc[1], loc[2] - pl.dims[2] / 2], "rot_z": pl.rotation_deg_z}))}})
+            cmds.append({"type": "apply_material", "params": {"name": f"{pl.id}_wood", "material": TREE_BARK_MATERIAL}})
+            cmds.append({"type": "apply_material", "params": {
+                "name": f"{pl.id}_leaves", "material": material_for("tree", materials.get(base))}})
+            tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
         elif geometry == "generated" and pl.category in _GENERATED and not user_overrides(pl.category):
             family, params = _GENERATED[pl.category]
             loc = _shift(pl.location, off)

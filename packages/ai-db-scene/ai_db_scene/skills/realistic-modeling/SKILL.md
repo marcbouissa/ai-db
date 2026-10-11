@@ -16,6 +16,8 @@ metadata:
     - {"url": "https://blenderartists.org/t/interior-render-feedback-and-tips/1621732", "title": "Interior render feedback (forum)"}
     - {"url": "https://roomstogo.com/inspiration/how-to-measure-furniture", "title": "How to measure furniture"}
     - {"url": "https://arcedior.com/blog/coffee-table-size-guide", "title": "Coffee table size and clearance"}
+    - {"url": "https://arxiv.org/pdf/2306.09310", "title": "Infinigen: recursive paths + space colonization trees"}
+    - {"url": "https://github.com/IRCSS/Trees-With-Geometry-Nodes-Blender", "title": "Trees with geometry nodes"}
 ---
 
 # Realistic modelling
@@ -62,6 +64,16 @@ The addon has shapes for soft goods: use them in `create_recipe` parts instead o
 - `rounded_slab` for mattresses, upholstered seats and soft tops.
 - `turned_leg`, `cabriole_leg`, `square_tapered_leg` for furniture legs; `skirt` for valances.
 - `raised_panel` for cabinet doors; `cornice` / `sweep` with a moulding `profile` for trims.
+
+## 3b. Plants and trees
+
+- A tree is a skeleton, not a ball on a stick: the trunk tapers (flared at the base) and
+  splits where the crown starts; limbs branch recursively, each level thinner and shorter,
+  growing up and out with some jitter, thin ends drooping; leaves sit in clumps at the tips
+  with gaps where sky and branches show through. `build_scene` grows trees this way (a
+  different tree per instance) and scatters leaf cards over the clumps.
+- Bushes, hedges and potted plants: uneven lobes in `foliage`, covered with leaf cards.
+- Bark is rough and dark (`stone:#4b3b2e` reads better than wood grain, which looks striped).
 
 ## 4. Uneven materials
 

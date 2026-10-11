@@ -89,6 +89,7 @@ SCENE_FOLIAGE_DENSITY = 900.0  # leaves per m2 of crown surface (trees, bushes, 
 SCENE_FOLIAGE_MAX_LEAVES = 40000  # per mesh: big crowns get sparser leaves, not more
 SCENE_FOLIAGE_LEAF_M = 0.09  # leaf length
 FOLIAGE_CATEGORIES = ("tree", "bush", "hedge", "potted_plant")
+TREE_BARK_MATERIAL = "stone:#4b3b2e:proj=box"  # rough and bumpy; wood grain read as birch-like stripes
 SCENE_RUG_PILE_DENSITY = 1500.0  # carpet tufts per m2 on rugs; 0 turns the pile off
 
 # --- Blender (addon socket server) ---

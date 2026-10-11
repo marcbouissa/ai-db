@@ -726,3 +726,18 @@ def test_generated_furniture_varies_by_scene_but_pairs_match():
     raw3 = {**raw, "setting": {**raw["setting"], "style": "classic"}}
     spec3, _ = sp._parse_spec(raw3)
     assert sp._variation(spec3, "sofa", "sofa")["preset"] == "chesterfield_like"
+
+
+def test_trees_are_grown_not_spheres_and_each_differs():
+    import json as _json
+    from pathlib import Path
+
+    raw = _json.loads((Path(__file__).parent / "fixtures" / "golden" / "outdoor_park.json").read_text())["spec"]
+    spec, _ = sp._parse_spec(raw)
+    pls = sp.parse_placements(sp._handle_solve_layout({"spec": raw})["placements"])
+    cmds, _ = sp.build_layout_commands(spec, pls, geometry="generated")
+    trees = [c for c in cmds if c["type"] == "run_code" and "to_track_quat" in c["params"]["code"]]
+    assert trees and not any(c["type"] == "build_asset" and c["params"]["spec"]["category"] == "tree" for c in cmds)
+    seeds = {_json.loads(c["params"]["code"].split("json.loads(")[1].split(")\n")[0][1:-1])["seed"] for c in trees}
+    assert len(seeds) == len(trees)  # no two trees alike
+    assert any(c["type"] == "run_code" and "ai_db_foliage" in c["params"]["code"] for c in cmds)
