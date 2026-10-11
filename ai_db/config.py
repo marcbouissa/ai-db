@@ -108,6 +108,16 @@ class DaemonProjectConfig:
 
 
 @dataclass(frozen=True)
+class DaemonUserConfig:
+    """A daemon user (key in ``AI_DB_USER_KEYS``) and the projects that key may use;
+    ``"*"`` allows every project (management routes stay admin-only)."""
+    projects: tuple[str, ...] = ()
+
+    def allows(self, project: str) -> bool:
+        return "*" in self.projects or project in self.projects
+
+
+@dataclass(frozen=True)
 class DaemonConfig:
     enabled: bool = False
     host: str = "127.0.0.1"
@@ -116,6 +126,7 @@ class DaemonConfig:
     projects: dict[str, DaemonProjectConfig] = field(default_factory=dict)
     auto_discover: bool = True
     shutdown_timeout: float = 30.0
+    users: dict[str, DaemonUserConfig] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -129,6 +140,7 @@ class DaemonConfig:
                 name: {"db_path": p.db_path, "config_path": p.config_path, "auto_start": p.auto_start}
                 for name, p in self.projects.items()
             },
+            "users": {name: {"projects": list(u.projects)} for name, u in self.users.items()},
         }
 
 
@@ -391,7 +403,8 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
 
     # Parse daemon configuration
     daemon_raw = _require_dict(data.get("daemon", {}), "daemon")
-    _check_keys(daemon_raw, frozenset({"enabled", "host", "port", "pid_file", "projects", "auto_discover", "shutdown_timeout"}), "daemon")
+    _check_keys(daemon_raw, frozenset({"enabled", "host", "port", "pid_file", "projects", "auto_discover",
+                                       "shutdown_timeout", "users"}), "daemon")
     daemon_enabled = bool(daemon_raw.get("enabled", False))
     daemon_host = daemon_raw.get("host", "127.0.0.1")
     if not isinstance(daemon_host, str):
@@ -423,6 +436,15 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         auto_start = bool(proj_section.get("auto_start", True))
         daemon_projects[proj_name] = DaemonProjectConfig(db_path=db_path, config_path=config_path, auto_start=auto_start)
 
+    daemon_users: dict[str, DaemonUserConfig] = {}
+    for user_name, user_data in _require_dict(daemon_raw.get("users", {}), "daemon.users").items():
+        user_section = _require_dict(user_data, f"daemon.users.{user_name}")
+        _check_keys(user_section, frozenset({"projects"}), f"daemon.users.{user_name}")
+        allowed = user_section.get("projects", [])
+        if not isinstance(allowed, list) or not all(isinstance(p, str) for p in allowed):
+            raise AiDbConfigError(f"'daemon.users.{user_name}.projects' must be a list of project names")
+        daemon_users[user_name] = DaemonUserConfig(projects=tuple(allowed))
+
     daemon = DaemonConfig(
         enabled=daemon_enabled,
         host=daemon_host,
@@ -431,6 +453,7 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         projects=daemon_projects,
         auto_discover=daemon_auto_discover,
         shutdown_timeout=daemon_shutdown_timeout,
+        users=daemon_users,
     )
 
     return AppConfig(

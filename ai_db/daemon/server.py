@@ -9,11 +9,14 @@ one project are serialised by that project's execution lock, so ``/health`` and 
 projects stay responsive while a long ``sync`` runs.
 
 Auth (fail closed once configured): ``AI_DB_API_KEYS="proj=key,..."`` sets per-project
-keys and ``AI_DB_ADMIN_KEY`` the admin key. With neither set the daemon is open (it binds
-to localhost by default). Otherwise every route except ``/health`` needs
-``Authorization: Bearer <key>``: project routes accept that project's key or the admin
-key; management routes (``/projects``, ``/metrics``, ``/query/cross-project``,
-``/daemon/*``) accept only the admin key.
+keys, ``AI_DB_USER_KEYS="user=key,..."`` per-user keys (shared machines: each user's
+projects are listed in config ``daemon.users.<user>.projects``, ``"*"`` for all) and
+``AI_DB_ADMIN_KEY`` the admin key. With none set the daemon is open (it binds to
+localhost by default). Otherwise every route except ``/health`` needs
+``Authorization: Bearer <key>``: project routes accept that project's key, the key of a
+user allowed that project, or the admin key; management routes (``/projects``,
+``/metrics``, ``/query/cross-project``, ``/daemon/*``) accept only the admin key. A user
+key whose user has no ``daemon.users`` entry opens nothing.
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ai_db import VectorDB, load_config
-from ai_db.config import AppConfig, DaemonProjectConfig
+from ai_db.config import AppConfig, DaemonProjectConfig, DaemonUserConfig
 from ai_db.constants import (
     DAEMON_CONFIG_POLL_S,
     DAEMON_IDLE_CHECK_S,
@@ -290,6 +293,8 @@ class _State:
     pool: ProjectPool | None = None
     tasks: list[asyncio.Task[None]] = field(default_factory=list)
     project_keys: dict[str, str] = field(default_factory=dict)
+    user_keys: dict[str, str] = field(default_factory=dict)
+    users: dict[str, DaemonUserConfig] = field(default_factory=dict)
     admin_key: str | None = None
     reload_lock: asyncio.Lock | None = None
 
@@ -303,14 +308,25 @@ def get_pool() -> ProjectPool:
     return _state.pool
 
 
-def _load_auth() -> None:
+def _parse_keys(variable: str) -> dict[str, str]:
+    """``"name=key,name2=key2"`` from the environment; empty names/keys are skipped."""
     keys: dict[str, str] = {}
-    for pair in os.environ.get("AI_DB_API_KEYS", "").split(","):
+    for pair in os.environ.get(variable, "").split(","):
         if "=" in pair:
-            project, key = pair.split("=", 1)
-            keys[project.strip()] = key.strip()
-    _state.project_keys = keys
+            name, key = pair.split("=", 1)
+            if name.strip() and key.strip():
+                keys[name.strip()] = key.strip()
+    return keys
+
+
+def _load_auth(config: AppConfig) -> None:
+    _state.project_keys = _parse_keys("AI_DB_API_KEYS")
+    _state.user_keys = _parse_keys("AI_DB_USER_KEYS")
+    _state.users = dict(config.daemon.users)
     _state.admin_key = os.environ.get("AI_DB_ADMIN_KEY") or None
+    unknown = sorted(set(_state.user_keys) - set(_state.users))
+    if unknown:
+        _logger.warning("[daemon] user keys without a daemon.users entry (no access): %s", unknown)
 
 
 async def _start_projects(pool: ProjectPool, previously_loaded: set[str] | None = None) -> None:
@@ -339,6 +355,7 @@ async def reload_daemon_config() -> None:
         new = ProjectPool(new_config, runtime_projects=old.runtime_projects)
         await _start_projects(new, previously_loaded=set(old.projects))
         _state.pool = new
+        _state.users = dict(new_config.daemon.users)
         await old.shutdown()
         _logger.info("[daemon] configuration reloaded from %s", new_config.source_path)
 
@@ -372,7 +389,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The CLI exports AI_DB_CONFIG (incl. `ai-db --config X daemon start`), so the
     # daemon reads the same file the user pointed at.
     config = await asyncio.to_thread(load_config)
-    _load_auth()
+    _load_auth(config)
     _state.pool = ProjectPool(config)
     _state.reload_lock = asyncio.Lock()
     await _start_projects(_state.pool)
@@ -403,22 +420,67 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 # =============================================================================
 
 
+def _auth_enabled() -> bool:
+    return bool(_state.project_keys or _state.user_keys or _state.admin_key)
+
+
+def _bearer(authorization: str | None) -> str | None:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    return authorization[len("Bearer "):]
+
+
+def _is_admin(token: str | None) -> bool:
+    return bool(token and _state.admin_key and secrets.compare_digest(token, _state.admin_key))
+
+
+def _user_of(token: str) -> str | None:
+    """The user whose key ``token`` is (every key is compared, in constant time)."""
+    found = None
+    for user, key in _state.user_keys.items():
+        if secrets.compare_digest(token, key):
+            found = user
+    return found
+
+
 def _auth_failure(path: str, authorization: str | None) -> tuple[int, str] | None:
     """``(status, detail)`` when the request is not allowed, else None."""
-    if path == "/health" or (not _state.project_keys and not _state.admin_key):
+    if path == "/health" or not _auth_enabled():
+        return None
+    token = _bearer(authorization)
+    if token is None:
+        return 401, "Missing or invalid Authorization header"
+    if _is_admin(token):
         return None
     match = _PROJECT_ROUTE.match(path)
-    accepted = [k for k in (_state.admin_key,) if k]
     if match:
-        project_key = _state.project_keys.get(match["name"])
-        if project_key:
-            accepted.append(project_key)
-    if not authorization or not authorization.startswith("Bearer "):
-        return 401, "Missing or invalid Authorization header"
-    token = authorization[len("Bearer "):]
-    if not any(secrets.compare_digest(token, k) for k in accepted):
-        return 403, "Invalid API key for this route"
-    return None
+        name = match["name"]
+        project_key = _state.project_keys.get(name)
+        if project_key and secrets.compare_digest(token, project_key):
+            return None
+        user = _user_of(token)
+        if user is not None:
+            allowed = _state.users.get(user)
+            if allowed is not None and allowed.allows(name):
+                return None
+            return 403, f"User '{user}' may not use project '{name}'"
+    return 403, "Invalid API key for this route"
+
+
+def _caller(authorization: str | None) -> str:
+    """Who is calling, for the access log (never the key)."""
+    token = _bearer(authorization)
+    if token is None:
+        return "-"
+    if _is_admin(token):
+        return "admin"
+    user = _user_of(token)
+    if user is not None:
+        return f"user:{user}"
+    for project, key in _state.project_keys.items():
+        if secrets.compare_digest(token, key):
+            return f"project:{project}"
+    return "unknown"
 
 
 class RateLimiter:
@@ -453,7 +515,8 @@ async def guard(request: Request, call_next: Callable[[Request], Awaitable[Respo
     path = request.url.path
     project = _route_project(path)
     client_ip = request.client.host if request.client else "unknown"
-    failure = _auth_failure(path, request.headers.get("Authorization"))
+    authorization = request.headers.get("Authorization")
+    failure = _auth_failure(path, authorization)
     if failure is not None:
         response: Response = JSONResponse(status_code=failure[0], content={"detail": failure[1]})
     elif path != "/health" and not rate_limiter.is_allowed(
@@ -464,6 +527,7 @@ async def guard(request: Request, call_next: Callable[[Request], Awaitable[Respo
         response = await call_next(request)
     _logger.info(json.dumps({
         "method": request.method, "path": path, "project": project, "client_ip": client_ip,
+        "caller": _caller(authorization),
         "status_code": response.status_code, "duration_ms": round((time.time() - start) * 1000, 2),
     }))
     return response

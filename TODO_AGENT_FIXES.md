@@ -483,6 +483,14 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 
 ---
 
+### H8. Daemon follow-ups (requested 2026-10-11)
+- [x] Per-user API keys on shared machines: `AI_DB_USER_KEYS="user=key,..."`, each user's
+  projects in config `daemon.users.<user>.projects` (`"*"` = all); unchanged when unset,
+  fail-closed when set. **Done 2026-10-11:** a user key opens only its listed projects'
+  routes (never management routes); a key without a `daemon.users` entry opens nothing;
+  project/admin keys work as before; the access log names the caller (`user:alice`),
+  never the key. Tests: `tests/test_daemon_features.py`.
+
 ## P1: Scene / video
 
 > **Moved:** the scene/video code now lives in `packages/ai-db-scene/ai_db_scene/` (K10).
