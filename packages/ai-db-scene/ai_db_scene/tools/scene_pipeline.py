@@ -850,6 +850,14 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
            "objects": len(placements), "created": built.get("created"), "failed_commands": built.get("failed"),
            "repairs": repairs, "fixes_applied": applied, "issues_found": len(first),
            "issues_left": left[:20], "spec": data if repairs else None}
+    from ai_db_scene.constants import BUILD_POLY_BUDGET
+
+    budget = args.get("poly_budget", BUILD_POLY_BUDGET)
+    if budget is not None:
+        try:
+            out["polys"] = poly_report(int(budget))
+        except (BlenderError, KeyError, TypeError, ValueError) as e:
+            out["polys"] = {"error": str(e)}
     # every build is a run: exemplar search (get_scene_spec_schema, search_exemplars) learns
     # from successes without anyone calling record_run (4 calls in 23 benchmark runs)
     blocking = sum(1 for i in left if i.get("severity") == "blocking")
@@ -873,6 +881,52 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
         except Exception as e:  # noqa: BLE001 - the scene is built; say why it was not saved
             out["snapshot_error"] = str(e)
     return out
+
+
+#: faces per tagged object (its whole hierarchy, modifiers applied) and, over the budget, a
+#: Decimate modifier on the heaviest non-hero objects, each cut just enough (ratio floor
+#: BUILD_DECIMATE_MIN_RATIO) until the scene total fits. Untagged meshes (the room shell) count
+#: towards the total but are never decimated.
+_POLY_BUDGET = """
+import bpy, json
+budget, floor = json.loads({payload!r})
+dg = bpy.context.evaluated_depsgraph_get()
+
+def faces(o):
+    return len(o.evaluated_get(dg).data.polygons) if o.type == "MESH" else 0
+
+def parts(root):
+    return [o for o in [root, *root.children_recursive] if o.type == "MESH"]
+
+tagged = [o for o in bpy.context.scene.objects if o.get("ai_db_id") is not None]
+inside = {{p.name for o in tagged for p in parts(o)}}
+per = {{o.name: sum(faces(p) for p in parts(o)) for o in tagged}}
+total = sum(per.values()) + sum(faces(o) for o in bpy.context.scene.objects if o.name not in inside)
+before, changed = total, []
+if budget is not None and total > budget:
+    for o in sorted((o for o in tagged if not o.get("hero")), key=lambda o: -per[o.name]):
+        if total <= budget or per[o.name] == 0:
+            break
+        ratio = max(floor, (per[o.name] - (total - budget)) / per[o.name])
+        for p in parts(o):
+            mod = p.modifiers.get("ai_db_decimate") or p.modifiers.new("ai_db_decimate", "DECIMATE")
+            mod.ratio = ratio
+        dg.update()
+        now = sum(faces(p) for p in parts(o))
+        changed.append({{"object": o.name, "ratio": round(ratio, 3), "faces_before": per[o.name], "faces_after": now}})
+        total -= per[o.name] - now
+        per[o.name] = now
+result = {{"faces_total": total, "faces_before": before, "budget": budget, "over_budget": budget is not None and total > budget,
+          "faces_per_object": dict(sorted(per.items(), key=lambda kv: -kv[1])), "decimated": changed}}
+"""
+
+
+def poly_report(budget: int | None) -> dict[str, Any]:
+    """Faces per object after a build; with a budget, decimate down to it (see _POLY_BUDGET)."""
+    from ai_db_scene.constants import BUILD_DECIMATE_MIN_RATIO
+
+    return dict(BlenderClient().run_code(_POLY_BUDGET.format(
+        payload=json.dumps([budget, BUILD_DECIMATE_MIN_RATIO])), timeout=120.0))
 
 
 def _stored_spec(scene_id: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -1020,7 +1074,10 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
           "clear": {"type": "boolean", "description": "empty the Blender scene first (default false)"},
           "snapshot": {"type": "boolean", "description": "save the result as a scene version with its spec (default true)"},
           "prompt": {"type": "string", "description": "what this build is, for the scene history"},
-          "project": {"type": "string"}},
+          "project": {"type": "string"},
+          "poly_budget": {"type": "integer", "minimum": 1,
+                          "description": ("total faces; reports faces per object and decimates the heaviest "
+                                          "non-hero objects until the scene fits (report: polys)")}},
       "required": ["spec"]},
      _handle_build_scene),
     ("edit_scene",

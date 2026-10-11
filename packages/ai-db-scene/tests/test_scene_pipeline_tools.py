@@ -329,3 +329,18 @@ def test_live_export_scene_writes_glb_and_usd(private_blender, tmp_path, monkeyp
     assert (tmp_path / "exports" / "scene.glb").stat().st_size == glb["bytes"] > 0
     usd = sp._handle_export_scene({"path": "scene", "format": "usdz"})
     assert usd["status"] == "success" and usd["bytes"] > 0, usd
+
+
+@pytest.mark.blender
+def test_live_poly_budget_decimates_heaviest_non_hero(private_blender, mem, monkeypatch):
+    monkeypatch.setattr(sp, "_handle_validate_scene", lambda args: {"status": "success", "result": {"issues": []}})
+    res = sp._handle_build_scene({"spec": SPEC, "clear": True, "snapshot": False, "poly_budget": 10**9})
+    polys = res["polys"]
+    assert polys["decimated"] == [] and not polys["over_budget"], polys
+    assert set(polys["faces_per_object"]) == {"sofa", "table", "lamp"}
+    budget = polys["faces_total"] - polys["faces_per_object"]["table"] // 2
+    cut = sp.poly_report(budget)
+    assert cut["decimated"] and "sofa" not in {d["object"] for d in cut["decimated"]}, cut
+    assert cut["faces_total"] < polys["faces_total"]
+    floor = sp.poly_report(1)  # unreachable: every non-hero at the ratio floor, hero untouched
+    assert floor["over_budget"] and floor["faces_per_object"]["sofa"] == polys["faces_per_object"]["sofa"]
