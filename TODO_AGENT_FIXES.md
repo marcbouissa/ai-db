@@ -712,8 +712,14 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   **Done:** user decision "never commit binaries". `.gitignore` covers `*.blend*`, `*.exr`,
   `*.glb`, `*.fbx`, `*.usdc`, `*.usdz`, `packages/*/showcase/*_out/` and the sheet PNGs; the 8
   tracked binaries are untracked (still on disk). ~12 MB stays in history (not rewritten).
-- [ ] Delete the stray `C:\data\project_db.sqlite` in the repo root and find the code that
+- [x] Delete the stray `C:\data\project_db.sqlite` in the repo root and find the code that
   built a Windows path on Linux (`grep -rn 'C:' ai_db tests`); root `__pycache__/`.
+  **Done 2026-10-11:** the source was `tests/test_storage.py::test_factory_windows_style_paths`
+  (on POSIX the path is a relative file name, created in the cwd); it now runs in
+  `tmp_path`. The file is gitignored (`*.sqlite`) and untracked; this worktree's copy was
+  removed, the main checkout's copy (if any) is the user's to delete. Root `__pycache__/`
+  came from tests importing the root `mcp_server.py`; they import
+  `ai_db.transports.mcp` now (K4).
 
 ### K10. Extract scene/video into a plugin package (done 2026-10-07)
 - [x] Coupling is one-way: scene/video uses only `logger`, `errors`, a few constants,
