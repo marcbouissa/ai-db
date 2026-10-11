@@ -26,6 +26,8 @@ _YELLOW = "paint:#e0a000"
 _BLUE = "paint:#2f5d8a"
 _ORANGE = "paint:#e8661a"
 _CARDBOARD = "plaster:#a8835a"
+_CAST_IRON = "rubber:#1c1c1c"  # matte black
+_VENEER = "wood:walnut:scale=2.5"  # fronts: a finer figure; the default reads as zebra bands
 _WHITE = "color:#f2f2f2"
 
 
@@ -101,6 +103,30 @@ def _rack() -> list[dict[str, Any]]:
     return parts
 
 
+def _panel(pid: str, w: float, h: float, x: float, z: float, mat: str) -> dict[str, Any]:
+    """A shaker cabinet front (recessed field) on a carcass whose face is at y = -0.45."""
+    return {"id": pid, "shape": "raised_panel", "size": [round(w, 4), 0.03, round(h, 4)], "at": [round(x, 4), -0.465, round(z, 4)],
+            "mode": "recessed", "border": round(0.16 * min(w, h), 4), "moulding": round(0.03 * min(w, h), 4),
+            "field_depth": 0.008, "material": mat}
+
+
+def _kitchen_run() -> list[dict[str, Any]]:
+    """Base cabinet run (1.8 x 0.6 x 0.9 m): recessed plinth, carcass, a row of drawers over doors
+    with shaker fronts and bar pulls, an overhanging worktop."""
+    front, n = "plastic:#ece8df", 4
+    parts = [_box("plinth", [0.98, 0.85, 0.11], [0, 0.07, 0], _DARK),
+             _box("carcass", [1.0, 0.95, 0.845], [0, 0.025, 0.11], front),
+             _box("worktop", [1.0, 1.0, 0.045], [0, 0, 0.955], "marble:carrara")]
+    w = 1.0 / n
+    for k in range(n):
+        x = -0.5 + w * (k + 0.5)
+        parts += [_panel(f"drawer_{k}", w - 0.008, 0.17, x, 0.775, front),
+                  _box(f"drawer_pull_{k}", [w * 0.45, 0.02, 0.012], [x, -0.49, 0.855], _STEEL),
+                  _panel(f"door_{k}", w - 0.008, 0.645, x, 0.12, front),
+                  _box(f"door_pull_{k}", [0.012, 0.02, 0.12], [x + (w / 2 - 0.035) * (1 if k % 2 else -1), -0.49, 0.6], _STEEL)]
+    return parts
+
+
 def _screen() -> list[dict[str, Any]]:
     return [_box("foot", [0.35, 0.8, 0.03], [0, 0, 0], "metal:chrome"),
             _box("neck", [0.06, 0.1, 0.13], [0, 0.05, 0.03], "metal:chrome"),
@@ -142,10 +168,7 @@ _RECIPES: dict[str, Any] = {
     "whiteboard": lambda: [
         _box("frame", [1.0, 1.0, 1.0], [0, 0, 0], "metal:steel"),
         _box("board", [0.96, 0.2, 0.92], [0, -0.45, 0.04], _WHITE)],
-    "kitchen_counter": lambda: [
-        _box("cabinet", [1.0, 0.95, 0.94], [0, 0.025, 0], "color:#e9e5dc"),
-        _box("top", [1.0, 1.0, 0.06], [0, 0, 0.94], "color:#d8d6d0"),
-        _box("doors_line", [0.004, 0.02, 0.8], [0, -0.48, 0.07], _DARK)],
+    "kitchen_counter": _kitchen_run,
     "kitchen_island": lambda: [
         _box("cabinet", [0.94, 0.9, 0.94], [0, 0, 0], "color:#e9e5dc"),
         _box("top", [1.0, 1.0, 0.06], [0, 0, 0.94], "color:#d8d6d0")],
@@ -295,15 +318,20 @@ _RECIPES.update({
         {"id": "cistern_lid", "shape": "rounded_slab", "size": [0.94, 0.26, 0.04], "at": [0, 0.38, 0.95],
          "corner_radius": 0.02, "material": _WHITE_C},
         _cyl("flush", [0.12, 0.08, 0.012], [0, 0.38, 0.99], "metal:chrome")],
+    # bathroom vanity (0.8 x 0.5 x 0.85 m): two shaker doors, ceramic top with a hollow basin
+    # set into it, a mixer tap with spout and lever
     "sink": lambda: [
-        _box("cabinet", [0.96, 0.92, 0.8], [0, 0.04, 0], _WALNUT),
-        _box("door_line", [0.006, 0.02, 0.7], [0, -0.43, 0.05], _DARK),
-        _box("counter", [1.0, 1.0, 0.06], [0, 0, 0.8], _WHITE_C),
-        _box("basin", [0.6, 0.55, 0.05], [0, -0.05, 0.84], "color:#c9ccd0"),  # the bowl, seen from above
-        _box("faucet_base", [0.06, 0.08, 0.1], [0, 0.32, 0.86], "metal:chrome"),
-        _box("spout", [0.04, 0.18, 0.04], [0, 0.2, 0.96], "metal:chrome")],
-    # built-in bathtub: a hollow body with rounded corners (open top, real inner basin), a little
-    # water, a chrome mixer on the rim at the foot end
+        _box("carcass", [0.98, 0.95, 0.8], [0, 0.025, 0], _VENEER),
+        _panel("door_l", 0.48, 0.74, -0.245, 0.03, _VENEER),
+        _panel("door_r", 0.48, 0.74, 0.245, 0.03, _VENEER),
+        _box("pull_l", [0.012, 0.02, 0.12], [-0.03, -0.49, 0.55], _STEEL),
+        _box("pull_r", [0.012, 0.02, 0.12], [0.03, -0.49, 0.55], _STEEL),
+        _box("top", [1.0, 1.0, 0.05], [0, 0, 0.8], _WHITE_C),
+        {"id": "basin", "shape": "rounded_slab", "size": [0.62, 0.6, 0.16], "at": [0, -0.06, 0.72], "corner_radius": 0.08,
+         "material": _WHITE_C, "ops": [{"op": "shell", "thickness": 0.012, "open_faces": "top"}]},
+        _cyl("tap_post", [0.05, 0.08, 0.12], [0, 0.34, 0.85], "metal:chrome"),
+        _box("tap_spout", [0.03, 0.2, 0.03], [0, 0.22, 0.94], "metal:chrome"),
+        _box("tap_lever", [0.08, 0.02, 0.015], [0.05, 0.34, 0.97], "metal:chrome")],
     "bathtub": lambda: [
         {"id": "body", "shape": "rounded_slab", "size": [1.0, 1.0, 0.9], "at": [0, 0, 0], "corner_radius": 0.06,
          "material": _WHITE_C, "ops": [{"op": "shell", "thickness": 0.04, "open_faces": "top"}]},
@@ -326,13 +354,22 @@ _RECIPES.update({
     "wall_clock": lambda: [
         _cyl("rim", [1.0, 1.0, 1.0], [0, 0, 0], _DARK, rotation_deg=[90, 0, 0]),
         _cyl("face", [0.9, 0.9, 0.2], [0, -0.45, 0.05], _WHITE, rotation_deg=[90, 0, 0])],
+    # freestanding cooker (0.6 x 0.6 x 0.9 m): brushed body, dark glass hob with four burners
+    # under cast-iron grates, a control strip with knobs, an oven door with a window and bar handle
     "stove": lambda: [
-        _box("body", [1.0, 1.0, 0.94], [0, 0, 0], _STEEL),
-        _box("top", [1.0, 1.0, 0.06], [0, 0, 0.94], _DARK),
-        *[_cyl(f"burner_{i}", [0.22, 0.22, 0.01], [x, y, 0.995], "metal:rust")
-          for i, (x, y) in enumerate(((-0.22, -0.2), (0.22, -0.2), (-0.22, 0.2), (0.22, 0.2)))],
-        _box("oven_door", [0.8, 0.02, 0.5], [0, -0.5, 0.2], _DARK),
-        _box("oven_handle", [0.6, 0.04, 0.03], [0, -0.52, 0.74], "metal:chrome")],
+        _box("body", [1.0, 0.95, 0.9], [0, 0.025, 0], "metal:brushed"),
+        _box("hob", [1.0, 1.0, 0.04], [0, 0, 0.9], "plastic:#0e0e0e"),
+        *[p for i, (x, y) in enumerate(((-0.23, -0.2), (0.23, -0.2), (-0.23, 0.22), (0.23, 0.22))) for p in (
+            _cyl(f"burner_{i}", [0.2, 0.2, 0.02], [x, y, 0.94], "metal:steel"),
+            _box(f"grate_{i}_x", [0.36, 0.025, 0.03], [x, y, 0.94], _CAST_IRON),
+            _box(f"grate_{i}_y", [0.025, 0.36, 0.03], [x, y, 0.94], _CAST_IRON))],
+        _box("controls", [1.0, 0.03, 0.09], [0, -0.465, 0.79], "metal:brushed"),
+        *[_cyl(f"knob_{k}", [0.06, 0.05, 0.035], [round(-0.36 + k * 0.18, 4), -0.48, 0.815], _DARK,
+               rotation_deg=[90, 0, 0]) for k in range(5)],
+        _box("oven_door", [0.92, 0.03, 0.6], [0, -0.465, 0.1], "metal:brushed"),
+        _box("oven_window", [0.66, 0.012, 0.3], [0, -0.486, 0.24], "glass:tinted"),
+        _box("oven_handle", [0.7, 0.02, 0.025], [0, -0.49, 0.64], "metal:chrome"),
+        _box("drawer", [0.92, 0.03, 0.08], [0, -0.465, 0.01], "metal:brushed")],
     "laptop": lambda: [
         _box("base", [1.0, 1.0, 0.1], [0, 0, 0], _STEEL),
         _box("screen", [1.0, 0.06, 0.9], [0, 0.47, 0.1], _DARK)],
@@ -538,14 +575,6 @@ _RECIPES.update({
         *[_box(f"lens_{k}", [0.1, 0.7, 0.01], [x, 0, 0.83], "color:#fff4d6") for k, x in enumerate((-0.44, 0.44))],
         _cyl("finial", [0.05, 0.2, 0.08], [0, 0, 0.92], _DARK)],
 })
-
-
-# kitchen counter: cabinet doors, handles and a top instead of a plain block
-_RECIPES["kitchen_counter"] = lambda: [
-    _box("cabinet", [1.0, 0.95, 0.94], [0, 0.025, 0], "color:#e9e5dc"),
-    *[_box(f"door_line_{k}", [0.006, 0.02, 0.8], [-0.5 + (k + 1) / 3, -0.46, 0.07], _DARK) for k in range(2)],
-    *[_box(f"handle_{k}", [0.12, 0.03, 0.02], [-0.5 + (k + 0.5) / 3, -0.465, 0.8], _STEEL) for k in range(3)],
-    _box("top", [1.0, 1.0, 0.06], [0, 0, 0.94], "color:#d8d6d0")]
 
 
 # --- seeded variation -----------------------------------------------------------------------
