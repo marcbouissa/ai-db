@@ -32,7 +32,7 @@ EMBEDDING_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "none": (frozenset(), frozenset()),
     "sentence_transformers": (
         frozenset({"model", "device", "batch_size"}),
-        frozenset({"query_prompt", "dtype", "bulk_device", "bulk_threshold", "_note"}),
+        frozenset({"query_prompt", "dtype", "bulk_device", "bulk_threshold", "max_seq_length", "_note"}),
     ),
     "openai_compatible": (
         frozenset({"model", "base_url", "api_key_env", "dimensions", "batch_size"}),
@@ -245,6 +245,10 @@ def _parse_provider(
             not isinstance(options["batch_size"], int) or options["batch_size"] < 1
         ):
             raise AiDbConfigError(f"'{where}.batch_size' must be a positive integer")
+        if "max_seq_length" in options and (
+            not isinstance(options["max_seq_length"], int) or options["max_seq_length"] < 16
+        ):
+            raise AiDbConfigError(f"'{where}.max_seq_length' must be an integer >= 16")
         if "bulk_threshold" in options and (
             not isinstance(options["bulk_threshold"], int) or options["bulk_threshold"] < 1
         ):

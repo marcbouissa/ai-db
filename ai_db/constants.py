@@ -191,6 +191,9 @@ INDEX_LANGUAGES_STATE_KEY = "index_languages"  # session_state key: grammars the
 RECALL_VECTORS_STATE_KEY = "recall_vectors_meta"  # session_state: model the skill/context vectors came from
 CPU_THREADS_MAX = 8  # torch intra-op threads for CPU inference; override with AI_DB_CPU_THREADS
 EMBED_BULK_THRESHOLD = 256  # pending chunks at or above which embedding.bulk_device is used
+# Model tokens per embedded text. Chunks are MAX_CHUNK_TOKENS (tiktoken) long; skills and docs can
+# be far longer, and an uncapped long-context model (Qwen3: 32k) then needs tens of GiB of attention.
+EMBED_MAX_SEQ_TOKENS = 2048
 RECALL_EMBED_BATCH = 64  # texts per embed_documents call when backfilling
 SKILL_W_RECALL = 5.0  # weight of a recall provider's similarity in route_skills (same scale as BM25)
 SKILL_RECALL_MIN_SIM = 0.3  # similarities at or below this add nothing (unrelated skills)

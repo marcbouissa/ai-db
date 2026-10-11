@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from ai_db.constants import EMBED_BULK_THRESHOLD
+from ai_db.constants import EMBED_BULK_THRESHOLD, EMBED_MAX_SEQ_TOKENS
 from ai_db.device import CUDA, configure_cpu_threads, resolve_device, resolve_dtype
 from ai_db.embed.base import EmbeddingProvider
 from ai_db.errors import AiDbConfigError
@@ -58,6 +58,10 @@ class SentenceTransformersEmbedder(EmbeddingProvider):
         with quiet_model_load(self.model_name):
             self.model = SentenceTransformer(self.model_name, device=device,
                                              model_kwargs=model_kwargs or None)
+        # Truncate long texts: the tail of a 30k-token skill adds little and costs O(n^2) memory.
+        cap = int(options.get("max_seq_length", EMBED_MAX_SEQ_TOKENS))
+        if not self.model.max_seq_length or self.model.max_seq_length > cap:
+            self.model.max_seq_length = cap
         self.loaded_dtype: str = str(
             next(self.model.parameters()).dtype).removeprefix("torch.")
         # renamed in sentence-transformers 6 (get_sentence_embedding_dimension -> get_embedding_dimension)

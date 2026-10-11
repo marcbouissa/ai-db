@@ -192,3 +192,11 @@ def test_configure_cpu_threads_leaves_omp_choice_alone(monkeypatch):
     device.configure_cpu_threads()
     device.configure_cpu_threads()  # once per process
     assert calls == [5]
+
+
+
+def test_config_validates_max_seq_length():
+    cfg = parse_config(_emb_cfg(max_seq_length=1024), check_env=False)
+    assert cfg.embedding.options["max_seq_length"] == 1024
+    with pytest.raises(AiDbConfigError, match="max_seq_length"):
+        parse_config(_emb_cfg(max_seq_length=0), check_env=False)
