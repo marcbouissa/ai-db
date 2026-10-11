@@ -36,7 +36,7 @@ SCENE_FILL_W_RANGE = (100.0, 2500.0)
 SCENE_FILL_SIZE_FRACTION = 0.5  # fill light size as a fraction of the room footprint (soft shadows)
 SCENE_FILL_CEILING_GAP_M = 0.05  # below the ceiling plane, so it is inside the room
 SCENE_LAMP_W = {"floor_lamp": 80.0, "table_lamp": 40.0, "pendant_lamp": 100.0, "ceiling_light": 150.0,
-                "wall_sconce": 40.0, "street_lamp": 300.0}  # a point light in each lamp object
+                "wall_sconce": 40.0, "street_lamp": 300.0, "lamp_post_double": 500.0}  # a point light in each lamp object
 SCENE_CAMERA_INSET = 0.12  # interior camera: corner inset as a fraction of the room size
 SCENE_CAMERA_HEIGHT_M = 1.6  # eye height indoors (outdoors: 2.5 m)
 REPAIR_GROWTH = 1.2  # build_scene: room x/y growth per repair step

@@ -2,6 +2,10 @@
 
 import json
 import os
+import shutil
+import subprocess
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -31,3 +35,65 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     for var in ("AI_DB_DAEMON_URL", "AI_DB_API_KEY", "AI_DB_ADMIN_KEY"):  # never the live daemon
         monkeypatch.delenv(var, raising=False)
     return tmp_path
+
+
+# --- a private headless Blender with the addon, for @pytest.mark.blender tests ---------------
+# Never the user's Blender: each test gets its own process, its own port (picked by the server)
+# and an empty factory scene.
+_BLENDER = Path.home() / "bin" / "blender"  # evaluated at import, before HOME is redirected
+_ADDON = Path(os.environ.get("AI_DB_BLENDER_ADDON", "~/GitRepos/blender_mcp")).expanduser()
+_SERVE = """
+import os, sys, time
+sys.path.insert(0, os.environ["ADDON_ROOT"])
+from importlib import import_module
+srv = import_module(os.environ["ADDON_PKG"] + ".socket_server").MCPServerState
+port = srv.start(0)
+with open(os.environ["READY"] + ".tmp", "w") as f:
+    f.write(str(port))
+os.replace(os.environ["READY"] + ".tmp", os.environ["READY"])  # atomic: never half a port number
+stop, parent = os.environ["STOP"], int(os.environ["PARENT"])
+while not os.path.exists(stop) and os.getppid() == parent:
+    srv.itc.process_pending()
+    time.sleep(0.01)
+srv.stop()
+os._exit(0)
+"""
+_START_S = 180.0  # upper bound for Blender to start listening (seconds under heavy load)
+
+
+def _addon_package() -> str | None:
+    found = [d.parent.name for d in _ADDON.glob("*/socket_server.py")] if _ADDON.exists() else []
+    return found[0] if len(found) == 1 else None
+
+
+def _blender_exe() -> str | None:
+    return str(_BLENDER) if _BLENDER.exists() else shutil.which("blender")
+
+
+@pytest.fixture
+def private_blender(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[int]:
+    """Port of a fresh headless Blender serving the addon; AI_DB_BLENDER_PORT points at it."""
+    exe, pkg = _blender_exe(), _addon_package()
+    if exe is None or pkg is None:
+        pytest.skip("Blender/addon not available")
+    ready, stop, script = tmp_path / "blender_ready", tmp_path / "blender_stop", tmp_path / "serve.py"
+    script.write_text(_SERVE, encoding="utf-8")
+    env = {**os.environ, "ADDON_ROOT": str(_ADDON), "ADDON_PKG": pkg, "READY": str(ready),
+           "STOP": str(stop), "PARENT": str(os.getpid())}
+    proc = subprocess.Popen([exe, "-b", "--factory-startup", "--python", str(script)], env=env,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + _START_S
+        while not ready.exists():  # the server's own signal, not a guessed delay
+            assert proc.poll() is None, f"Blender exited early (rc={proc.returncode})"
+            assert time.monotonic() < deadline, "Blender did not start listening"
+            time.sleep(0.05)
+        port = int(ready.read_text(encoding="utf-8"))
+        monkeypatch.setenv("AI_DB_BLENDER_PORT", str(port))
+        yield port
+    finally:
+        stop.write_text("1", encoding="utf-8")
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()

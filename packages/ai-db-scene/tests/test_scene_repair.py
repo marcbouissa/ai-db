@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from ai_db_scene.layout import LayoutError
 from ai_db_scene.repair import relax
 from ai_db_scene.tools import scene_pipeline as sp
@@ -131,3 +132,101 @@ def test_every_recipe_has_a_prior_a_default_material_and_unique_parts():
         spec = recipe_spec(cat, f"x_{cat}", priors[cat].typical_m)
         ids = [p["id"] for p in spec["parts"]]
         assert len(ids) == len(set(ids)) and spec["bbox_m"] == list(priors[cat].typical_m), cat
+
+
+_NEW_OUTDOOR = ("playground_slide", "swing_set", "gazebo", "planter", "hedge", "signpost", "bollard",
+                "parking_bay", "loading_dock", "shipping_container", "traffic_cone", "lamp_post_double")
+_TOUCH = 0.006  # relative units: parts this close count as touching
+
+
+def _part_box(part):
+    """Axis-aligned bounds of a recipe part, as build_asset places it: size taken before
+    rotation_deg (Euler XYZ), then the rotated bounds' bottom centre put at ``at``."""
+    import itertools
+    import math
+
+    sx, sy, sz = part["size"]
+    rx, ry, rz = (math.radians(a) for a in part.get("rotation_deg", (0, 0, 0)))
+
+    def rot(p):
+        x, y, z = p
+        y, z = y * math.cos(rx) - z * math.sin(rx), y * math.sin(rx) + z * math.cos(rx)
+        x, z = x * math.cos(ry) + z * math.sin(ry), -x * math.sin(ry) + z * math.cos(ry)
+        x, y = x * math.cos(rz) - y * math.sin(rz), x * math.sin(rz) + y * math.cos(rz)
+        return x, y, z
+
+    pts = [rot(c) for c in itertools.product((-sx / 2, sx / 2), (-sy / 2, sy / 2), (-sz / 2, sz / 2))]
+    lo = [min(p[i] for p in pts) for i in range(3)]
+    hi = [max(p[i] for p in pts) for i in range(3)]
+    ax, ay, az = part["at"]
+    off = (ax - (lo[0] + hi[0]) / 2, ay - (lo[1] + hi[1]) / 2, az - lo[2])
+    return [lo[i] + off[i] for i in range(3)], [hi[i] + off[i] for i in range(3)]
+
+
+def _floating_parts(parts):
+    """Parts not connected to the ground through a chain of touching parts."""
+    boxes = {p["id"]: _part_box(p) for p in parts}
+    ground = min(lo[2] for lo, _hi in boxes.values())
+    reached = {pid for pid, (lo, _hi) in boxes.items() if lo[2] <= ground + _TOUCH}
+    grew = True
+    while grew:
+        grew = False
+        for pid, (lo, hi) in boxes.items():
+            if pid in reached:
+                continue
+            if any(all(lo[i] <= boxes[q][1][i] + _TOUCH and boxes[q][0][i] <= hi[i] + _TOUCH for i in range(3))
+                   for q in reached):
+                reached.add(pid)
+                grew = True
+    return sorted(set(boxes) - reached)
+
+
+def test_outdoor_recipes_have_no_floating_parts_and_plausible_priors():
+    from ai_db_scene.materials import CATEGORY_MATERIALS
+    from ai_db_scene.priors import load_priors
+    from ai_db_scene.recipes import has_recipe, recipe_spec
+    priors = load_priors()
+    for cat in _NEW_OUTDOOR:
+        assert has_recipe(cat) and cat in priors and cat in CATEGORY_MATERIALS, cat
+        assert priors[cat].support == "ground", cat
+        spec = recipe_spec(cat, cat, priors[cat].typical_m)
+        assert _floating_parts(spec["parts"]) == [], cat
+    assert priors["parking_bay"].typical_m[2] <= 0.03  # flat: other objects (cars) may stand on it
+    assert priors["loading_dock"].can_support_others and priors["shipping_container"].can_support_others
+
+
+def test_floating_part_check_catches_a_gap():
+    parts = [{"id": "a", "shape": "box", "size": [1, 1, 0.5], "at": [0, 0, 0]},
+             {"id": "b", "shape": "box", "size": [1, 1, 0.2], "at": [0, 0, 0.7]}]
+    assert _floating_parts(parts) == ["b"]
+    parts[1]["at"] = [0, 0, 0.5]
+    assert _floating_parts(parts) == []
+    tilted = {"id": "t", "shape": "box", "size": [0.1, 1.0, 0.1], "at": [0, 0, 0], "rotation_deg": [90, 0, 0]}
+    lo, hi = _part_box(tilted)
+    assert abs((hi[2] - lo[2]) - 1.0) < 1e-9 and abs(lo[2]) < 1e-9  # stood upright, base on the ground
+
+
+_BBOX = """
+import bpy
+from mathutils import Vector
+root = bpy.data.objects[{name!r}]
+pts = [o.matrix_world @ Vector(c) for o in [root, *root.children_recursive] if o.type == "MESH" for c in o.bound_box]
+result = {{"size": [max(p[i] for p in pts) - min(p[i] for p in pts) for i in range(3)],
+           "min_z": min(p[2] for p in pts), "parts": sum(1 for o in root.children_recursive if o.type == "MESH")}}
+"""
+
+
+@pytest.mark.blender
+def test_live_outdoor_recipes_build_with_exact_bbox(private_blender):
+    from ai_db_scene.blender_client import BlenderClient
+    from ai_db_scene.priors import load_priors
+    from ai_db_scene.recipes import recipe_spec
+
+    c = BlenderClient(port=private_blender, timeout=120)
+    priors = load_priors()
+    for cat in _NEW_OUTDOOR:
+        dims = priors[cat].typical_m
+        c.request("build_asset", {"spec": recipe_spec(cat, cat, dims)})
+        got = c.run_code(_BBOX.format(name=cat))
+        assert got["size"] == pytest.approx(list(dims), abs=2e-3), cat
+        assert abs(got["min_z"]) < 1e-3 and got["parts"] >= 2, cat

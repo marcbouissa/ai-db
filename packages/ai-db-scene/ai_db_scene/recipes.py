@@ -308,6 +308,110 @@ _RECIPES.update({
         _sphere("mass", [1.0, 0.85, 0.75], [0, 0, 0], "color:#7d7a72"),
         _sphere("lump", [0.6, 0.55, 0.5], [0.2, 0.1, 0.4], "color:#8a867c")],
 })
+def _taper(pid: str, size: list[float], at: list[float], material: str, top: float) -> dict[str, Any]:
+    """A cone-like cylinder: ``top`` is the top radius as a fraction of the base radius."""
+    return {"id": pid, "shape": "tapered_cylinder", "size": size, "at": at, "material": material,
+            "radius": 0.5, "radius_top": 0.5 * top}
+
+
+_RED = "color:#c8372d"
+_ORANGE = "color:#ff6a13"
+_CONCRETE = "color:#9a9890"
+_ASPHALT = "color:#3a3a3c"
+#: chute and its rails slope from the platform's front edge (y 0.2, z 0.64) to the ground (y -0.5)
+_SLIDE_DEG = 42.4
+_SLIDE_LEN = 0.948
+#: swing legs lean from the ground (y +-0.45) to the beam (y 0, z 0.97)
+_SWING_DEG = 24.9
+_SWING_LEN = 1.069
+
+# Outdoor and industrial vocabulary. Every part rests on the ground or on another part (the
+# recipe test checks it): a floating rail or roof tier shows up immediately in a render.
+_RECIPES.update({
+    "playground_slide": lambda: [
+        # ladder at the back (+Y), platform on top of it, chute down to the front (-Y)
+        _box("ladder_l", [0.04, 0.12, 1.0], [-0.4, 0.42, 0], _STEEL),
+        _box("ladder_r", [0.04, 0.12, 1.0], [0.4, 0.42, 0], _STEEL),
+        *[_box(f"rung_{k}", [0.76, 0.04, 0.03], [0, 0.42, 0.12 + 0.16 * k], _STEEL) for k in range(3)],
+        _box("platform", [0.84, 0.2, 0.04], [0, 0.3, 0.6], _WOOD),
+        _box("guard_l", [0.04, 0.2, 0.36], [-0.4, 0.3, 0.64], _RED),
+        _box("guard_r", [0.04, 0.2, 0.36], [0.4, 0.3, 0.64], _RED),
+        _box("chute", [0.6, _SLIDE_LEN, 0.03], [0, -0.14, 0], _RED, rotation_deg=[_SLIDE_DEG, 0, 0]),
+        _box("chute_side_l", [0.04, _SLIDE_LEN, 0.1], [-0.32, -0.117, 0], _RED, rotation_deg=[_SLIDE_DEG, 0, 0]),
+        _box("chute_side_r", [0.04, _SLIDE_LEN, 0.1], [0.32, -0.117, 0], _RED, rotation_deg=[_SLIDE_DEG, 0, 0])],
+    "swing_set": lambda: [
+        # an A-frame at each end carries the top beam; two seats hang from it on chains
+        *[_box(f"leg_{i}", [0.06, 0.06, _SWING_LEN], [x, sy * 0.198, 0], _STEEL, rotation_deg=[sy * _SWING_DEG, 0, 0])
+          for i, (x, sy) in enumerate(((-0.47, -1), (-0.47, 1), (0.47, -1), (0.47, 1)))],
+        _box("beam", [1.0, 0.08, 0.05], [0, 0, 0.95], _STEEL),
+        *[part for k, x in enumerate((-0.2, 0.2)) for part in (
+            _box(f"chain_{k}_l", [0.01, 0.01, 0.74], [x - 0.1, 0, 0.21], _STEEL),
+            _box(f"chain_{k}_r", [0.01, 0.01, 0.74], [x + 0.1, 0, 0.21], _STEEL),
+            _box(f"seat_{k}", [0.22, 0.12, 0.02], [x, 0, 0.19], _DARK))]],
+    "gazebo": lambda: [
+        _box("deck", [1.0, 1.0, 0.05], [0, 0, 0], "wood:pine"),
+        *[_box(f"post_{i}", [0.05, 0.05, 0.65], [sx * 0.45, sy * 0.45, 0.05], _WHITE)
+          for i, (sx, sy) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))],
+        # railings on three sides, the front (-Y) is the entrance
+        _box("rail_back", [0.9, 0.03, 0.03], [0, 0.45, 0.3], _WHITE),
+        _box("rail_l", [0.03, 0.9, 0.03], [-0.45, 0, 0.3], _WHITE),
+        _box("rail_r", [0.03, 0.9, 0.03], [0.45, 0, 0.3], _WHITE),
+        _box("eave", [1.0, 1.0, 0.04], [0, 0, 0.7], _WHITE),
+        _box("roof_1", [0.8, 0.8, 0.1], [0, 0, 0.74], "color:#5b4636"),
+        _box("roof_2", [0.55, 0.55, 0.08], [0, 0, 0.84], "color:#5b4636"),
+        _box("roof_3", [0.3, 0.3, 0.06], [0, 0, 0.92], "color:#5b4636"),
+        _cyl("finial", [0.04, 0.04, 0.02], [0, 0, 0.98], _DARK)],
+    "planter": lambda: [
+        _box("box", [1.0, 1.0, 0.7], [0, 0, 0], _CONCRETE),
+        _box("soil", [0.92, 0.88, 0.05], [0, 0, 0.66], "color:#4a3526"),
+        *[_sphere(f"plant_{k}", [0.3, 0.6, 0.32], [x, 0, 0.68], g)
+          for k, (x, g) in enumerate(((-0.3, _GREEN), (0.0, _GREEN2), (0.3, _GREEN)))]],
+    "hedge": lambda: [
+        _box("body", [1.0, 0.9, 0.85], [0, 0, 0], _GREEN),
+        *[_sphere(f"top_{k}", [0.3, 1.0, 0.3], [x, 0, 0.7], _GREEN2) for k, x in enumerate((-0.35, 0.0, 0.35))]],
+    "signpost": lambda: [
+        _cyl("post", [0.1, 0.6, 0.72], [0, 0.2, 0], _STEEL),
+        _box("board", [1.0, 0.4, 0.35], [0, -0.3, 0.65], "color:#1f5a3a"),
+        _box("text_band", [0.8, 0.05, 0.08], [0, -0.525, 0.78], _WHITE)],
+    "bollard": lambda: [
+        _cyl("body", [0.9, 0.9, 0.88], [0, 0, 0], _DARK),
+        _cyl("band", [0.92, 0.92, 0.06], [0, 0, 0.7], _YELLOW),
+        _sphere("cap", [0.9, 0.9, 0.24], [0, 0, 0.76], _DARK)],
+    "parking_bay": lambda: [
+        # flat: an asphalt patch with painted lines on it, front (-Y) open
+        _box("surface", [1.0, 1.0, 0.6], [0, 0, 0], _ASPHALT),
+        _box("line_l", [0.04, 1.0, 0.4], [-0.48, 0, 0.6], _WHITE),
+        _box("line_r", [0.04, 1.0, 0.4], [0.48, 0, 0.6], _WHITE),
+        _box("line_back", [0.92, 0.04, 0.4], [0, 0.48, 0.6], _WHITE)],
+    "loading_dock": lambda: [
+        _box("platform", [1.0, 0.9, 0.92], [0, 0.05, 0], _CONCRETE),
+        *[_box(f"bumper_{k}", [0.08, 0.1, 0.25], [x, -0.45, 0.55], _DARK) for k, x in enumerate((-0.3, 0.3))],
+        _box("edge_stripe", [1.0, 0.04, 0.02], [0, -0.38, 0.92], _YELLOW),
+        _box("leveler", [0.4, 0.3, 0.01], [0, -0.2, 0.92], _STEEL)],
+    "shipping_container": lambda: [
+        _box("base_frame", [1.0, 1.0, 0.04], [0, 0, 0], _DARK),
+        _box("body", [0.97, 0.98, 0.92], [0, 0, 0.04], "color:#2f5d8a"),
+        _box("top_frame", [1.0, 1.0, 0.04], [0, 0, 0.96], _DARK),
+        *[_box(f"rib_{s}_{k}", [0.015, 0.02, 0.92], [sx * 0.4925, -0.45 + 0.1 * k, 0.04], "color:#2a5480")
+          for s, sx in (("l", -1), ("r", 1)) for k in range(10)],
+        # doors at the back (+Y): a centre split and four locking bars
+        _box("door_split", [0.006, 0.02, 0.88], [0, 0.49, 0.06], _DARK),
+        *[_box(f"lock_bar_{k}", [0.02, 0.02, 0.86], [x, 0.49, 0.07], _STEEL)
+          for k, x in enumerate((-0.35, -0.15, 0.15, 0.35))]],
+    "traffic_cone": lambda: [
+        _box("base", [1.0, 1.0, 0.06], [0, 0, 0], _DARK),
+        _taper("cone", [0.75, 0.75, 0.94], [0, 0, 0.06], _ORANGE, top=0.13),
+        _cyl("band", [0.5, 0.5, 0.12], [0, 0, 0.5], _WHITE)],
+    "lamp_post_double": lambda: [
+        _cyl("foot", [0.15, 0.6, 0.03], [0, 0, 0], _DARK),
+        _cyl("pole", [0.08, 0.3, 0.9], [0, 0, 0.03], _DARK),
+        _box("crossarm", [0.9, 0.15, 0.02], [0, 0, 0.9], _DARK),
+        *[_box(f"head_{k}", [0.12, 0.8, 0.08], [x, 0, 0.84], _DARK) for k, x in enumerate((-0.44, 0.44))],
+        *[_box(f"lens_{k}", [0.1, 0.7, 0.01], [x, 0, 0.83], "color:#fff4d6") for k, x in enumerate((-0.44, 0.44))],
+        _cyl("finial", [0.05, 0.2, 0.08], [0, 0, 0.92], _DARK)],
+})
+
+
 # kitchen counter: cabinet doors, handles and a top instead of a plain block
 _RECIPES["kitchen_counter"] = lambda: [
     _box("cabinet", [1.0, 0.95, 0.94], [0, 0.025, 0], "color:#e9e5dc"),

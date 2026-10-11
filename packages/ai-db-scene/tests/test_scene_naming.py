@@ -9,14 +9,9 @@ holds that name.
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
-import subprocess
 import sys
-import time
 import types
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -222,67 +217,19 @@ def test_finalize_renames_a_suffixed_new_object(world: FakeWorld) -> None:
     assert held.name == "lamp_stale" and held.get("ai_db_id") is None
 
 
-# --- live: a private headless Blender with the addon ------------------------------------------
-
-_BLENDER = Path.home() / "bin" / "blender"
-_ADDON = Path(os.environ.get("AI_DB_BLENDER_ADDON", "~/GitRepos/blender_mcp")).expanduser()
-_SERVE = """
-import os, sys, time
-sys.path.insert(0, os.environ["ADDON_ROOT"])
-from importlib import import_module
-srv = import_module(os.environ["ADDON_PKG"] + ".socket_server").MCPServerState
-port = srv.start(0)
-with open(os.environ["READY"] + ".tmp", "w") as f:
-    f.write(str(port))
-os.replace(os.environ["READY"] + ".tmp", os.environ["READY"])
-stop, parent = os.environ["STOP"], int(os.environ["PARENT"])
-while not os.path.exists(stop) and os.getppid() == parent:
-    srv.itc.process_pending()
-    time.sleep(0.01)
-srv.stop()
-os._exit(0)
-"""
-
-
-def _addon_package() -> str | None:
-    found = [d.parent.name for d in _ADDON.glob("*/socket_server.py")] if _ADDON.exists() else []
-    return found[0] if len(found) == 1 else None
-
-
 @pytest.mark.blender
-@pytest.mark.skipif(not (_BLENDER.exists() or shutil.which("blender")) or _addon_package() is None,
-                    reason="Blender/addon not available")
-def test_live_edit_rebuild_keeps_exact_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    ready, stop, script = tmp_path / "ready", tmp_path / "stop", tmp_path / "serve.py"
-    script.write_text(_SERVE)
-    env = {**os.environ, "ADDON_ROOT": str(_ADDON), "ADDON_PKG": str(_addon_package()), "READY": str(ready),
-           "STOP": str(stop), "PARENT": str(os.getpid())}
-    exe = str(_BLENDER) if _BLENDER.exists() else "blender"
-    proc = subprocess.Popen([exe, "-b", "--factory-startup", "--python", str(script)], env=env,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        deadline = time.monotonic() + 180
-        while not ready.exists():
-            assert proc.poll() is None and time.monotonic() < deadline, "Blender did not start"
-            time.sleep(0.05)
-        monkeypatch.setenv("AI_DB_BLENDER_PORT", ready.read_text())
-        monkeypatch.setattr(sp, "_handle_validate_scene", lambda args: {"status": "success", "result": {"issues": []}})
-        from ai_db_scene.blender_client import BlenderClient
+def test_live_edit_rebuild_keeps_exact_names(private_blender: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    from ai_db_scene.blender_client import BlenderClient
 
-        c = BlenderClient(timeout=120)
-        names = "import bpy\nresult = sorted(o.name for o in bpy.context.scene.objects)"
-        assert _build()["status"] == "built"
-        first = c.run_code(names)
-        # leave an orphan object holding a rebuilt name, as interrupted edits did
-        c.run_code("import bpy\nbpy.data.objects.new('sofa', None)\nresult = 1")
-        assert _build()["status"] == "built"
-        again = c.run_code(names)
-        assert again == first
-        assert {"sofa", "table", "lamp", "box"} <= set(again)
-        assert not [n for n in again if _SUFFIX.search(n) and _SUFFIX.sub("", n) in {"sofa", "table", "lamp", "box"}]
-    finally:
-        stop.write_text("1")
-        try:
-            proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+    monkeypatch.setattr(sp, "_handle_validate_scene", lambda args: {"status": "success", "result": {"issues": []}})
+    c = BlenderClient(port=private_blender, timeout=120)
+    names = "import bpy\nresult = sorted(o.name for o in bpy.context.scene.objects)"
+    assert _build()["status"] == "built"
+    first = c.run_code(names)
+    # leave an orphan object holding a rebuilt name, as interrupted edits did
+    c.run_code("import bpy\nbpy.data.objects.new('sofa', None)\nresult = 1")
+    assert _build()["status"] == "built"
+    again = c.run_code(names)
+    assert again == first
+    assert {"sofa", "table", "lamp", "box"} <= set(again)
+    assert not [n for n in again if _SUFFIX.search(n) and _SUFFIX.sub("", n) in {"sofa", "table", "lamp", "box"}]

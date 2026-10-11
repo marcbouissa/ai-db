@@ -67,4 +67,16 @@
 "barrel":{"min_m":[0.4,0.4,0.6],"typical_m":[0.6,0.6,0.9],"max_m":[0.8,0.8,1.1],"support":"floor","can_support_others":false,"default_clearance_m":0.0},
 "workbench":{"min_m":[1.0,0.5,0.8],"typical_m":[1.8,0.7,0.9],"max_m":[3.0,0.9,1.0],"support":"floor","can_support_others":true,"default_clearance_m":0.2},
 "safety_barrier":{"min_m":[0.8,0.1,0.8],"typical_m":[1.5,0.2,1.0],"max_m":[3.0,0.5,1.2],"support":"floor","can_support_others":false,"default_clearance_m":0.0},
-"fountain":{"min_m":[1.2,1.2,0.6],"typical_m":[2.4,2.4,1.2],"max_m":[6.0,6.0,3.0],"support":"ground","can_support_others":false,"default_clearance_m":1.0}}}
+"fountain":{"min_m":[1.2,1.2,0.6],"typical_m":[2.4,2.4,1.2],"max_m":[6.0,6.0,3.0],"support":"ground","can_support_others":false,"default_clearance_m":1.0},
+"playground_slide":{"min_m":[0.6,2.0,1.2],"typical_m":[0.8,3.2,1.9],"max_m":[1.2,5.0,3.0],"support":"ground","can_support_others":false,"default_clearance_m":1.5},
+"swing_set":{"min_m":[2.0,1.2,1.8],"typical_m":[3.2,1.8,2.4],"max_m":[6.0,2.8,3.2],"support":"ground","can_support_others":false,"default_clearance_m":1.5},
+"gazebo":{"min_m":[2.5,2.5,2.5],"typical_m":[3.5,3.5,3.2],"max_m":[6.0,6.0,4.5],"support":"ground","can_support_others":false,"default_clearance_m":0.5},
+"planter":{"min_m":[0.4,0.3,0.3],"typical_m":[1.0,0.5,0.6],"max_m":[3.0,1.2,1.0],"support":"ground","can_support_others":false,"default_clearance_m":0.1},
+"hedge":{"min_m":[1.0,0.4,0.5],"typical_m":[3.0,0.8,1.2],"max_m":[10.0,1.5,2.5],"support":"ground","can_support_others":false,"default_clearance_m":0.0},
+"signpost":{"min_m":[0.3,0.06,1.5],"typical_m":[0.6,0.1,2.2],"max_m":[1.2,0.2,3.0],"support":"ground","can_support_others":false,"default_clearance_m":0.2},
+"bollard":{"min_m":[0.1,0.1,0.6],"typical_m":[0.2,0.2,0.9],"max_m":[0.4,0.4,1.2],"support":"ground","can_support_others":false,"default_clearance_m":0.3},
+"parking_bay":{"min_m":[2.3,4.5,0.005],"typical_m":[2.5,5.0,0.01],"max_m":[3.6,6.5,0.02],"support":"ground","can_support_others":false,"default_clearance_m":0.0},
+"loading_dock":{"min_m":[2.5,2.0,0.9],"typical_m":[4.0,3.0,1.2],"max_m":[12.0,6.0,1.5],"support":"ground","can_support_others":true,"default_clearance_m":0.5},
+"shipping_container":{"min_m":[2.4,2.9,2.4],"typical_m":[2.44,6.06,2.59],"max_m":[2.5,12.2,2.9],"support":"ground","can_support_others":true,"default_clearance_m":0.5},
+"traffic_cone":{"min_m":[0.2,0.2,0.3],"typical_m":[0.36,0.36,0.7],"max_m":[0.5,0.5,1.0],"support":"ground","can_support_others":false,"default_clearance_m":0.1},
+"lamp_post_double":{"min_m":[0.6,0.2,3.0],"typical_m":[1.6,0.4,5.0],"max_m":[3.0,0.6,9.0],"support":"ground","can_support_others":false,"default_clearance_m":0.2}}}

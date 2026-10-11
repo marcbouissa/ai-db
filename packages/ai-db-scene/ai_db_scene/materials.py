@@ -47,6 +47,11 @@ CATEGORY_MATERIALS: dict[str, str] = {
     "rock": "color:#7d7a72", "barrel": "wood:dark", "book_stack": "color:#7a3b2e",
     "picture_frame": "wood:dark", "wall_clock": "wood:dark", "whiteboard": "color:#f4f4f4",
     "wall_partition": "plaster", "niche": "plaster", "fountain": "color:#b7b1a6",
+    # outdoor / industrial
+    "playground_slide": "color:#c8372d", "swing_set": "metal:steel", "gazebo": "wood:pine",
+    "planter": "color:#9a9890", "hedge": "color:#3f6b33", "signpost": "color:#1f5a3a", "bollard": "metal:steel",
+    "parking_bay": "color:#3a3a3c", "loading_dock": "color:#9a9890", "shipping_container": "metal:rust",
+    "traffic_cone": "color:#ff6a13", "lamp_post_double": "metal:steel",
 }
 DEFAULT_MATERIAL = "plaster"
 FLOOR_MATERIALS = {"indoor": "wood:oak", "outdoor": "color:#6f7d5a", "tabletop": "wood:walnut"}
