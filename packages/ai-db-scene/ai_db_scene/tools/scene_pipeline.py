@@ -910,10 +910,23 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
                 applied.append(f"fix failed for {issue.get('check')}: {e}")
         report = _handle_validate_scene({"spec": data})
     left = _issues(report)
+    from ai_db_scene import constants as _c
+
+    exposure: dict[str, Any] | None = None
+    if args.get("exposure_check", _c.BUILD_EXPOSURE_CHECK):
+        try:
+            exposure = exposure_check()
+        except Exception as e:  # noqa: BLE001 - a check must never fail a finished build
+            exposure = {"error": str(e)}
+        exp_issue = exposure_issue(exposure)
+        if exp_issue:
+            left.append(exp_issue)
     out = {"status": "built" if not any(i.get("severity") == "blocking" for i in left) else "built_with_issues",
            "objects": len(placements), "created": built.get("created"), "failed_commands": built.get("failed"),
            "repairs": repairs, "fixes_applied": applied, "issues_found": len(first),
            "issues_left": left[:20], "spec": data if repairs else None}
+    if exposure is not None:
+        out["exposure"] = exposure
     from ai_db_scene.constants import BUILD_POLY_BUDGET
 
     budget = args.get("poly_budget", BUILD_POLY_BUDGET)
@@ -1060,6 +1073,8 @@ _CRITIQUE_FIX: dict[str, str] = {
     "facing": "remove_relation against_wall that fixes its yaw, or move the target (add_relation in_front_of)",
     "scale": "update_object {set: {category: the right one}}",
     "door_clearance": "remove_relation against_wall near the door, or update_setting {set: {bounds_m: larger}}",
+    "exposure": ("a black render: the camera may sit in a wall or behind furniture (move it, or add lamps); "
+                 "blown out: fewer lights or an outdoor kind without sky"),
 }
 
 
@@ -1081,6 +1096,89 @@ def critique(left: list[dict[str, Any]], repairs: list[str], failed: list[dict[s
                     "suggest": "update_object {set: {detail: draft}} or {hero: false} on heavy objects"})
     rank = {"blocking": 0, "warning": 1}
     return sorted(out, key=lambda c: rank.get(str(c["severity"]), 2))
+
+
+#: probe renders from the scene camera (Cycles, tiny, few samples; the scene's render settings are
+#: restored after) and view exposure steps until the mean display luminance is in band. A step
+#: assumes display ~ linear^(1/2.2): k times brighter on screen is 2.2*log2(k) stops.
+_EXPOSURE = """
+import bpy, json, math, os, tempfile
+import numpy as np
+cfg = json.loads({payload!r})
+scene = bpy.context.scene
+r, cy, vs = scene.render, scene.cycles, scene.view_settings
+if scene.camera is None:
+    result = {{"skipped": "no scene camera"}}
+else:
+    saved = (r.resolution_x, r.resolution_y, r.resolution_percentage, r.engine, r.filepath,
+             r.image_settings.file_format, cy.samples, cy.use_denoising)
+    path = os.path.join(tempfile.gettempdir(), "ai_db_exposure_probe_%d.png" % os.getpid())
+    start, rounds, stats = vs.exposure, 0, None
+    try:
+        r.resolution_x, r.resolution_y = cfg["res"]
+        r.resolution_percentage, r.engine, r.filepath = 100, "CYCLES", path
+        r.image_settings.file_format = "PNG"
+        cy.samples, cy.use_denoising = cfg["samples"], False
+        lo, hi = cfg["band"]
+        while True:
+            bpy.ops.render.render(write_still=True)
+            img = bpy.data.images.load(path, check_existing=False)
+            try:
+                px = np.empty(len(img.pixels), dtype=np.float32)
+                img.pixels.foreach_get(px)
+            finally:
+                bpy.data.images.remove(img)
+            lum = px.reshape(-1, 4)[:, :3] @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+            stats = {{"mean": round(float(lum.mean()), 3),
+                     "dark_frac": round(float((lum < cfg["clip"][0]).mean()), 3),
+                     "bright_frac": round(float((lum > cfg["clip"][1]).mean()), 3)}}
+            too_bright = stats["bright_frac"] > cfg["max_bright"]
+            if (lo <= stats["mean"] <= hi and not too_bright) or rounds >= cfg["rounds"]:
+                break
+            step = 2.2 * math.log2(cfg["target"] / max(stats["mean"], 0.005))
+            if too_bright:
+                step = min(step, -0.5)
+            step = max(-cfg["max_step"], min(cfg["max_step"], step))
+            new = max(start - cfg["max_total"], min(start + cfg["max_total"], vs.exposure + step))
+            if abs(new - vs.exposure) < 0.05:
+                break  # at the limit: more rounds would render the same image
+            vs.exposure = new
+            rounds += 1
+    finally:
+        (r.resolution_x, r.resolution_y, r.resolution_percentage, r.engine, r.filepath,
+         r.image_settings.file_format, cy.samples, cy.use_denoising) = saved
+        if os.path.exists(path):
+            os.remove(path)
+    result = {{"rounds": rounds, **(stats or {{}}), "adjusted_by": round(vs.exposure - start, 2),
+              "exposure": round(vs.exposure, 2)}}
+"""
+
+
+def exposure_check() -> dict[str, Any]:
+    """Probe the scene camera's exposure and fix it (see _EXPOSURE). Adds ``in_band``."""
+    from ai_db_scene import constants as c
+
+    payload = json.dumps({
+        "res": list(c.BUILD_EXPOSURE_PROBE_RESOLUTION), "samples": c.BUILD_EXPOSURE_PROBE_SAMPLES,
+        "band": list(c.BUILD_EXPOSURE_BAND), "target": c.BUILD_EXPOSURE_TARGET, "clip": list(c.BUILD_EXPOSURE_CLIP),
+        "max_bright": c.BUILD_EXPOSURE_MAX_BRIGHT_FRAC, "rounds": c.BUILD_EXPOSURE_MAX_ROUNDS,
+        "max_step": c.BUILD_EXPOSURE_MAX_STEP, "max_total": c.BUILD_EXPOSURE_MAX_TOTAL})
+    res = dict(BlenderClient(timeout=300.0).run_code(_EXPOSURE.format(payload=payload), timeout=300.0))
+    if "mean" in res:
+        lo, hi = c.BUILD_EXPOSURE_BAND
+        res["in_band"] = lo <= res["mean"] <= hi and res.get("bright_frac", 0.0) <= c.BUILD_EXPOSURE_MAX_BRIGHT_FRAC
+    return res
+
+
+def exposure_issue(exp: dict[str, Any]) -> dict[str, Any] | None:
+    """A validator-style warning when the probe is still out of band after the adjustments."""
+    if exp.get("in_band", True):
+        return None
+    dark = exp.get("mean", 0.0) < 0.3
+    return {"check": "exposure", "severity": "warning", "objects": [], "fix": None,
+            "message": (f"render too {'dark' if dark else 'bright'} after {exp.get('rounds')} exposure rounds: "
+                        f"mean {exp.get('mean')}, {exp.get('dark_frac')} clipped dark, "
+                        f"{exp.get('bright_frac')} clipped bright")}
 
 
 def judge_render(path: Path) -> str:
@@ -1248,7 +1346,10 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
           "judge": {"type": "boolean",
                     "description": ("render the build camera (render) and return a structured critique (validator issues, "
                                     "missing objects, repairs, failed commands) with suggested edit_scene steps")},
-          "render_path": {"type": "string", "description": "judge: where to write the render (default: a temp file)"}},
+          "render_path": {"type": "string", "description": "judge: where to write the render (default: a temp file)"},
+          "exposure_check": {"type": "boolean",
+                             "description": ("default true: a tiny probe render from the camera; the view exposure is "
+                                             "adjusted until the image is neither black nor blown out (report: exposure)")}},
       "required": ["spec"]},
      _handle_build_scene),
     ("edit_scene",

@@ -50,6 +50,18 @@ BUILD_POLY_BUDGET: int | None = None  # build_scene: default total-face budget (
 BUILD_DECIMATE_MIN_RATIO = 0.1  # never decimate an object below this fraction of its faces
 BUILD_JUDGE_RESOLUTION = (640, 360)  # build_scene judge: the probe render (the build's eye-level camera)
 BUILD_JUDGE_SAMPLES = 16
+#: build_scene exposure check: a tiny probe render from the scene camera, view exposure nudged
+#: until the mean display luminance is in band (black and blown-out renders scored 1-3 with judges)
+BUILD_EXPOSURE_CHECK = True  # False: no probe, no adjustment
+BUILD_EXPOSURE_PROBE_RESOLUTION = (160, 90)
+BUILD_EXPOSURE_PROBE_SAMPLES = 8  # Cycles, no denoise: the mean is all we need
+BUILD_EXPOSURE_BAND = (0.25, 0.6)  # mean display luminance (0..1) accepted
+BUILD_EXPOSURE_TARGET = 0.42  # the mean aimed for when out of band
+BUILD_EXPOSURE_CLIP = (0.02, 0.98)  # pixel luminance under / over: clipped dark / bright
+BUILD_EXPOSURE_MAX_BRIGHT_FRAC = 0.25  # more clipped-bright pixels than this: too bright even in band
+BUILD_EXPOSURE_MAX_ROUNDS = 3  # adjustments (a probe render each)
+BUILD_EXPOSURE_MAX_STEP = 2.5  # stops per adjustment
+BUILD_EXPOSURE_MAX_TOTAL = 4.0  # stops the check may move the exposure in all
 SCENE_EXPORT_DIR = "~/ai-db-exports"  # export_scene's folder; override: plugins.scene.export_dir, AI_DB_SCENE_EXPORT_DIR
 SCENE_EXPORT_FORMATS = {"glb": ".glb", "gltf": ".gltf", "usd": ".usd", "usdz": ".usdz"}
 SCENE_EXPORT_TIMEOUT_S = 300.0

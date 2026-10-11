@@ -28,6 +28,11 @@ every change is listed in `repairs`), then builds (room, real furniture, materia
 lights, eye-level camera), validates, and applies the validator's own fixes (`fixes_applied`).
 Only use the step-by-step tools below when you need control over one stage.
 
+Every build also probes its exposure: a tiny render from the camera, the view exposure stepped
+(at most 3 rounds) until the image is neither black nor blown out. The report's `exposure` gives
+`rounds, mean, dark_frac, bright_frac, adjusted_by`; still out of band, an `exposure` issue is
+left (usually the camera sits in a wall or behind furniture). `exposure_check: false` skips it.
+
 Optional `build_scene` arguments:
 - `poly_budget` (total faces): the report's `polys` lists faces per object; over the budget the
   heaviest non-hero objects get a Decimate modifier until the scene fits (`polys.decimated`).

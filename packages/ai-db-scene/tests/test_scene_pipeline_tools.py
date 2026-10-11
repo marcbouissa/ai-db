@@ -466,3 +466,28 @@ def test_user_recipe_with_overwrite_beats_generator():
     ur.create_recipe(table.category, "plain", parts, overwrite=True)
     gen, built = kinds()
     assert gen == {"sofa"} and "table" in built
+
+
+def test_exposure_issue_only_out_of_band():
+    assert sp.exposure_issue({"in_band": True, "mean": 0.4}) is None
+    assert sp.exposure_issue({"error": "no blender"}) is None
+    dark = sp.exposure_issue({"in_band": False, "mean": 0.02, "rounds": 3, "dark_frac": 0.9, "bright_frac": 0.0})
+    assert dark and dark["check"] == "exposure" and "dark" in dark["message"]
+    assert "bright" in sp.exposure_issue({"in_band": False, "mean": 0.9, "rounds": 3})["message"]
+    assert sp._CRITIQUE_FIX["exposure"]
+
+
+@pytest.mark.blender
+def test_live_exposure_check_brings_dark_render_into_band(private_blender, mem):
+    from ai_db_scene.blender_client import BlenderClient
+
+    res = sp._handle_build_scene({"spec": SPEC, "clear": True, "snapshot": False})
+    exp = res["exposure"]
+    assert {"rounds", "mean", "dark_frac", "bright_frac", "adjusted_by"} <= set(exp), exp
+    assert exp["in_band"], exp
+    # a far too dark view: the check raises the exposure and leaves the render settings alone
+    BlenderClient().run_code("import bpy\nbpy.context.scene.view_settings.exposure = -12.0\n"
+                             "bpy.context.scene.render.resolution_x = 1234\nresult = 1")
+    fixed = sp.exposure_check()
+    assert fixed["rounds"] >= 2 and fixed["adjusted_by"] >= 3.9, fixed
+    assert BlenderClient().run_code("import bpy\nresult = bpy.context.scene.render.resolution_x") == 1234
