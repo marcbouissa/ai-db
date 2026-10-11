@@ -410,6 +410,30 @@ def test_multi_room_build_has_inner_walls_with_door_gaps():
     assert sp._handle_solve_layout({"spec": _HOUSE})["doors"]
 
 
+def test_multi_room_lintels_and_walls_facing_empty_space():
+    from test_scene_layout import _HOUSE
+
+    spec, errors = sp._parse_spec(_HOUSE)
+    assert spec is not None, errors
+    cmds, _ = sp.build_layout_commands(spec, sp.solve_layout(spec), geometry="boxes")
+    lintels = {c["params"]["name"]: c["params"] for c in cmds
+               if c["type"] == "create_primitive" and c["params"]["name"].startswith("lintel_")}
+    assert set(lintels) == {"lintel_door_living_bed", "lintel_door_living_bath", "lintel_door_bed_bath"}
+    p = lintels["lintel_door_living_bed"]  # spans the door width, from the door top to the ceiling
+    assert abs(p["scale"][1] - 0.45) < 1e-9 and abs(p["location"][2] - (2.1 + 2.7) / 2) < 1e-9
+    # two rooms that leave a gap inside the bounds: the edges facing it get walls too
+    gap = {"setting": {"kind": "indoor", "bounds_m": [10, 4, 2.7], "rooms": [
+        {"id": "a", "offset_m": [0, 0], "size_m": [4, 4]}, {"id": "b", "offset_m": [6, 0], "size_m": [4, 4]}]},
+        "objects": [{"id": "sofa", "category": "sofa", "room": "a"}]}
+    spec, errors = sp._parse_spec(gap)
+    assert spec is not None, errors
+    cmds, _ = sp.build_layout_commands(spec, sp.solve_layout(spec), geometry="boxes")
+    walls = {c["params"]["name"]: c["params"] for c in cmds
+             if c["type"] == "create_primitive" and c["params"]["name"].startswith("wall_")}
+    assert set(walls) == {"wall_a_east_0", "wall_b_west_0"}
+    assert abs(walls["wall_b_west_0"]["location"][0] - (6 - 5)) < 1e-9  # x=6 in the layout frame
+
+
 @pytest.mark.blender
 def test_live_multi_room_builds(private_blender, mem):
     from test_scene_layout import _HOUSE

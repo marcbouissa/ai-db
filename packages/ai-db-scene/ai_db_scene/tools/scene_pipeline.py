@@ -14,6 +14,7 @@ from typing import Any
 from ai_db.errors import AiDbConfigError, AiDbError
 from ai_db_scene.blender_client import BlenderClient, BlenderError
 from ai_db_scene.constants import (
+    LAYOUT_DOOR_HEIGHT_M,
     SCENE_CAMERA_HEIGHT_M,
     SCENE_CAMERA_INSET,
     SCENE_EXPOSURE_INDOOR,
@@ -165,39 +166,61 @@ def _room_commands(spec: SceneSpec, placements: list[Placement] | None = None) -
 
 
 def _interior_wall_commands(spec: SceneSpec) -> list[dict[str, Any]]:
-    """Multi-room buildings: a wall slab on each room's east and north edge that is not the
-    outer shell, with a full-height gap at each door (layout.room_doors). Rooms that tile the
-    bounds get every inner wall; an edge facing empty space on the west/south is left open."""
+    """Multi-room buildings: a wall slab on every room edge inside the outer shell (shared with
+    another room or facing empty space), with a door gap at each door (layout.room_doors) and a
+    lintel above it from LAYOUT_DOOR_HEIGHT_M to the ceiling. A shared edge is built once: by the
+    room on its west/south side; a room's west/south edges only get the parts no neighbour builds."""
     from ai_db_scene.layout import room_doors
 
-    if not spec.setting.rooms:
+    rooms = spec.setting.rooms
+    if not rooms:
         return []
     w, d, h = spec.setting.bounds_m
     t, off = WALL_THICKNESS_M, frame_offset(spec)
     doors = room_doors(spec)
     mat = material_for("", spec.setting.wall_material or style_material(spec.setting.style, "wall") or WALL_MATERIAL)
     cmds: list[dict[str, Any]] = []
-    for r in spec.setting.rooms:
-        for k, side in ((0, "east"), (1, "north")):  # k: the axis the wall sits at a constant of
-            line = r.offset_m[k] + r.size_m[k]
-            if abs(line - (w, d)[k]) < 1e-6:
-                continue  # the outer shell already has this wall
+
+    def slab(name: str, k: int, line: float, a: float, b: float, z0: float, z1: float) -> None:
+        o = 1 - k
+        centre, half = [0.0, 0.0, (z0 + z1) / 2], [0.0, 0.0, (z1 - z0) / 2]
+        centre[k], half[k] = line, t / 2
+        centre[o], half[o] = (a + b) / 2, (b - a) / 2
+        cmds.append({"type": "create_primitive", "params": {
+            "primitive": "cube", "name": name, "location": _shift(centre, off), "scale": half}})
+        cmds.append({"type": "apply_material", "params": {"name": name, "material": mat}})
+
+    def minus(lo: float, hi: float, cuts: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        spans = []
+        for a, b in sorted(cuts):
+            if b <= lo or a >= hi:
+                continue
+            spans.append((lo, max(lo, a)))
+            lo = max(lo, b)
+        spans.append((lo, hi))
+        return [s for s in spans if s[1] - s[0] > 1e-3]
+
+    for r in rooms:
+        for k, side, far in ((0, "east", True), (1, "north", True), (0, "west", False), (1, "south", False)):
             o = 1 - k
-            cuts = sorted((dr["at"][o] - dr["width"] / 2, dr["at"][o] + dr["width"] / 2) for dr in doors
-                          if abs(dr["at"][k] - line) < 1e-6 and r.offset_m[o] < dr["at"][o] < r.offset_m[o] + r.size_m[o])
-            spans, lo = [], r.offset_m[o]
-            for a, b in cuts:
-                spans.append((lo, a))
-                lo = b
-            spans.append((lo, r.offset_m[o] + r.size_m[o]))
-            for i, (a, b) in enumerate(s for s in spans if s[1] - s[0] > 1e-3):
-                centre, half = [0.0, 0.0, h / 2], [0.0, 0.0, h / 2]
-                centre[k], half[k] = line, t / 2
-                centre[o], half[o] = (a + b) / 2, (b - a) / 2
-                name = f"wall_{r.id}_{side}_{i}"
-                cmds.append({"type": "create_primitive", "params": {
-                    "primitive": "cube", "name": name, "location": _shift(centre, off), "scale": half}})
-                cmds.append({"type": "apply_material", "params": {"name": name, "material": mat}})
+            line = r.offset_m[k] + (r.size_m[k] if far else 0.0)
+            if abs(line - (w, d)[k]) < 1e-6 or abs(line) < 1e-6:
+                continue  # the outer shell already has this wall
+            lo, hi = r.offset_m[o], r.offset_m[o] + r.size_m[o]
+            if far:
+                cuts = [(dr["at"][o] - dr["width"] / 2, dr["at"][o] + dr["width"] / 2) for dr in doors
+                        if abs(dr["at"][k] - line) < 1e-6 and lo < dr["at"][o] < hi]
+            else:  # the parts a neighbour's east/north edge on this line does not already build
+                cuts = [(n.offset_m[o], n.offset_m[o] + n.size_m[o]) for n in rooms
+                        if n is not r and abs(n.offset_m[k] + n.size_m[k] - line) < 1e-6]
+            for i, (a, b) in enumerate(minus(lo, hi, cuts)):
+                slab(f"wall_{r.id}_{side}_{i}", k, line, a, b, 0.0, h)
+    top = min(LAYOUT_DOOR_HEIGHT_M, h)
+    for dr in doors:
+        if h - top > 1e-3:
+            k = 0 if dr["axis"] == "y" else 1
+            c = dr["at"][1 - k]
+            slab(f"lintel_{dr['id']}", k, dr["at"][k], c - dr["width"] / 2, c + dr["width"] / 2, top, h)
     return cmds
 
 

@@ -25,6 +25,8 @@ LAYOUT_MAX_COUNT = 50  # max instances per ObjectSpec
 LAYOUT_GRID_GAP_M = (0.5, 0.8)  # default [between columns, between rows] of a grid (aisles)
 LAYOUT_MAX_BOUND_M = 500.0
 LAYOUT_RESTARTS = 4  # greedy passes (fresh random draws) before reporting a conflict
+LAYOUT_DOOR_HEIGHT_M = 2.1  # inner doors of multi-room buildings: the lintel starts here
+LAYOUT_DOOR_CLEAR_M = 0.9  # free zone (door width x this deep) kept on both sides of each inner door
 
 SCENE_SUN_ENERGY = 4.0  # W/m² of the daylight sun apply_layout adds (AgX view: a bright interior)
 SCENE_EXPOSURE_INDOOR = 0.5  # stops for a reference room (SCENE_REF_FLOOR_M2): windows light it well
