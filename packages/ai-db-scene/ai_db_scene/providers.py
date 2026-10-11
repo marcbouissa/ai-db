@@ -5,7 +5,10 @@ Both are off by default (see ``plugins.scene`` in config.py):
 - ``LocalLibrary``: folders of ``.glb``/``.gltf``/``.blend`` files, matched to categories by
   filename tokens (``traffic_cone_01.glb`` -> traffic_cone). A ``.blend`` must hold an object
   named like the file's stem; it is appended (``append_asset``). glTF files are imported
-  (``import_file``) and fitted to the placement.
+  (``import_file``) and fitted to the placement. CC0 pack names are understood too:
+  camelCase/snake words are split (``chairCushion``, ``Bed_Double``) and ``CATEGORY_ALIASES``
+  maps pack vocabulary to ours (``bookcaseOpen`` -> bookshelf, ``chairDesk`` -> office_chair);
+  ``plugins.scene.aliases`` adds or overrides entries.
 - ``PolyHaven``: models from https://api.polyhaven.com, downloaded once (glTF + its textures)
   into a cache dir. Disabled unless ``polyhaven.enabled`` and ``polyhaven.license_acknowledged``.
 """
@@ -35,8 +38,42 @@ _TOKEN = re.compile(r"[a-z0-9]+")
 _NUMBER = re.compile(r"^\d+$")
 
 
+_WORD = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
+
+#: File-name vocabulary of CC0 furniture packs (Kenney, Quaternius, ...) -> our category.
+#: Keys are space-separated words, matched in any order like category names; the match with
+#: the most words wins, so "lounge chair" beats "chair" and "cabinet television" beats "tv".
+CATEGORY_ALIASES: dict[str, str] = {
+    "bookcase": "bookshelf", "book case": "bookshelf", "shelf": "shelving_unit", "shelves": "shelving_unit",
+    "books": "book_stack",
+    "couch": "sofa", "loveseat": "sofa", "lounge chair": "armchair", "arm chair": "armchair",
+    "chair desk": "office_chair", "desk chair": "office_chair", "chair office": "office_chair",
+    "chair dining": "dining_chair", "table": "dining_table", "table dining": "dining_table",
+    "table side": "side_table", "end table": "side_table", "night stand": "nightstand",
+    "bedside table": "nightstand", "drawer": "dresser", "drawers": "dresser", "chest drawers": "dresser",
+    "closet": "wardrobe", "cupboard": "cabinet",
+    "television": "tv", "cabinet television": "tv_stand", "tv cabinet": "tv_stand", "television stand": "tv_stand",
+    "computer screen": "monitor", "screen": "monitor",
+    "fridge": "refrigerator", "kitchen fridge": "refrigerator", "kitchen cabinet": "kitchen_counter",
+    "kitchen bar": "kitchen_island", "oven": "stove", "kitchen stove": "stove",
+    "lamp ceiling": "ceiling_light", "light ceiling": "ceiling_light", "lamp wall": "wall_sconce",
+    "lamp pendant": "pendant_lamp", "lamp desk": "table_lamp", "light floor": "floor_lamp",
+    "trashcan": "trash_can", "trash": "trash_can", "bin": "trash_can", "garbage": "trash_can",
+    "plant": "potted_plant", "plant pot": "potted_plant", "houseplant": "potted_plant",
+    "shower": "shower_stall", "bath": "bathtub", "tub": "bathtub", "bathroom sink": "sink",
+    "carpet": "rug", "doorway": "door", "box": "crate", "cardboard box": "crate", "frame": "picture_frame",
+    "painting": "picture_frame", "clock": "wall_clock",
+}
+
+
+def split_words(text: str) -> list[str]:
+    """Lowercase words of a file stem: camelCase, snake_case, kebab and digits split apart
+    (``lampRoundFloor`` -> lamp round floor, ``TVStand_02`` -> tv stand 02)."""
+    return [w.lower() for w in _WORD.findall(text)]
+
+
 def _tokens(text: str) -> set[str]:
-    return {t for t in _TOKEN.findall(text.lower().replace("_", " ")) if not _NUMBER.match(t)}
+    return {t for t in split_words(text.replace("_", " ")) if not _NUMBER.match(t)}
 
 
 @dataclass(frozen=True)
@@ -58,13 +95,19 @@ class AssetProvider(Protocol):
         ...
 
 
-def match_category(stem: str, categories: list[str]) -> str | None:
-    """The category whose words all occur in ``stem``; the most specific (most words) wins
-    (``lamp_post_double_02`` -> lamp_post_double, not street_lamp), ties by name. Numbers are
-    ignored."""
+def match_category(stem: str, categories: list[str], aliases: dict[str, str] | None = None) -> str | None:
+    """The category whose words (or an alias's words) all occur in ``stem``; the most
+    specific (most words) wins (``lamp_post_double_02`` -> lamp_post_double, not street_lamp;
+    ``chairDesk`` -> office_chair, not chair or desk). At equal words a category name beats
+    an alias, then ties go by name. Numbers are ignored. ``aliases`` defaults to
+    ``CATEGORY_ALIASES``; aliases to categories not in ``categories`` are skipped."""
     have = _tokens(stem)
-    hits = [c for c in categories if _tokens(c) and _tokens(c) <= have]
-    return min(hits, key=lambda c: (-len(_tokens(c)), c)) if hits else None
+    known = set(categories)
+    hits = [(len(_tokens(c)), 0, c) for c in categories if _tokens(c) and _tokens(c) <= have]
+    for words, cat in (CATEGORY_ALIASES if aliases is None else aliases).items():
+        if cat in known and _tokens(words) and _tokens(words) <= have:
+            hits.append((len(_tokens(words)), 1, cat))
+    return min(hits, key=lambda h: (-h[0], h[1], h[2]))[2] if hits else None
 
 
 class LocalLibrary:
@@ -72,9 +115,13 @@ class LocalLibrary:
 
     name = "local"
 
-    def __init__(self, dirs: list[str] | tuple[str, ...], categories: list[str] | None = None) -> None:
+    def __init__(self, dirs: list[str] | tuple[str, ...], categories: list[str] | None = None,
+                 aliases: dict[str, str] | None = None) -> None:
         self.dirs = [str(d) for d in dirs]
         self._categories = categories
+        #: built-in aliases, then the user's (``plugins.scene.aliases``) on top
+        self.aliases = {**CATEGORY_ALIASES, **{" ".join(split_words(k.replace("_", " "))): v
+                                               for k, v in (aliases or {}).items()}}
         self._index: dict[str, list[AssetFile]] | None = None
 
     def index(self) -> dict[str, list[AssetFile]]:
@@ -91,7 +138,7 @@ class LocalLibrary:
                         stem, ext = os.path.splitext(fn)
                         if ext.lower() not in ASSET_FILE_TYPES:
                             continue
-                        cat = match_category(stem, self._categories)
+                        cat = match_category(stem, self._categories, self.aliases)
                         if cat is None:
                             continue
                         blend = ext.lower() == ".blend"
@@ -214,7 +261,7 @@ def providers_from_config(app_config: Any | None = None) -> list[AssetProvider]:
     cfg = scene_config(app_config)
     out: list[AssetProvider] = []
     if cfg.asset_dirs:
-        out.append(LocalLibrary(cfg.asset_dirs))
+        out.append(LocalLibrary(cfg.asset_dirs, aliases=dict(cfg.aliases)))
     if cfg.polyhaven.enabled and cfg.polyhaven.license_acknowledged:
         out.append(PolyHaven(cfg.polyhaven.cache_dir, cfg.polyhaven.resolution))
     return out

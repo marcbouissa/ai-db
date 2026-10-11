@@ -9,7 +9,7 @@ from typing import Any
 from ai_db.errors import AiDbConfigError
 from ai_db_scene.constants import DEFAULT_JUDGE_MODEL, POLYHAVEN_RESOLUTIONS
 
-_KEYS = frozenset({"judge_model", "asset_dirs", "polyhaven", "export_dir"})
+_KEYS = frozenset({"judge_model", "asset_dirs", "polyhaven", "export_dir", "aliases"})
 _POLYHAVEN_KEYS = frozenset({"enabled", "license_acknowledged", "cache_dir", "resolution"})
 
 
@@ -32,6 +32,21 @@ class SceneConfig:
     polyhaven: PolyHavenConfig = field(default_factory=PolyHavenConfig)
     #: the only folder export_scene writes into (None: $AI_DB_SCENE_EXPORT_DIR, else SCENE_EXPORT_DIR)
     export_dir: str | None = None
+    #: local-library file-name words -> category, on top of providers.CATEGORY_ALIASES
+    aliases: tuple[tuple[str, str], ...] = ()
+
+
+def _aliases(raw: Any) -> tuple[tuple[str, str], ...]:
+    where = "plugins.scene.aliases"
+    if not isinstance(raw, dict) or not all(isinstance(k, str) and k.strip() and isinstance(v, str)
+                                            for k, v in raw.items()):
+        raise AiDbConfigError(f"'{where}' must map file-name words to a category, got {raw!r}")
+    from ai_db_scene.priors import categories
+
+    unknown = sorted({v for v in raw.values()} - set(categories()))
+    if unknown:
+        raise AiDbConfigError(f"'{where}': unknown categories {unknown}")
+    return tuple(sorted(raw.items()))
 
 
 def _polyhaven(raw: Any) -> PolyHavenConfig:
@@ -85,4 +100,5 @@ def scene_config(app_config: Any) -> SceneConfig:
     if export_dir is not None and (not isinstance(export_dir, str) or not export_dir):
         raise AiDbConfigError(f"'plugins.scene.export_dir' must be a non-empty path string, got {export_dir!r}")
     return SceneConfig(judge_model=judge_model, asset_dirs=_asset_dirs(raw.get("asset_dirs", [])),
-                       polyhaven=_polyhaven(raw.get("polyhaven", {})), export_dir=export_dir)
+                       polyhaven=_polyhaven(raw.get("polyhaven", {})), export_dir=export_dir,
+                       aliases=_aliases(raw.get("aliases", {})))

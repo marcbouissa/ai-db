@@ -276,3 +276,48 @@ def test_live_gltf_asset_is_fitted_to_its_placement(private_blender, tmp_path, m
     assert got["id"] == "bench" and got["src"] == "local"
     assert abs(got["lo"][2]) < 1e-3  # on the ground
     assert max(s / lim for s, lim in zip(sorted(size[:2]) + [size[2]], sorted([w, d]) + [h])) == pytest.approx(1.0, abs=1e-3)
+
+
+@pytest.mark.parametrize("stem, cat", [
+    ("chairCushion", "chair"), ("tableCoffee", "coffee_table"), ("loungeSofa", "sofa"),
+    ("loungeChair", "armchair"), ("bookcaseOpen", "bookshelf"), ("lampRoundFloor", "floor_lamp"),
+    ("Bed_Double", "bed"), ("chairDesk", "office_chair"), ("cabinetTelevision", "tv_stand"),
+    ("televisionModern", "tv"), ("kitchenFridge", "refrigerator"), ("lampSquareCeiling", "ceiling_light"),
+    ("sideTableDrawers", "side_table"), ("NightStand_1", "nightstand"), ("Table_Large", "dining_table"),
+    ("Couch_Medium", "sofa"), ("TVStand", "tv_stand"), ("trashcan", "trash_can"), ("pottedPlant", "potted_plant"),
+    ("spaceshipHull", None),
+])
+def test_pack_filenames_map_to_categories(stem, cat):
+    from ai_db_scene.priors import categories
+
+    assert pv.match_category(stem, categories()) == cat
+
+
+def test_split_words():
+    assert pv.split_words("lampRoundFloor") == ["lamp", "round", "floor"]
+    assert pv.split_words("TVStand_02") == ["tv", "stand", "02"]
+
+
+def test_user_aliases_override_and_extend(tmp_path):
+    lib = tmp_path / "pack"
+    lib.mkdir()
+    for n in ("loungeChair.glb", "stoolBar.glb", "coatRack.glb"):
+        (lib / n).write_bytes(b"glb")
+    idx = pv.LocalLibrary([str(lib)], aliases={"loungeChair": "sofa", "coat_rack": "wardrobe"}).index()
+    assert {c: [Path(f.filepath).name for f in fs] for c, fs in idx.items()} == {
+        "sofa": ["loungeChair.glb"], "stool": ["stoolBar.glb"], "wardrobe": ["coatRack.glb"]}
+
+
+def test_aliases_config_validated():
+    from ai_db_scene.config import scene_config
+
+    from ai_db.config import parse_config
+    from ai_db.config_template import build_template
+    from ai_db.errors import AiDbConfigError
+
+    raw = build_template()
+    raw.setdefault("plugins", {})["scene"] = {"aliases": {"loungeChair": "sofa"}}
+    assert scene_config(parse_config(raw, check_env=False)).aliases == (("loungeChair", "sofa"),)
+    raw["plugins"]["scene"] = {"aliases": {"x": "spaceship"}}
+    with pytest.raises(AiDbConfigError, match="spaceship"):
+        scene_config(parse_config(raw, check_env=False))
