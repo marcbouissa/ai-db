@@ -51,17 +51,18 @@ def _load(out: str) -> list[dict[str, Any]]:
                 continue
             with open(mp, encoding="utf-8") as f:
                 m = json.load(f)
-            jp = os.path.join(rd, "judge.json")
-            if os.path.exists(jp):
-                with open(jp, encoding="utf-8") as f:
-                    m["judge"] = json.load(f)
+            for key, name in (("judge", "judge.json"), ("judge_pairs", "judge_pairs.json")):
+                jp = os.path.join(rd, name)
+                if os.path.exists(jp):
+                    with open(jp, encoding="utf-8") as f:
+                        m[key] = json.load(f)
             m["dir"] = rd
             rows.append(m)
     return rows
 
 
-def _j(m: dict[str, Any], mode: str) -> float | None:
-    v = ((m.get("judge") or {}).get(mode) or {}).get("parsed", {}).get("overall")
+def _j(m: dict[str, Any], mode: str, key: str = "judge") -> float | None:
+    v = ((m.get(key) or {}).get(mode) or {}).get("parsed", {}).get("overall")
     return float(v) if isinstance(v, (int, float)) else None
 
 
@@ -135,6 +136,25 @@ def write(out: str) -> str:
             dt = d(lambda x: _tok(x["agent"]["tokens"]) / 1000)
             L.append(f"| {model} | {first} vs {second} | {len(prs)} | {_fmt(ja, 2)} | {_fmt(jp, 2)} | {_fmt(dq)} | "
                      f"{_fmt(dw)} | {_fmt(dt, 0)} |")
+    paired = [r for r in rows if r.get("judge_pairs")]
+    if paired:
+        L += ["", "## Paired judging (one blind batch per brief over the same models' arms)", "",
+              "Judged by `opus_judge.py --pairs`: each brief's scenes from only these models, in one batch, "
+              "so every arm of a model is scored side by side by the same judge.", "",
+              "| model | comparison | pairs | judge Δ (plain) | judge Δ (aidb) |", "|---|---|---|---|---|"]
+        pby = {(r["arm"], r["brief"]): r for r in paired}
+        for model in sorted({_split(r["arm"])[0] for r in paired}):
+            for first, second in comparisons:
+                prs = [(pby[(f"{model}-{first}", b)], pby[(f"{model}-{second}", b)]) for b in briefs.BRIEFS
+                       if (f"{model}-{first}", b) in pby and (f"{model}-{second}", b) in pby]
+                if not prs:
+                    continue
+                cells = []
+                for mode in ("plain", "aidb"):
+                    vals = [x - y for x, y in ((_j(a, mode, "judge_pairs"), _j(b, mode, "judge_pairs")) for a, b in prs)
+                            if x is not None and y is not None]
+                    cells.append(_fmt(mean(vals), 2) if vals else "–")
+                L.append(f"| {model} | {first} vs {second} | {len(prs)} | {cells[0]} | {cells[1]} |")
     L += ["", "## Best scene per brief (judge aidb, then plain, then quality)", "",
           "| brief | best arm | judge aidb | judge plain | quality | blend |", "|---|---|---|---|---|---|"]
     for brief in briefs.BRIEFS:

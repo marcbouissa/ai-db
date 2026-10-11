@@ -3,6 +3,12 @@
     python opus_judge.py prepare     bench/_judging/<brief>/{manifest_plain,manifest_aidb}.json + key.json
     python opus_judge.py apply <agent transcripts dir>   results -> each scene's judge.json
 
+Paired variant (cheaper: one batch per brief over only the given models' arms, judged into
+judge_pairs.json so the full-field judge.json is kept):
+
+    python opus_judge.py prepare --pairs nemotron      bench/_judging_pairs/<brief>/...
+    python opus_judge.py apply --pairs '{...}'
+
 Scenes are anonymised (S1, S2, ... shuffled per brief); key.json maps codes back to arms and
 is never shown to a judge. The plain judge gets renders + brief; the aidb judge also gets the
 ai-db rubric and ai-db's measurements (checklist, validator issues, inventory).
@@ -24,16 +30,17 @@ OUT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", 
 JDIR = os.path.join(OUT, "_judging")
 
 
-def _scenes(brief: str) -> list[str]:
+def _scenes(brief: str, models: str | None = None) -> list[str]:
     return sorted(d for d in glob.glob(os.path.join(OUT, "*", brief))
-                  if os.path.exists(os.path.join(d, "metrics.json")) and "/_" not in d)
+                  if os.path.exists(os.path.join(d, "metrics.json")) and "/_" not in d
+                  and (models is None or os.path.basename(os.path.dirname(d)).startswith(models)))
 
 
-def prepare() -> None:
+def prepare(models: str | None = None) -> None:
     from ai_db_scene.judge import RUBRIC
 
     for brief in briefs.BRIEFS:
-        dirs = _scenes(brief)
+        dirs = _scenes(brief, models)
         if not dirs:
             continue
         rng = random.Random(f"opus-judge-{brief}")
@@ -45,7 +52,7 @@ def prepare() -> None:
                 m = json.load(f)
             key[code] = os.path.relpath(d, OUT)
             # copies under neutral names: the original paths name the model and the arm
-            img_dir = os.path.join(JDIR, brief, "img")
+            img_dir = os.path.join(_jdir(models), brief, "img")
             os.makedirs(img_dir, exist_ok=True)
             images = []
             for view, src in sorted(m["renders"].items()):
@@ -60,7 +67,7 @@ def prepare() -> None:
                 "validator_warnings": q["warnings"], "validator_issues": issues, "meshes": q["meshes"],
                 "triangles": q["triangles"], "camera": m["inventory"].get("camera"),
                 "lights": m["inventory"].get("lights")}})
-        bd = os.path.join(JDIR, brief)
+        bd = os.path.join(_jdir(models), brief)
         os.makedirs(bd, exist_ok=True)
         common = {"brief": briefs.BRIEFS[brief]["brief"],
                   "views": "agent_camera = the builder's own camera (absent if it set none); probe_interior = "
@@ -96,10 +103,14 @@ def _usage(transcript: str) -> dict[str, int]:
     return {k: sum(m[k] for m in per.values()) for k in ("input", "output", "cache_write", "cache_read")}
 
 
-def apply(transcripts: dict[str, str]) -> None:
+def _jdir(pairs: str | None) -> str:
+    return os.path.join(OUT, "_judging_pairs") if pairs else JDIR
+
+
+def apply(transcripts: dict[str, str], pairs: bool = False) -> None:
     """transcripts: "<brief>/<mode>" -> sub-agent transcript path (for the token cost)."""
     for brief in briefs.BRIEFS:
-        bd = os.path.join(JDIR, brief)
+        bd = os.path.join(_jdir("pairs" if pairs else None), brief)
         if not os.path.exists(os.path.join(bd, "key.json")):
             continue
         with open(os.path.join(bd, "key.json"), encoding="utf-8") as f:
@@ -123,14 +134,16 @@ def apply(transcripts: dict[str, str]) -> None:
                     "tokens": {k: v // n for k, v in tok.items()},  # the brief's judging cost, split evenly
                     "batch_tokens": tok, "batch_scenes": n}
         for arm_dir, judged in per_scene.items():
-            path = os.path.join(OUT, arm_dir, "judge.json")
+            path = os.path.join(OUT, arm_dir, "judge_pairs.json" if pairs else "judge.json")
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(judged, f, indent=1)
         print(brief, len(per_scene), "scenes judged")
 
 
 if __name__ == "__main__":
+    pairs = "--pairs" in sys.argv
+    args = [a for a in sys.argv[2:] if a != "--pairs"]
     if sys.argv[1] == "prepare":
-        prepare()
+        prepare(args[0] if pairs and args else None)
     elif sys.argv[1] == "apply":
-        apply(json.loads(sys.argv[2]) if len(sys.argv) > 2 else {})
+        apply(json.loads(args[0]) if args else {}, pairs)
