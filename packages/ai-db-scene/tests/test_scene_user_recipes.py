@@ -119,3 +119,14 @@ def test_tools_registered():
 
     names = {t["name"] for t in ServiceDispatcher(db_path=":memory:").list_tools()}
     assert {"create_recipe", "draft_recipe", "list_recipes"} <= names
+
+
+def test_case_goods_skeleton_has_every_front_and_stays_valid():
+    from ai_db_scene.user_recipes import draft_recipe, recipe_errors
+
+    r = draft_recipe("cabinet", "Oak sideboard. W 160 cm x D 45 cm x H 80 cm. 3 doors, 2 drawers, 4 legs, 2 shelves.")
+    ids = [p["id"] for p in r["parts"]]
+    assert sum(i.startswith("door_") and not i.endswith("handle") for i in ids) == 3
+    assert sum(i.startswith("drawer_") and not i.endswith("handle") for i in ids) == 2
+    assert sum(i.startswith("leg_") for i in ids) == 4 and sum(i.endswith("_handle") for i in ids) == 5
+    assert recipe_errors(r["parts"]) == []

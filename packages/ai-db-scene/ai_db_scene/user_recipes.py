@@ -478,20 +478,8 @@ def skeleton_parts(words: dict[str, int], material: str) -> list[dict[str, Any]]
     """Connected placeholder parts for the part words (the agent refines sizes/positions)."""
     parts: list[dict[str, Any]] = []
     dark = "color:#2a2a2a"
-    cabinet_like = ("doors" in words or "drawers" in words) and "legs" not in words
-    if "shelves" in words or cabinet_like:
-        if "shelves" in words:
-            n = max(2, min(words["shelves"], 8))
-            parts += [{"id": f"side_{s}", "shape": "box", "size": [0.04, 1.0, 1.0], "at": [x, 0, 0], "material": material}
-                      for s, x in (("l", -0.48), ("r", 0.48))]
-            parts += [{"id": f"shelf_{k}", "shape": "box", "size": [0.92, 1.0, 0.03],
-                       "at": [0, 0, round(k * 0.97 / (n - 1), 4)], "material": material} for k in range(n)]
-        else:
-            parts.append({"id": "body", "shape": "box", "size": [1.0, 0.96, 1.0], "at": [0, 0.02, 0], "material": material})
-            n = max(1, min(words.get("drawers", 0) or words.get("doors", 1), 8))
-            parts += [{"id": f"handle_{k}", "shape": "box", "size": [0.14, 0.03, 0.02],
-                       "at": [0, -0.475, round(1 - (k + 0.5) / n, 4)], "material": dark} for k in range(n)]
-        return parts
+    if ({"shelves", "doors", "drawers"} & set(words)) and "seat" not in words and "top" not in words:
+        return _case_parts(words, material, dark)
     seat = "seat" in words
     leg_h = 0.45 if seat else 0.94
     n_legs = words.get("legs", 4 if ("top" in words or seat) else 0)
@@ -518,6 +506,46 @@ def skeleton_parts(words: dict[str, int], material: str) -> list[dict[str, Any]]
                       "material": "fabric:linen"})
     return parts
 
+
+
+def _case_parts(words: dict[str, int], material: str, dark: str) -> list[dict[str, Any]]:
+    """Case goods (cabinet, sideboard, bookcase): optional legs, then open shelves or a body with
+    drawer fronts stacked from the top and doors below, each front with a handle. The body sits
+    back from y = -0.45 so fronts (-0.47..-0.45) and handles (-0.5..-0.47) stay in the unit box."""
+    parts: list[dict[str, Any]] = []
+    n_legs = min(words.get("legs", 0), 4)
+    base = 0.12 if n_legs else 0.0
+    if n_legs:
+        corners = [(-0.45, -0.4), (0.45, -0.4), (-0.45, 0.45), (0.45, 0.45)][:n_legs] if n_legs > 1 else [(0.0, 0.0)]
+        parts += [{"id": f"leg_{i}", "shape": "box", "size": [0.05, 0.05, base], "at": [x, y, 0], "material": material}
+                  for i, (x, y) in enumerate(corners)]
+    h = 1.0 - base
+    n_drawers, n_doors = min(words.get("drawers", 0), 6), min(words.get("doors", 0), 4)
+    if not (n_drawers or n_doors):  # open shelving
+        n = max(2, min(words.get("shelves", 3), 8))
+        parts += [{"id": f"side_{s}", "shape": "box", "size": [0.04, 1.0, h], "at": [x, 0, base], "material": material}
+                  for s, x in (("l", -0.48), ("r", 0.48))]
+        parts += [{"id": f"shelf_{k}", "shape": "box", "size": [0.92, 1.0, 0.03],
+                   "at": [0, 0, round(base + k * (h - 0.03) / (n - 1), 4)], "material": material} for k in range(n)]
+        return parts
+    parts.append({"id": "body", "shape": "box", "size": [1.0, 0.95, h], "at": [0, 0.025, base], "material": material})
+    drawer_h = h * 0.18 if n_doors else h / n_drawers
+    for k in range(n_drawers):
+        bottom = 1.0 - (k + 1) * drawer_h
+        parts.append({"id": f"drawer_{k}", "shape": "box", "size": [0.96, 0.02, round(drawer_h - 0.01, 4)],
+                      "at": [0, -0.46, round(bottom + 0.005, 4)], "material": material})
+        parts.append({"id": f"drawer_{k}_handle", "shape": "box", "size": [0.14, 0.03, 0.02],
+                      "at": [0, -0.485, round(bottom + drawer_h / 2 - 0.01, 4)], "material": dark})
+    if n_doors:
+        top, w = 1.0 - n_drawers * drawer_h, 0.96 / n_doors
+        for k in range(n_doors):
+            x = -0.48 + w * (k + 0.5)
+            parts.append({"id": f"door_{k}", "shape": "box", "size": [round(w - 0.01, 4), 0.02, round(top - base - 0.01, 4)],
+                          "at": [round(x, 4), -0.46, round(base + 0.005, 4)], "material": material})
+            hx = x + (w / 2 - 0.05) * (1 if k % 2 == 0 else -1)  # handles near the meeting edges
+            parts.append({"id": f"door_{k}_handle", "shape": "box", "size": [0.02, 0.03, 0.12],
+                          "at": [round(hx, 4), -0.485, round((base + top) / 2 - 0.06, 4)], "material": dark})
+    return parts
 
 def default_material(category: str) -> str:
     from ai_db_scene.materials import material_for
