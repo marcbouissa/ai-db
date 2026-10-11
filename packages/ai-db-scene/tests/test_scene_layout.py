@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 
 import pytest
@@ -385,3 +386,44 @@ def test_multi_room_spec_errors():
     one_room = {"setting": {"kind": "indoor", "bounds_m": [4, 4, 2.7]},
                 "objects": [{"id": "sofa", "category": "sofa", "room": "living"}]}
     assert "only allowed when setting.rooms" in " ".join(validate_spec(one_room)[1])
+
+
+_TWO_ROOMS = {
+    "setting": {"kind": "indoor", "bounds_m": [8, 4, 2.7], "rooms": [
+        {"id": "a", "offset_m": [0, 0], "size_m": [4, 4]},
+        {"id": "b", "offset_m": [4, 0], "size_m": [4, 4]}]},
+    "objects": [
+        {"id": "shelf", "category": "bookshelf", "room": "a"},
+        {"id": "dresser", "category": "dresser", "room": "a"},
+        {"id": "desk", "category": "desk", "room": "b"},
+        {"id": "wardrobe", "category": "wardrobe", "room": "b"}],
+    "relations": [
+        {"a": "shelf", "rel": "against_wall", "b": "wall_east"},
+        {"a": "dresser", "rel": "against_wall", "b": "wall_east"},
+        {"a": "desk", "rel": "against_wall", "b": "wall_west"},
+        {"a": "wardrobe", "rel": "against_wall", "b": "wall_west"}],
+}
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_furniture_never_blocks_a_doorway(seed):
+    from ai_db_scene.constants import LAYOUT_DOOR_CLEAR_M
+
+    spec = SceneSpec.from_dict(_TWO_ROOMS)
+    pls = solve_layout(spec, seed=seed)
+    assert check_layout(spec, pls) == []
+    for p in pls:  # nothing within the door's width x clear depth on either side of x=4, y in [1.55, 2.45]
+        hx = max(abs(math.cos(math.radians(p.rotation_deg_z))) * p.dims[0], abs(math.sin(math.radians(p.rotation_deg_z))) * p.dims[1]) / 2
+        hy = max(abs(math.sin(math.radians(p.rotation_deg_z))) * p.dims[0], abs(math.cos(math.radians(p.rotation_deg_z))) * p.dims[1]) / 2
+        in_x = p.location[0] + hx > 4 - LAYOUT_DOOR_CLEAR_M + 1e-3 and p.location[0] - hx < 4 + LAYOUT_DOOR_CLEAR_M - 1e-3
+        in_y = p.location[1] + hy > 1.55 + 1e-3 and p.location[1] - hy < 2.45 - 1e-3
+        assert not (in_x and in_y), (seed, p.id, p.location)
+
+
+def test_check_layout_flags_a_blocked_doorway():
+    from dataclasses import replace
+
+    spec = SceneSpec.from_dict(_TWO_ROOMS)
+    pls = solve_layout(spec)
+    moved = [replace(p, location=(p.location[0], 2.0, p.location[2])) if p.id == "dresser" else p for p in pls]
+    assert any("dresser: blocks doorway 'door_a_b'" in i for i in check_layout(spec, moved))

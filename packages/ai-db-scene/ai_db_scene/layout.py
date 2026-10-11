@@ -31,6 +31,8 @@ from ai_db_scene.constants import (
     LAYOUT_DEFAULT_AROUND_GAP_M,
     LAYOUT_DEFAULT_BESIDE_GAP_M,
     LAYOUT_DEFAULT_IN_FRONT_GAP_M,
+    LAYOUT_DOOR_CLEAR_M,
+    LAYOUT_DOOR_HEIGHT_M,
     LAYOUT_EPS_M,
     LAYOUT_FACING_ATTEMPTS,
     LAYOUT_FACING_MISS_COST,
@@ -239,6 +241,8 @@ class _Problem:
         focus = spec.camera.get("focus")
         self.focus = by_base[focus][0] if focus in by_base else None
         self.under_pairs = {frozenset((r.a, r.b)) for r in self.rels if r.rel == "under"}
+        #: footprints nothing standing below LAYOUT_DOOR_HEIGHT_M may overlap: (label, pose, dims)
+        self.blocked: list[tuple[str, _Pose, Dims]] = []
         self._static_checks()
 
     # ---- static (pose-independent) validation -------------------------------------------
@@ -453,6 +457,10 @@ class _Problem:
             v = self.rel_violation(r, poses[r.a], pose)
             if v:
                 return f"relation {v}"
+        if not inst.flat and pose.zb < LAYOUT_DOOR_HEIGHT_M:
+            for label, bp, bd in self.blocked:
+                if _sep(pose, inst.dims, bp, bd) < -LAYOUT_EPS_M:
+                    return f"blocks {label}"
         for oid, op in poses.items():
             if oid != inst.id and self.pair_conflict(inst, pose, self.insts[oid], op):
                 return f"overlaps '{oid}'"
@@ -781,6 +789,8 @@ def solve_layout(
     priors: dict[str, CategoryPrior] | None = None,
     measured_dims: dict[str, Dims] | None = None,
     seed: int = LAYOUT_SEED,
+    *,
+    blocked: list[tuple[str, _Pose, Dims]] | None = None,
 ) -> list[Placement]:
     """Place every object instance. Deterministic for a given (spec, priors, dims, seed).
 
@@ -789,6 +799,7 @@ def solve_layout(
     if spec.setting.rooms:
         return _solve_rooms(spec, priors, measured_dims, seed)
     pr = _Problem(spec, priors or load_priors(), {k: tuple(v) for k, v in (measured_dims or {}).items()})  # type: ignore[misc]
+    pr.blocked = list(blocked or [])
     # facing is soft here but blocking in validate_scene, and whether a wall-bound object can
     # face its target depends on where earlier objects landed: try a few more seeds (still
     # deterministic) and keep the layout that misses the fewest facings.
@@ -830,11 +841,13 @@ def _solve_rooms(
         ids = {o.id for o in objs}
         sub = SceneSpec(replace(spec.setting, bounds_m=(*room.size_m, spec.setting.bounds_m[2]), rooms=()), objs,
                         tuple(r for r in spec.relations if r.a in ids), spec.lighting, spec.camera)
+        dx, dy = room.offset_m
+        zones = [(lbl, _Pose(p.x - dx, p.y - dy, p.yaw, p.zb), dd) for lbl, p, dd, rids in _door_zones(spec)
+                 if room.id in rids]
         try:
-            pls = solve_layout(sub, priors, measured_dims, seed)
+            pls = solve_layout(sub, priors, measured_dims, seed, blocked=zones)
         except LayoutError as e:
             raise LayoutError(f"room '{room.id}': {e}", e.conflicts) from e
-        dx, dy = room.offset_m
         out += [replace(p, location=(p.location[0] + dx, p.location[1] + dy, p.location[2])) for p in pls]
     return out
 
@@ -865,6 +878,43 @@ def room_doors(spec: SceneSpec, width_m: float = 0.9, margin_m: float = 0.1) -> 
                 doors.append({"id": f"door_{a.id}_{b.id}", "rooms": [a.id, b.id], "at": at,
                               "axis": "y" if k == 0 else "x", "width": width_m})
     return doors
+
+
+def _door_zones(spec: SceneSpec) -> list[tuple[str, _Pose, Dims, list[str]]]:
+    """The clear zone of each inner door (layout frame): door width x LAYOUT_DOOR_CLEAR_M deep on
+    both sides of the wall, with the ids of the two rooms it joins."""
+    out = []
+    for dr in room_doors(spec):
+        w, c = dr["width"], 2 * LAYOUT_DOOR_CLEAR_M
+        dims = (c, w, LAYOUT_DOOR_HEIGHT_M) if dr["axis"] == "y" else (w, c, LAYOUT_DOOR_HEIGHT_M)
+        out.append((f"doorway '{dr['id']}'", _Pose(dr["at"][0], dr["at"][1], 0.0, 0.0), dims, dr["rooms"]))
+    return out
+
+
+def _check_rooms(spec: SceneSpec, placements: list[Placement], priors: dict[str, CategoryPrior] | None) -> list[str]:
+    from dataclasses import replace
+
+    def base(pid: str) -> str:
+        head, _, tail = pid.rpartition("_")
+        return head if tail.isdigit() and head else pid
+
+    room_of = {o.id: o.room for o in spec.objects}
+    issues = [f"hard: placement '{p.id}' is not an object instance of the spec" for p in placements
+              if p.id not in room_of and base(p.id) not in room_of]
+    zones = _door_zones(spec)
+    for room in spec.setting.rooms:
+        objs = tuple(replace(o, room=None) for o in spec.objects if o.room == room.id)
+        if not objs:
+            continue
+        ids = {o.id for o in objs}
+        dx, dy = room.offset_m
+        pls = [replace(p, location=(p.location[0] - dx, p.location[1] - dy, p.location[2])) for p in placements
+               if p.id in ids or (p.id not in room_of and base(p.id) in ids)]
+        sub = SceneSpec(replace(spec.setting, bounds_m=(*room.size_m, spec.setting.bounds_m[2]), rooms=()), objs,
+                        tuple(r for r in spec.relations if r.a in ids), spec.lighting, spec.camera)
+        issues += check_layout(sub, pls, priors, blocked=[(lbl, _Pose(p.x - dx, p.y - dy, p.yaw, p.zb), d)
+                                                         for lbl, p, d, rids in zones if room.id in rids])
+    return issues
 
 
 def _solve_once(pr: _Problem, seed: int) -> dict[str, _Pose]:
@@ -914,9 +964,16 @@ def check_layout(
     spec: SceneSpec,
     placements: list[Placement],
     priors: dict[str, CategoryPrior] | None = None,
+    *,
+    blocked: list[tuple[str, _Pose, Dims]] | None = None,
 ) -> list[str]:
-    """Independent verification. Returns 'hard: ...' / 'soft: ...' issue strings (empty = clean)."""
+    """Independent verification. Returns 'hard: ...' / 'soft: ...' issue strings (empty = clean).
+
+    A multi-room spec is checked room by room, like solve_layout, with each room's doorways kept clear."""
+    if spec.setting.rooms:
+        return _check_rooms(spec, placements, priors)
     pr = _Problem(spec, priors or load_priors(), {p.id: p.dims for p in placements})
+    pr.blocked = list(blocked or [])
     poses: dict[str, _Pose] = {}
     issues: list[str] = []
     placements = _collapse_grids(pr, placements, issues)
