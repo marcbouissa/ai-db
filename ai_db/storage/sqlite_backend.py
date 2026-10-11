@@ -18,7 +18,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import Any, TypeVar, cast
 
-from ai_db.constants import DEFAULT_DB_FILE
+from ai_db.constants import DEFAULT_DB_FILE, QUERY_LOG_KEEP
 from ai_db.errors import AiDbConfigError, AiDbQueryError, AiDbStorageError
 from ai_db.search.query_builder import (
     base_terms,
@@ -669,6 +669,8 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
         for fts in ["fts_index", "fts_skills", "fts_contexts"]:
             cur.execute(f"INSERT INTO {fts}({fts}) VALUES('optimize')")
+        # The old telemetry blob; telemetry is derived from query_log now (K5).
+        cur.execute("DELETE FROM session_state WHERE key = 'telemetry_metrics_v1'")
         self.conn.commit()
         cur.execute("PRAGMA optimize")
         cur.execute("VACUUM")
@@ -1434,8 +1436,6 @@ class SQLiteBackend(StorageBackend, VectorCapable):
     # Query log (observability)
     # =========================================================================
 
-    QUERY_LOG_KEEP = 10000
-
     @_writes
     def log_query(self, entry: dict[str, Any]) -> None:
         """Append one query-log row; keeps the newest QUERY_LOG_KEEP rows."""
@@ -1448,7 +1448,12 @@ class SQLiteBackend(StorageBackend, VectorCapable):
              json.dumps(entry.get("stages", {})), json.dumps(entry.get("providers", {})),
              json.dumps(entry.get("top", []))))
         self.conn.execute("DELETE FROM query_log WHERE id <= ?",
-                          ((cur.lastrowid or 0) - self.QUERY_LOG_KEEP,))
+                          ((cur.lastrowid or 0) - QUERY_LOG_KEEP,))
+
+    @_writes
+    def clear_query_log(self) -> None:
+        self._check_closed()
+        self.conn.execute("DELETE FROM query_log")
 
     def get_query_log(self, min_total_ms: float = 0.0, limit: int = 50) -> list[dict[str, Any]]:
         self._check_closed()

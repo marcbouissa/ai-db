@@ -597,11 +597,19 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - [ ] Deduplicate span parsing in `dispatcher.py` (`_handle_expand` and the next handler).
 
 ### K5. Telemetry
-- [ ] `TelemetryTracker.record_query` rewrites a JSON blob of ≤1000 samples and commits on every
+- [x] `TelemetryTracker.record_query` rewrites a JSON blob of ≤1000 samples and commits on every
   query; `avg_ms` is over the window but `count` is lifetime; multi-process last-writer-wins.
   Derive telemetry from the existing `query_log` table and delete the blob.
-- [ ] `_handle_telemetry` returns a fabricated all-zero summary as fallback; raise instead.
+- [x] `_handle_telemetry` returns a fabricated all-zero summary as fallback; raise instead.
 - [ ] `video_extract_keyframes` returns `{"error": ...}` as success; raise.
+- **Done 2026-10-11 (bullets 1-2):** `TelemetryTracker` is a read-only view over
+  `query_log` (newest `QUERY_LOG_KEEP`, now a constant): latency overall and per tool,
+  cache hit rate, stages, storage, all over one window; `analyze` calls are logged too (the
+  semantic cache); `--reset` clears the log (`clear_query_log`); `optimize` deletes the old
+  blob. The never-called token-compression counters are gone. `_handle_telemetry` has no
+  fallback (`VectorDB` always has a tracker). Tests rewritten (`tests/test_telemetry.py`).
+- **Skipped 2026-10-11 (bullet 3):** `video_extract_keyframes` lives in
+  `packages/ai-db-scene/` (K10), which this pass may not modify.
 
 ### K6. Constants sweep
 - [x] Language maps unified in `ai_db/parser/languages.py`; grammars are now selectable per

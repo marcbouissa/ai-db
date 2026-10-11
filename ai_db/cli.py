@@ -1304,18 +1304,16 @@ def _main(argv: list[str] | None = None) -> int:
         elif getattr(args, "format", "dense") == "json":
             print(json.dumps(res, indent=2))
         else:
-            print("=== Telemetry Dashboard ===")
-            tokens = res.get("tokens", res.get("token_savings", {}))
-            latency = res.get("latency", {})
-            cache = res.get("cache", {})
-            weak = res.get("weak_points", {})
-            print(f"Token Savings: {tokens.get('net_saved_tokens', tokens.get('net_tokens_saved', 0))} tokens saved ({tokens.get('savings_pct', tokens.get('reduction_pct', 0.0))}%)")
-            print(f"Query Latency: avg={latency.get('avg_ms', latency.get('avg_latency_ms', 0.0))}ms, p50={latency.get('p50_ms', 0.0)}ms, p95={latency.get('p95_ms', 0.0)}ms")
-            for stage, st in res.get("stages", {}).items():
-                print(f"  stage {stage:<10} n={st['count']:<5} p50={st['p50_ms']}ms p95={st['p95_ms']}ms")
-            print(f"Cache Performance: {cache.get('hits', 0)} hits / {cache.get('lookups', 0)} lookups ({cache.get('hit_rate_pct', 0.0)}%)")
-            if weak:
-                print(f"Weak Points: {weak.get('syntax_errors', 0)} syntax errors, {len(weak.get('complexity_hotspots', []))} hotspots")
+            latency, cache, window = res["latency"], res["cache"], res["window"]
+            print(f"=== Telemetry Dashboard (last {window['calls']} logged calls) ===")
+            print(f"Query Latency: avg={latency['avg_ms']}ms, p50={latency['p50_ms']}ms, "
+                  f"p95={latency['p95_ms']}ms")
+            for tool, st in latency["by_tool"].items():
+                print(f"  tool  {tool:<12} n={st['count']:<5} p50={st['p50_ms']}ms p95={st['p95_ms']}ms")
+            for stage, st in res["stages"].items():
+                print(f"  stage {stage:<12} n={st['count']:<5} p50={st['p50_ms']}ms p95={st['p95_ms']}ms")
+            print(f"Cache Performance: {cache['hits']} hits / {cache['lookups']} lookups "
+                  f"({cache['hit_rate_pct']}%)")
 
     dispatcher.close()
     return 0

@@ -84,6 +84,7 @@ CODE_STOPWORDS = frozenset({
 # Retrieval
 CANDIDATE_POOL = 50  # candidates per retriever list before fusion/rerank
 RRF_K = 60
+QUERY_LOG_KEEP = 10000  # query_log rows kept (newest); telemetry covers this window
 DEFAULT_DOC_WEIGHT = 0.5  # index.doc_weight: score factor for md/txt chunks (docs rank below code)
 DEFAULT_RERANK_TOP_N = 10  # rerank.top_n: fused candidates the reranker re-scores
 

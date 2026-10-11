@@ -143,6 +143,10 @@ class StorageBackend(ABC):
         """Newest-first log entries with ``total_ms >= min_total_ms``."""
         raise NotImplementedError(f"{type(self).__name__} must implement get_query_log")
 
+    def clear_query_log(self) -> None:
+        """Delete every query-log entry (``telemetry --reset``)."""
+        raise NotImplementedError(f"{type(self).__name__} must implement clear_query_log")
+
     def clear_file_metadata(self, filepath: str) -> None:
         """Delete symbols, refs, annotations, syntax errors and analysis refs of a file
         (but not its file row or chunks)."""

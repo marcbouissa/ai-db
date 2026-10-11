@@ -1148,49 +1148,11 @@ class ServiceDispatcher:
 
     def _handle_telemetry(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
-        reset = bool(args.get("reset", False))
-        tracker = getattr(db, "telemetry_tracker", None)
-
-        if tracker is not None:
-            if reset:
-                tracker.reset()
-                return {"status": "reset", "message": "Telemetry metrics reset."}
-            summary = tracker.get_summary()
-            backend = getattr(db, "backend", None)
-            if backend is not None and hasattr(backend, "get_query_log"):
-                from ai_db.telemetry.stages import stage_stats
-                summary["stages"] = stage_stats(backend.get_query_log(limit=1000))
-            return summary
-
-        backend_name = getattr(getattr(db, "backend", None), "backend_name", "sqlite")
-        return {
-            "token_savings": {
-                "cumulative_raw_tokens": 0,
-                "emitted_tokens": 0,
-                "net_tokens_saved": 0,
-                "reduction_pct": 0.0,
-                "estimated_cost_saved_usd": 0.0,
-            },
-            "latency": {
-                "backend": backend_name,
-                "total_queries": 0,
-                "avg_latency_ms": 0.0,
-                "p50_ms": 0.0,
-                "p95_ms": 0.0,
-                "p99_ms": 0.0,
-            },
-            "cache": {
-                "lookups": 0,
-                "hits": 0,
-                "misses": 0,
-                "hit_rate_pct": 0.0,
-            },
-            "weak_points": {
-                "syntax_errors": 0,
-                "complexity_hotspots": [],
-                "unindexed_files": 0,
-            },
-        }
+        tracker = db.telemetry_tracker
+        if bool(args.get("reset", False)):
+            tracker.reset()
+            return {"status": "reset", "message": "Telemetry metrics reset (query log cleared)."}
+        return tracker.get_summary()
 
     def _handle_query(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)

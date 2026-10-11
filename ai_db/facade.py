@@ -230,6 +230,8 @@ class VectorDB:
                    cache_hit: bool, stages: dict[str, float], result: Any) -> None:
         if tool == "investigate":
             top = [[e["qualified_name"], e["score"]] for e in result["evidence"][:10]]
+        elif tool == "analyze":
+            top = [[s["name"], s["span"]] for s in result.get("symbols", [])[:10]]
         else:
             top = [[h["chunk_id"], h["score"]] for h in result[:10]]
         sig = self.retrieval_signature()
@@ -292,7 +294,6 @@ class VectorDB:
               project: str | None = None, allowed_projects: list[str] | None = None,
               **kwargs: Any) -> list[dict[str, Any]]:
         k = kwargs.get("top", top_k)
-        t0 = time.perf_counter()
         params = {"top_k": k, "relative_to": relative_to, "project": project,
                   "allowed_projects": allowed_projects, "languages": kwargs.get("languages"),
                   "chunk_types": kwargs.get("chunk_types"),
@@ -301,10 +302,7 @@ class VectorDB:
             search_text, top_k=k, relative_to=relative_to, project=project,
             allowed_projects=allowed_projects, languages=params["languages"],
             chunk_types=params["chunk_types"], modified_since=params["modified_since"]))
-        latency_ms = (time.perf_counter() - t0) * 1000.0
-        backend_name = "sqlite_wal" if self.backend.backend_name == "sqlite" else self.backend.backend_name
-        self.telemetry_tracker.record_query(backend=backend_name, latency_ms=latency_ms, results_count=len(results))
-        hits: list[dict[str, Any]] = results
+        hits: list[dict[str, Any]] = results  # logged (latency, cache hit) by _cached
         return hits
 
     def query_symbol(self, name: str, relative_to: str | None = None,
@@ -373,15 +371,12 @@ class VectorDB:
                      ctx_lines: int = 10,
                      bypass_cache: bool = False,
                      no_cache: bool = False) -> dict[str, Any]:
+        t0 = time.perf_counter()
         result = self.analyzer_engine.analyze_file(filepath, depth=depth, span=span, focus=focus, q=q,
                                                    since=since, ctx_lines=ctx_lines,
                                                    bypass_cache=bypass_cache, no_cache=no_cache)
-        meta = result.get("meta", {})
-        is_hit = bool(meta.get("cached", False))
-        tokens_in = meta.get("tokens_in", 0)
-        tokens_out = meta.get("tokens_out", 0)
-        tokens_saved = max(0, tokens_in - tokens_out) if is_hit else 0
-        self.telemetry_tracker.record_cache_access(hit=is_hit, tokens_saved=tokens_saved)
+        self._log_query("analyze", filepath, depth, (time.perf_counter() - t0) * 1000,
+                        bool(result.get("meta", {}).get("cached", False)), {}, result)
         return result
 
     def analyze_batch(self, targets: list[str], depth: str = "structure",
