@@ -107,15 +107,23 @@ STYLE_PALETTES: dict[str, StylePalette] = {
 
 
 def style_error(value: object) -> str | None:
-    """Why ``value`` is not a known ``setting.style``, or None."""
-    if value in STYLE_PALETTES:
+    """Why ``value`` is not a usable ``setting.style``, or None. Free text is allowed (stored specs
+    say e.g. "cozy living room"); only a text naming a known style picks a palette."""
+    if isinstance(value, str) and value.strip():
         return None
-    return f"unknown style {value!r}; allowed: {sorted(STYLE_PALETTES)}"
+    return f"expected a style string, e.g. one of {sorted(STYLE_PALETTES)}, got {value!r}"
+
+
+def style_palette(style: str | None) -> str | None:
+    """The known style a ``setting.style`` text names ("Industrial loft" -> industrial), else None."""
+    words = re.findall(r"[a-z]+", (style or "").lower())
+    return next((w for w in words if w in STYLE_PALETTES), None)
 
 
 def style_material(style: str | None, key: str) -> str | None:
     """The style's material for a category, or for ``floor`` / ``wall``; None = no override."""
-    palette = STYLE_PALETTES.get(style or "")
+    name = style_palette(style)
+    palette = STYLE_PALETTES[name] if name else None
     if not palette:
         return None
     if key == "floor":

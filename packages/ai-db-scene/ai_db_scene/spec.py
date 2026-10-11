@@ -125,8 +125,9 @@ def spec_schema() -> dict[str, Any]:
                         "maxItems": 3,
                         "description": "[x width, y depth, z height] in meters",
                     },
-                    "style": {"enum": sorted(STYLE_PALETTES),
-                              "description": "material palette (floor, walls, furniture); explicit materials win"},
+                    "style": {"type": "string",
+                              "description": f"material palette when it names one of {sorted(STYLE_PALETTES)} "
+                                             "(floor, walls, furniture); explicit materials win"},
                     "shape": {"enum": list(SHAPES), "description": "room footprint inside bounds_m x/y; default rect"},
                     "floor_material": {"type": "string", "description": "floor surface, e.g. wood:oak, marble:carrara (see objects.material)"},
                     "wall_material": {"type": "string", "description": "wall surface, e.g. plaster:#e8e0d0 (see objects.material)"},

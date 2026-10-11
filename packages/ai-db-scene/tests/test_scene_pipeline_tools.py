@@ -127,10 +127,15 @@ def test_style_palette_with_explicit_materials_winning():
     assert mats["Room_Floor"] == "color:#6e6e6a" and mats["Room_Walls"] == "plaster:#ffffff:proj=box"
     assert mats["sofa"] == "leather:proj=box" and mats["table"] == "marble:verde:proj=box"
     assert mats["lamp"] == "metal:steel:proj=box"
-    raw["setting"]["style"] = "bohemian"
+    raw["setting"]["style"] = "Industrial loft"  # free text naming a style picks its palette
+    spec, _ = sp._parse_spec(raw)
+    cmds, _ = sp.build_layout_commands(spec, pls, geometry="boxes")
+    assert {c["params"]["name"]: c["params"]["material"] for c in cmds if c["type"] == "apply_material"} == mats
+    raw["setting"]["style"] = "cozy bohemian"  # stored specs use free text: valid, no palette
+    assert sp._handle_submit_scene_spec({"spec": raw})["status"] != "invalid"
+    raw["setting"]["style"] = 7
     bad = sp._handle_submit_scene_spec({"spec": raw})
-    assert bad["status"] == "invalid"
-    assert any("unknown style 'bohemian'" in e and "scandinavian" in e for e in bad["errors"])
+    assert bad["status"] == "invalid" and any("setting.style" in e for e in bad["errors"])
     assert "rustic" in sp._handle_get_scene_spec_schema({})["styles"]
 
 
