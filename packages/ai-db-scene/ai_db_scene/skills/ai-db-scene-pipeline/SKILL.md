@@ -108,3 +108,17 @@ Optional `build_scene` arguments:
   conflict; a rug now only needs the object on its footprint.
 - `against_wall` fixes the yaw (back to the wall): an object that must also face something
   needs to be on the wall opposite it.
+
+## Learning from the user's feedback
+
+When the user complains about a result ("the bench back is floating", "the clothes are too
+stiff", "all sofas look the same"), call **`record_feedback(text)`** with their words. It becomes
+a lesson: `get_scene_spec_schema` lists it under `lessons` for scenes with those objects, and
+`build_scene` checks it afterwards - a validator check that sees the problem becomes blocking
+for those objects, recipe parts are tested for contact, and problems no check can see come back
+as `lesson_verify` items you must look at (render, then fix with `edit_scene`).
+Lessons are global unless recorded with `project`: a build in project X checks the global ones
+and X's own, never another project's. `list_feedback`, `update_feedback` (edit, `enabled: false` to
+disable), `delete_feedback`, and
+`optimize_feedback` (merge duplicates, fix mistyped categories, retire lessons that no longer
+match; show the proposals to the user, then `apply: true`) manage them.

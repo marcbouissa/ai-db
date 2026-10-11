@@ -28,7 +28,7 @@ _SESSION_GUARD_DB = os.path.join(_SESSION_GUARD_DIR, "session_guard.db")
 # serves the user's real index: CLI subprocesses in tests would sync into it. Drop the
 # daemon settings for the whole session, before any test (or subprocess) can see them.
 for _var in ("AI_DB_DAEMON_URL", "AI_DB_API_KEY", "AI_DB_ADMIN_KEY", "AI_DB_API_KEYS",
-             "AI_DB_SCENE_MEMORY", "AI_DB_DEVICE", "AI_DB_CPU_THREADS"):
+             "AI_DB_SCENE_MEMORY", "AI_DB_SCENE_LESSONS", "AI_DB_DEVICE", "AI_DB_CPU_THREADS"):
     os.environ.pop(_var, None)
 os.environ.setdefault("AI_DB_PATH", _SESSION_GUARD_DB)
 os.environ.setdefault("AI_DB_CONFIG", os.path.join(_SESSION_GUARD_DIR, "config.json"))

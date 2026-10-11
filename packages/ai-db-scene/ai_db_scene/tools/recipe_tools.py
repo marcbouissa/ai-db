@@ -26,8 +26,10 @@ def register_recipe_tools(dispatcher: Any) -> None:
     def listing(args: dict[str, Any]) -> Any:
         return ur.list_user_recipes(folder())
 
-    part = {"type": "object", "description": "{id, shape: box|cylinder|sphere|tapered_cylinder, size [x,y,z], "
-                                              "at [x,y,z] bottom centre, material, rotation_deg?}"}
+    part = {"type": "object", "description": "{id, shape: box|cylinder|sphere|tapered_cylinder or a soft shape (rounded_slab, cushion, "
+                                              "rolled_arm, tufted_panel, turned_leg, cabriole_leg, square_tapered_leg, "
+                                              "raised_panel, skirt) with its params, size [x,y,z], at [x,y,z] bottom "
+                                              "centre, material, rotation_deg?, bevel?}"}
     for name, desc, schema, handler in (
         ("create_recipe",
          ("Save a part recipe for a category (relative units, every part touching a chain to the ground, "

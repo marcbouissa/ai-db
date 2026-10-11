@@ -1105,6 +1105,15 @@ def _handle_validate_scene(args: dict[str, Any]) -> Any:
 
 
 
+def _lesson_checklist(categories: set[str], brief: str, project: str) -> list[str]:
+    try:
+        from ai_db_scene import feedback
+
+        return feedback.checklist(categories, brief, project)
+    except Exception:  # noqa: BLE001 - an unreadable lesson file must not break the schema
+        return []
+
+
 def _handle_get_scene_spec_schema(args: dict[str, Any]) -> Any:
     priors = load_priors()
     exemplars: list[dict[str, Any]] = []
@@ -1130,6 +1139,8 @@ def _handle_get_scene_spec_schema(args: dict[str, Any]) -> Any:
         "setting_kinds": list(SETTING_KINDS),
         "styles": sorted(STYLE_PALETTES),
         "exemplars": exemplars[:_MAX_EXEMPLARS] or [{"brief": "a small reading corner", "spec": _EXAMPLE_SPEC}],
+        # problems users reported on these objects before (record_feedback): verify each one
+        "lessons": _lesson_checklist(relevant, str(args.get("brief", "")), args.get("project", "default")),
         "next": "submit_scene_spec(spec) to check it, then build_scene(spec)",
     }
 
@@ -1296,6 +1307,12 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
         exp_issue = exposure_issue(exposure)
         if exp_issue:
             left.append(exp_issue)
+    try:
+        from ai_db_scene import feedback
+
+        left += feedback.apply(left, placements, args.get("project", "default"))
+    except Exception as e:  # noqa: BLE001 - a lesson must never fail a finished build
+        left.append({"check": "lesson_error", "severity": "warning", "message": f"lessons not applied: {e}"})
     out = {"status": "built" if not any(i.get("severity") == "blocking" for i in left) else "built_with_issues",
            "objects": len(placements), "created": built.get("created"), "failed_commands": built.get("failed"),
            "repairs": repairs, "fixes_applied": applied, "issues_found": len(first),
@@ -1823,7 +1840,8 @@ def _handle_export_scene(args: dict[str, Any]) -> Any:
 PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
     ("get_scene_spec_schema",
      "SceneSpec JSON schema + category vocabulary with typical dims + relations + up to 3 exemplar specs from past successful runs",
-     {"type": "object", "properties": {"brief": {"type": "string", "description": "Brief, to retrieve similar exemplars"}}},
+     {"type": "object", "properties": {"brief": {"type": "string", "description": "Brief, to retrieve similar exemplars"},
+                                       "project": {"type": "string", "description": "lessons of this project (and global ones)"}}},
      _handle_get_scene_spec_schema),
     ("submit_scene_spec",
      "Validate a SceneSpec; returns exact errors, or ok + the normalized spec",
