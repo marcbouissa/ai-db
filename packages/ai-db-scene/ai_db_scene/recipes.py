@@ -522,8 +522,19 @@ _VARIANTS: dict[str, Any] = {
 }
 
 
+def _user_parts(category: str) -> list[dict[str, Any]] | None:
+    """Parts of the user recipe for ``category`` when it applies: always for a category
+    without a built-in, for one with a built-in only if it was saved with overwrite=true."""
+    from ai_db_scene.user_recipes import load_user_recipe
+
+    r = load_user_recipe(category)
+    if r is None or (category in _RECIPES and not r.get("overrides_builtin")):
+        return None
+    return [dict(p) for p in r["parts"]]
+
+
 def has_recipe(category: str) -> bool:
-    return category in _RECIPES
+    return category in _RECIPES or _user_parts(category) is not None
 
 
 def variant_categories() -> list[str]:
@@ -537,14 +548,19 @@ def recipe_spec(category: str, name: str, dims: tuple[float, float, float] | lis
 
     ``seed`` (None: the fixed recipe) draws a variant for the categories in
     ``variant_categories()``: leg style/thickness, drawer/door/shelf counts, back height.
-    The same seed always gives the same parts; other categories ignore it."""
-    if seed is not None and category in _VARIANTS:
+    The same seed always gives the same parts; other categories ignore it. A user recipe
+    (``create_recipe``) is used for categories without a built-in, or instead of the built-in
+    when it was saved with overwrite=true."""
+    user = _user_parts(category)
+    if user is not None:
+        parts, style = user, "ai-db user recipe"
+    elif seed is not None and category in _VARIANTS:
         import random
 
-        parts = _VARIANTS[category](random.Random(f"{category}:{seed}"))
+        parts, style = _VARIANTS[category](random.Random(f"{category}:{seed}")), "ai-db recipe"
     else:
-        parts = _RECIPES[category]()
-    return {"asset": name, "category": category, "style": "ai-db recipe",
+        parts, style = _RECIPES[category](), "ai-db recipe"
+    return {"asset": name, "category": category, "style": style,
             "bbox_m": [float(dims[0]), float(dims[1]), float(dims[2])], "parts": parts}
 
 

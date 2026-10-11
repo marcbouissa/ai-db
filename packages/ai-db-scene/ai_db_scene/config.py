@@ -9,7 +9,7 @@ from typing import Any
 from ai_db.errors import AiDbConfigError
 from ai_db_scene.constants import DEFAULT_JUDGE_MODEL, POLYHAVEN_RESOLUTIONS
 
-_KEYS = frozenset({"judge_model", "asset_dirs", "polyhaven", "export_dir", "aliases"})
+_KEYS = frozenset({"judge_model", "asset_dirs", "polyhaven", "export_dir", "aliases", "recipes_dir"})
 _POLYHAVEN_KEYS = frozenset({"enabled", "license_acknowledged", "cache_dir", "resolution"})
 
 
@@ -34,6 +34,8 @@ class SceneConfig:
     export_dir: str | None = None
     #: local-library file-name words -> category, on top of providers.CATEGORY_ALIASES
     aliases: tuple[tuple[str, str], ...] = ()
+    #: where create_recipe saves user recipes (None: $XDG_DATA_HOME/ai-db/scene_recipes)
+    recipes_dir: str | None = None
 
 
 def _aliases(raw: Any) -> tuple[tuple[str, str], ...]:
@@ -47,6 +49,12 @@ def _aliases(raw: Any) -> tuple[tuple[str, str], ...]:
     if unknown:
         raise AiDbConfigError(f"'{where}': unknown categories {unknown}")
     return tuple(sorted(raw.items()))
+
+
+def _recipes_dir(raw: Any) -> str | None:
+    if raw is not None and (not isinstance(raw, str) or not raw):
+        raise AiDbConfigError(f"'plugins.scene.recipes_dir' must be a non-empty path string, got {raw!r}")
+    return os.path.abspath(os.path.expanduser(raw)) if raw else None
 
 
 def _polyhaven(raw: Any) -> PolyHavenConfig:
@@ -101,4 +109,4 @@ def scene_config(app_config: Any) -> SceneConfig:
         raise AiDbConfigError(f"'plugins.scene.export_dir' must be a non-empty path string, got {export_dir!r}")
     return SceneConfig(judge_model=judge_model, asset_dirs=_asset_dirs(raw.get("asset_dirs", [])),
                        polyhaven=_polyhaven(raw.get("polyhaven", {})), export_dir=export_dir,
-                       aliases=_aliases(raw.get("aliases", {})))
+                       aliases=_aliases(raw.get("aliases", {})), recipes_dir=_recipes_dir(raw.get("recipes_dir")))
