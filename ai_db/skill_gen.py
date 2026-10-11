@@ -22,6 +22,7 @@ e.g. in a plugin's pyproject.toml::
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -47,6 +48,9 @@ _BAD_TRIGGER = re.compile(r"[\n:#|,\"]")
 _DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 SECTIONS = (("when_to_use", "When to use"), ("workflow", "Workflow"),
             ("pitfalls", "Pitfalls"), ("examples", "Examples"))
+#: rendered only when a source fills them (e.g. an {"asset": ...} source)
+OPTIONAL_SECTIONS = (("asset_build", "How the asset is built"),)
+_SOURCE_KEYS = ("url", "text", "video", "asset", "path", "title", "license")
 
 
 def generated_skills_dir(config: Any = None) -> str:
@@ -80,7 +84,8 @@ def _str_list(value: Any, field: str) -> list[str]:
 
 
 def render_skill(name: str, description: str, body: str, triggers: list[str] | None = None,
-                 related_skills: list[str] | None = None, domain: str | None = None) -> str:
+                 related_skills: list[str] | None = None, domain: str | None = None,
+                 sources: list[dict[str, str]] | None = None) -> str:
     """SKILL.md text in the frontmatter format of the packaged skills."""
     meta = ["metadata:", "  author: ai-db create_skill", '  version: "1.0.0"']
     if domain:
@@ -90,8 +95,27 @@ def render_skill(name: str, description: str, body: str, triggers: list[str] | N
         meta.append(f"  triggers: {', '.join(triggers)}")
     if related_skills:
         meta.append(f"  related-skills: {', '.join(related_skills)}")
+    if sources:
+        # one JSON object per line: valid YAML flow mappings, safe for any URL or title
+        meta.append("  sources:")
+        meta += [f"    - {json.dumps(src, ensure_ascii=False)}" for src in sources]
     return "\n".join(["---", f"name: {name}", f"description: {description}", *meta, "---", "",
                       body.strip(), ""])
+
+
+def validate_sources(sources: Any) -> list[dict[str, str]]:
+    """``metadata.sources`` entries: {url|text|video|asset|path, title?, license?} strings."""
+    if sources is None:
+        return []
+    if not isinstance(sources, list) or len(sources) > 20:
+        raise ValueError("sources must be a list of at most 20 objects")
+    out = []
+    for s in sources:
+        if not isinstance(s, dict) or not s or set(s) - set(_SOURCE_KEYS) \
+                or not all(isinstance(v, str) and "\n" not in v and len(v) <= 500 for v in s.values()):
+            raise ValueError(f"source {s!r}: keys from {list(_SOURCE_KEYS)}, one-line strings")
+        out.append(dict(s))
+    return out
 
 
 def validate_skill(name: str, description: str, body: str, triggers: Any = None,
@@ -136,8 +160,9 @@ def _under(path: str, folder: str) -> bool:
 
 def create_skill(db: Any, gen_dir: str, name: str, description: str, body: str,
                  triggers: Any = None, related_skills: Any = None, domain: str | None = None,
-                 overwrite: bool = False) -> dict[str, Any]:
+                 overwrite: bool = False, sources: Any = None) -> dict[str, Any]:
     trigs, related = validate_skill(name, description, body, triggers, related_skills, domain)
+    srcs = validate_sources(sources)
     path = _skill_path(gen_dir, name)
     # a skill of the same name elsewhere (packaged, plugin, user dir) is not ours to shadow
     for sk in db.backend.get_skills():
@@ -148,7 +173,7 @@ def create_skill(db: Any, gen_dir: str, name: str, description: str, body: str,
     if existed and not overwrite:
         raise ValueError(f"generated skill {name!r} exists; pass overwrite=true to replace it")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    text = render_skill(name, description.strip(), body, trigs, related, domain)
+    text = render_skill(name, description.strip(), body, trigs, related, domain, srcs)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
@@ -205,10 +230,14 @@ def plugin_contributions(topic: str, config: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
-def draft_skill(db: Any, topic: str, config: Any = None) -> dict[str, Any]:
+def draft_skill(db: Any, topic: str, config: Any = None, sources: Any = None,
+                fetch: Any = None) -> dict[str, Any]:
     if not isinstance(topic, str) or not topic.strip():
         raise ValueError("topic is required")
     topic = topic.strip()
+    from ai_db.skill_sources import read_sources
+
+    read = read_sources(sources, config, fetch)
     existing = db.route_skills(topic, top_k=SKILL_DRAFT_TOP, min_confidence=0.0)
     try:
         contexts = db.query_contexts(topic, top_k=SKILL_DRAFT_TOP) or []
@@ -217,8 +246,12 @@ def draft_skill(db: Any, topic: str, config: Any = None) -> dict[str, Any]:
         contexts = []
     plugins = plugin_contributions(topic, config)
 
-    sections: dict[str, list[str]] = {k: [] for k, _ in SECTIONS}
-    sources: list[str] = []
+    sections: dict[str, list[str]] = {k: [] for k, _ in SECTIONS + OPTIONAL_SECTIONS}
+    for key, lines in read["sections"].items():
+        if key in sections:
+            sections[key].extend(lines)
+    recorded: list[dict[str, str]] = read["sources"]
+    sources = []
     for c in contexts:
         title = c.get("title") or c.get("session_id") or "context"
         summary = " ".join(str(c.get("summary") or "").split())[:300]
@@ -237,9 +270,12 @@ def draft_skill(db: Any, topic: str, config: Any = None) -> dict[str, Any]:
                     "pitfalls": "TODO: what goes wrong and how to avoid it.",
                     "examples": "TODO: one worked example (input -> calls -> result)."}
     lines = [f"# {topic[:1].upper() + topic[1:]}", ""]
-    for key, title in SECTIONS:
+    for key, title in SECTIONS + OPTIONAL_SECTIONS:
+        if key not in placeholders and not sections[key]:
+            continue
         lines += [f"## {title}", ""]
-        lines += [f"- {x}" for x in sections[key]] or [f"- {placeholders[key]}"]
+        # a code block or other multi-line item stands on its own, not as a bullet
+        lines += [x if "\n" in x else f"- {x}" for x in sections[key]] or [f"- {placeholders[key]}"]
         lines.append("")
     body = "\n".join(lines).rstrip() + "\n"
     name = _slug(topic)
@@ -251,14 +287,16 @@ def draft_skill(db: Any, topic: str, config: Any = None) -> dict[str, Any]:
         "description": description,
         "triggers": triggers,
         "body": body,
-        "skill_md": render_skill(name, description, body, triggers),
+        "skill_md": render_skill(name, description, body, triggers, sources=recorded),
         "existing_skills": existing,
         "possible_duplicates": [s["name"] for s in dupes],
         "contexts": [{"session_id": c.get("session_id"), "title": c.get("title")} for c in contexts],
         "plugins": plugins,
         "sources": sources,
+        "metadata_sources": recorded,
+        "warnings": read["warnings"],
         "next": "Extend an existing skill if one already covers this; otherwise replace the TODOs "
-                "and call create_skill(name, description, body, triggers).",
+                "and call create_skill(name, description, body, triggers, sources=metadata_sources).",
     }
 
 
@@ -273,11 +311,12 @@ def register_skill_tools(dispatcher: Any) -> None:
         db, gen = _ctx(args)
         return create_skill(db, gen, args.get("name", ""), args.get("description", ""), args.get("body", ""),
                             args.get("triggers"), args.get("related_skills"), args.get("domain"),
-                            bool(args.get("overwrite", False)))
+                            bool(args.get("overwrite", False)), args.get("sources"))
 
     def _draft(args: dict[str, Any]) -> Any:
         db, _ = _ctx(args)
-        return draft_skill(db, args.get("topic", ""), getattr(db, "config", None) or dispatcher.config)
+        return draft_skill(db, args.get("topic", ""), getattr(db, "config", None) or dispatcher.config,
+                           args.get("sources"))
 
     def _list(args: dict[str, Any]) -> Any:
         return list_generated_skills(_ctx(args)[1])
@@ -301,6 +340,8 @@ def register_skill_tools(dispatcher: Any) -> None:
                 "related_skills": {**str_or_list, "description": "Names of related skills"},
                 "domain": {"type": "string", "description": "Short domain word, e.g. blender"},
                 "overwrite": {"type": "boolean", "default": False, "description": "Replace an existing generated skill"},
+                "sources": {"type": "array", "items": {"type": "object"},
+                            "description": "metadata.sources: [{url|text|video|asset, title?, license?}]"},
             },
             "required": ["name", "description", "body"],
         },
@@ -308,8 +349,14 @@ def register_skill_tools(dispatcher: Any) -> None:
     dispatcher.register_tool(
         name="draft_skill",
         description="Draft a SKILL.md for a topic from what ai-db already knows (existing skills, saved "
-                    "contexts, plugin run history). No LLM call; edit the result and save with create_skill.",
-        parameters_schema={"type": "object", "properties": {"topic": {"type": "string"}}, "required": ["topic"]},
+                    "contexts, plugin run history) and optional sources: tutorial text or URL (fetched as "
+                    "text), a local video (subtitles/keyframes), a .gltf/.glb/.blend asset or Blender object. "
+                    "No LLM call; edit the result and save with create_skill.",
+        parameters_schema={"type": "object", "properties": {
+            "topic": {"type": "string"},
+            "sources": {"type": "array", "items": {"type": "object"},
+                        "description": "[{text, title?, url?, license?} | {url} | {video: path} | {asset: path or object}]"}},
+            "required": ["topic"]},
         handler=_draft, category="routing")
     dispatcher.register_tool(
         name="list_generated_skills",

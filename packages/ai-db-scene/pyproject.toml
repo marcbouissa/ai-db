@@ -34,6 +34,9 @@ scene = "ai_db_scene:skills_dir"
 [project.entry-points."ai_db.skill_drafts"]
 scene = "ai_db_scene.skill_drafts:contribute"
 
+[project.entry-points."ai_db.skill_sources"]
+scene = "ai_db_scene.skill_sources:read_source"
+
 [project.entry-points."ai_db.chunkers"]
 usd = "ai_db_scene.chunkers.usd:USDChunker"
 segmentation = "ai_db_scene.chunkers.segmentation:SegmentationChunker"

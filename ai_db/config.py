@@ -155,6 +155,8 @@ class AppConfig:
     # skills.generated_dir: where create_skill writes SKILL.md files (None = default,
     # see ai_db.skill_gen.generated_skills_dir).
     skills_generated_dir: str | None = None
+    # skills.allow_private_urls: draft_skill may fetch loopback/private-network URLs
+    skills_allow_private_urls: bool = False
     source_path: str | None = None
 
     @property
@@ -181,7 +183,9 @@ class AppConfig:
             "daemon": daemon_dict,
             "plugins": {name: dict(section) for name, section in self.plugins.items()},
             "recall": {"providers": list(self.recall_providers)},
-            **({"skills": {"generated_dir": self.skills_generated_dir}} if self.skills_generated_dir else {}),
+            **({"skills": {k: v for k, v in (("generated_dir", self.skills_generated_dir),
+                                              ("allow_private_urls", self.skills_allow_private_urls)) if v}}
+               if self.skills_generated_dir or self.skills_allow_private_urls else {}),
         }
 
 
@@ -390,7 +394,10 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
                               "set embedding.provider or remove 'vectors' from recall.providers")
 
     skills_raw = _require_dict(data.get("skills", {}), "skills")
-    _check_keys(skills_raw, frozenset({"generated_dir"}), "skills")
+    _check_keys(skills_raw, frozenset({"generated_dir", "allow_private_urls"}), "skills")
+    allow_private_urls = skills_raw.get("allow_private_urls", False)
+    if not isinstance(allow_private_urls, bool):
+        raise AiDbConfigError("'skills.allow_private_urls' must be true or false")
     generated_dir = skills_raw.get("generated_dir")
     if generated_dir is not None and (not isinstance(generated_dir, str) or not generated_dir):
         raise AiDbConfigError("'skills.generated_dir' must be a non-empty path string")
@@ -455,6 +462,7 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         plugins=plugins,
         recall_providers=list(recall_providers),
         skills_generated_dir=generated_dir,
+        skills_allow_private_urls=allow_private_urls,
         trace_wait_patterns=trace_wait_patterns,
         trace_wait_patterns_extend=trace_wait_patterns_extend,
         daemon=daemon,
