@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]  # 77: PEP 639 license string
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -51,7 +51,8 @@ where = ["."]
 include = ["ai_db_scene*"]
 
 [tool.setuptools.package-data]
-ai_db_scene = ["priors.json", "skills/*/SKILL.md"]
+# data the code reads at run time: size priors and any other JSON, the shipped skills
+ai_db_scene = ["*.json", "skills/*/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
