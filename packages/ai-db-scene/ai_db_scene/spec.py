@@ -16,6 +16,8 @@ RELATIONS = ("on", "against_wall", "in_front_of", "beside", "facing", "centered_
 SETTING_KINDS = ("indoor", "outdoor", "tabletop", "single_asset")
 WALLS = ("wall_north", "wall_south", "wall_east", "wall_west")
 SHAPES = ("rect", "ellipse", "polygon")
+#: setting.mouldings -> the profile swept along the walls (profiles of the Blender addon)
+MOULDINGS = ("crown", "chair_rail", "baseboard")
 DETAILS = ("draft", "standard", "hero")
 SUPPORT_VOCAB = SUPPORTS  # floor | surface | wall | ceiling | ground: shared with the Blender builder
 NONRECT_WALL = "wall"  # implicit wall of ellipse/polygon rooms (with at_deg); polygons also have wall_1..wall_N
@@ -46,6 +48,17 @@ class Setting:
     #: multi-room building (indoor rect only): each object names its room, a door joins
     #: rooms that share a wall (layout.room_doors); empty = one room, as before
     rooms: tuple[Room, ...] = ()
+    #: classical mouldings swept along the room outline (MOULDINGS); None = the style's default
+    #: (classic: crown + baseboard), () = none
+    mouldings: tuple[str, ...] | None = None
+
+    def moulding_list(self) -> tuple[str, ...]:
+        """The mouldings a build adds: explicit, else the style's (single indoor rooms only)."""
+        if self.mouldings is not None:
+            return self.mouldings
+        if self.kind == "indoor" and not self.rooms and self.style == "classic":
+            return ("crown", "baseboard")
+        return ()
 
 
 @dataclass(frozen=True)
@@ -100,6 +113,7 @@ class SceneSpec:
                 **({"wall_material": self.setting.wall_material} if self.setting.wall_material else {}),
                 **({"rooms": [{"id": r.id, "offset_m": list(r.offset_m), "size_m": list(r.size_m)}
                               for r in self.setting.rooms]} if self.setting.rooms else {}),
+                **({"mouldings": list(self.setting.mouldings)} if self.setting.mouldings is not None else {}),
             },
             "objects": [
                 {"id": o.id, "category": o.category, "count": o.count, "hero": o.hero, "detail": o.detail,
@@ -149,6 +163,10 @@ def spec_schema() -> dict[str, Any]:
                     "shape": {"enum": list(SHAPES), "description": "room footprint inside bounds_m x/y; default rect"},
                     "floor_material": {"type": "string", "description": "floor surface, e.g. wood:oak, marble:carrara (see objects.material)"},
                     "wall_material": {"type": "string", "description": "wall surface, e.g. plaster:#e8e0d0 (see objects.material)"},
+                    "mouldings": {"type": "array", "items": {"enum": list(MOULDINGS)}, "uniqueItems": True,
+                                  "description": ("indoor single room: classical profiles swept along the walls "
+                                                  "(rect, ellipse or polygon), with gaps at doors and windows; "
+                                                  "default: crown + baseboard for style classic, else none; [] = none")},
                     "rooms": {
                         "type": "array",
                         "minItems": 2,
@@ -261,7 +279,7 @@ def _parse_setting(raw: Any, errors: list[str]) -> Setting | None:
         return None
     n0 = len(errors)
     _unknown_keys("setting", raw, ("kind", "bounds_m", "style", "shape", "points", "floor_material",
-                                   "wall_material", "rooms"), errors)
+                                   "wall_material", "rooms", "mouldings"), errors)
     mats = {}
     for key in ("floor_material", "wall_material"):
         if raw.get(key) is not None:
@@ -307,10 +325,27 @@ def _parse_setting(raw: Any, errors: list[str]) -> Setting | None:
     elif raw_pts is not None:
         errors.append("setting.points: only allowed when setting.shape is 'polygon'")
     rooms = _parse_rooms(raw.get("rooms"), kind, shape, bounds, errors)
+    mouldings = _parse_mouldings(raw.get("mouldings"), kind, rooms, errors)
     if len(errors) > n0 or bounds is None:
         return None
     return Setting(str(kind), bounds, style, str(shape), tuple(pts), mats.get("floor_material"),
-                   mats.get("wall_material"), rooms)
+                   mats.get("wall_material"), rooms, mouldings)
+
+
+def _parse_mouldings(raw: Any, kind: Any, rooms: tuple[Room, ...], errors: list[str]) -> tuple[str, ...] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not all(isinstance(m, str) for m in raw):
+        errors.append(f"setting.mouldings: expected a list of {list(MOULDINGS)}, got {raw!r}")
+        return None
+    bad = [m for m in raw if m not in MOULDINGS]
+    if bad:
+        errors.append(f"setting.mouldings: {bad} not allowed; allowed values: {list(MOULDINGS)}")
+    if len(set(raw)) != len(raw):
+        errors.append(f"setting.mouldings: duplicates in {raw!r}")
+    if raw and (kind != "indoor" or rooms):
+        errors.append("setting.mouldings: only for an indoor setting without rooms")
+    return tuple(raw)
 
 
 def _parse_rooms(raw: Any, kind: Any, shape: Any, bounds: tuple[float, float, float] | None,

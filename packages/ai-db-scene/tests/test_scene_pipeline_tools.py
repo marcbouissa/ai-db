@@ -571,3 +571,71 @@ def test_live_final_render_with_sky(private_blender, mem, tmp_path, engine):
     assert abs(fr["sky"]["sun_azimuth"] - 135.0) < 1.0, fr
     assert BlenderClient().run_code(
         "import bpy\nresult = [n.type for n in bpy.context.scene.world.node_tree.nodes].count('TEX_SKY')") == 1
+
+
+_OVAL = {
+    "setting": {"kind": "indoor", "bounds_m": [10, 7, 3.6], "shape": "ellipse", "style": "classic"},
+    "objects": [
+        {"id": "desk", "category": "desk", "hero": True},
+        {"id": "door", "category": "door"},
+        {"id": "door_b", "category": "door"},
+        {"id": "window", "category": "window"},
+        {"id": "window_l", "category": "window"},
+        {"id": "window_r", "category": "window"},
+    ],
+    "relations": [
+        {"a": "desk", "rel": "centered_in", "b": "room"},
+        {"a": "door", "rel": "against_wall", "b": "wall", "at_deg": 270},
+        {"a": "door_b", "rel": "against_wall", "b": "wall", "at_deg": 0},
+        {"a": "window", "rel": "against_wall", "b": "wall", "at_deg": 90},
+        {"a": "window_l", "rel": "against_wall", "b": "wall", "at_deg": 115},
+        {"a": "window_r", "rel": "against_wall", "b": "wall", "at_deg": 65},
+    ],
+}
+
+
+def test_mouldings_validated_and_defaulted_by_style():
+    spec, errors = sp._parse_spec(_OVAL)
+    assert spec, errors
+    assert spec.setting.moulding_list() == ("crown", "baseboard")
+    assert "mouldings" not in spec.to_dict()["setting"]
+    for bad, msg in ((["cornice"], "not allowed"), (["crown", "crown"], "duplicates"), ("crown", "expected a list")):
+        _s, errs = sp._parse_spec(dict(_OVAL, setting={**_OVAL["setting"], "mouldings": bad}))
+        assert any(msg in e for e in errs), errs
+    _s, errs = sp._parse_spec(dict(SPEC, setting={"kind": "outdoor", "bounds_m": [6, 5, 3], "mouldings": ["crown"]}))
+    assert any("indoor" in e for e in errs), errs
+    none, _ = sp._parse_spec(dict(_OVAL, setting={**_OVAL["setting"], "mouldings": []}))
+    assert none.setting.moulding_list() == () and none.to_dict()["setting"]["mouldings"] == []
+    assert sp.moulding_commands(none, []) == []
+
+
+def test_moulding_commands_gap_at_doors_only_where_heights_cross():
+    import json as _json
+
+    data = dict(_OVAL, setting={**_OVAL["setting"], "mouldings": ["crown", "chair_rail", "baseboard"]})
+    spec, _ = sp._parse_spec(data)
+    pls = sp.parse_placements(sp._handle_solve_layout({"spec": data})["placements"])
+    (cmd,) = sp.moulding_commands(spec, pls)
+    code = cmd["params"]["code"]
+    jobs = {j["kind"]: j for j in _json.loads(code.split("jobs = json.loads(")[1].split(")\n")[0][1:-1])}
+    assert [c for _p, c in jobs["crown"]["paths"]] == [True]  # nothing reaches the crown
+    assert len(jobs["baseboard"]["paths"]) == 2 and not any(c for _p, c in jobs["baseboard"]["paths"])  # 2 doors
+    assert len(jobs["chair_rail"]["paths"]) == 5  # 2 doors + 3 windows (sill under the rail top)
+    assert jobs["crown"]["width"] > 0.1  # a 3.6 m room: heavier crown
+    for x, y in jobs["baseboard"]["paths"][0][0]:
+        assert (x / 5) ** 2 + (y / 3.5) ** 2 < 1.0  # inside the wall face
+
+
+@pytest.mark.blender
+def test_live_classic_oval_mouldings(private_blender, mem, tmp_path):
+    from ai_db_scene.blender_client import BlenderClient
+
+    data = dict(_OVAL, setting={**_OVAL["setting"], "mouldings": ["crown", "chair_rail", "baseboard"]})
+    res = sp._handle_build_scene({"spec": data, "clear": True, "snapshot": False, "judge": True,
+                                  "render_path": str(tmp_path / "oval.png")})
+    assert not res["failed_commands"], res["failed_commands"]
+    got = BlenderClient().run_code(
+        "import bpy\nresult = {}\nfor o in bpy.data.objects:\n    k = o.get('moulding')\n"
+        "    if k:\n        result.setdefault(k, []).append(len(o.data.polygons))")
+    assert len(got["crown"]) == 1 and len(got["baseboard"]) == 2 and len(got["chair_rail"]) == 5, got
+    assert all(n > 20 for faces in got.values() for n in faces), got

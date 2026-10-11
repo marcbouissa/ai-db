@@ -165,6 +165,161 @@ def _room_commands(spec: SceneSpec, placements: list[Placement] | None = None) -
         **({"points": [list(p) for p in spec.setting.points]} if shp == "polygon" else {"size": [w, d]})}}]
 
 
+#: setting.mouldings -> (addon profile, projection m, height m, bottom z: "floor" | "rail" | "crown")
+_MOULDING_PROFILES: dict[str, tuple[str, float, float, str]] = {
+    "crown": ("crown_classic", 0.10, 0.12, "crown"),
+    "chair_rail": ("chair_rail", 0.03, 0.08, "rail"),
+    "baseboard": ("baseboard_classic", 0.02, 0.15, "floor"),
+}
+_MOULDING_GAP_M = 0.0015  # off the wall and floor, as the addon's trim: never coplanar
+_CHAIR_RAIL_Z_M = 0.9
+_MOULDING_CLEAR_M = 0.03  # beyond each side of an opening the moulding stops for
+_ROOM_ELLIPSE_SEGMENTS = 64  # room_shell's default: the moulding follows the same facets
+
+
+def _inset(pts: list[list[float]], d: float) -> list[list[float]]:
+    """Mitre offset of a CCW polygon by d towards its inside."""
+    import math
+
+    n, out = len(pts), []
+    for i in range(n):
+        (x0, y0), (x1, y1), (x2, y2) = pts[i - 1], pts[i], pts[(i + 1) % n]
+        l0, l1 = math.hypot(x1 - x0, y1 - y0) or 1.0, math.hypot(x2 - x1, y2 - y1) or 1.0
+        n0, n1 = (-(y1 - y0) / l0, (x1 - x0) / l0), (-(y2 - y1) / l1, (x2 - x1) / l1)  # inward (left)
+        den = max(0.2, 1 + n0[0] * n1[0] + n0[1] * n1[1])
+        out.append([x1 + d * (n0[0] + n1[0]) / den, y1 + d * (n0[1] + n1[1]) / den])
+    return out
+
+
+def _outline_pieces(pts: list[list[float]], gaps: list[tuple[float, float]]) -> list[tuple[list[list[float]], bool]]:
+    """The closed outline without the arc-length intervals ``gaps`` (s0, s1; may wrap):
+    [(points, closed)]: the whole loop when nothing is cut, else open runs between the gaps."""
+    import math
+
+    n = len(pts)
+    cum = [0.0]
+    for i in range(n):
+        cum.append(cum[-1] + math.dist(pts[i], pts[(i + 1) % n]))
+    total = cum[-1]
+    if not gaps:
+        return [(pts, True)]
+
+    def at(s: float) -> list[float]:
+        s %= total
+        i = max(k for k in range(n) if cum[k] <= s + 1e-12)
+        t = (s - cum[i]) / max(cum[i + 1] - cum[i], 1e-12)
+        a, b = pts[i], pts[(i + 1) % n]
+        return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]
+
+    cut = sorted(((g0 % total, (g0 % total) + (g1 - g0)) for g0, g1 in gaps), key=lambda g: g[0])
+    merged: list[list[float]] = []
+    for g0, g1 in cut:
+        if merged and g0 <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], g1)
+        else:
+            merged.append([g0, g1])
+    if merged[-1][1] - merged[0][0] >= total:
+        return []
+    pieces = []
+    for k, (_g0, g1) in enumerate(merged):
+        nxt = merged[(k + 1) % len(merged)][0] + (total if k == len(merged) - 1 else 0.0)
+        if nxt - g1 < 0.05:
+            continue
+        run = [at(g1)] + [pts[j % n] for j in range(n * 2) if g1 < cum[j % n] + total * (j // n) < nxt] + [at(nxt)]
+        pieces.append((run, False))
+    return pieces
+
+
+def _arc_position(pts: list[list[float]], q: list[float]) -> float:
+    """Arc length along the outline of the point nearest to q."""
+    import math
+
+    best, s, pos = math.inf, 0.0, 0.0
+    for i in range(len(pts)):
+        a, b = pts[i], pts[(i + 1) % len(pts)]
+        ab = (b[0] - a[0], b[1] - a[1])
+        ln = math.hypot(*ab) or 1e-12
+        u = max(0.0, min(1.0, ((q[0] - a[0]) * ab[0] + (q[1] - a[1]) * ab[1]) / (ln * ln)))
+        dd = math.dist(q, (a[0] + u * ab[0], a[1] + u * ab[1]))
+        if dd < best:
+            best, pos = dd, s + u * ln
+        s += ln
+    return pos
+
+
+#: sweeps each named profile along its paths with the addon's own sweep (shapes._sweep_into, as its
+#: "sweep" shape does for a named profile: projection to the left of the path, so a CCW outline puts
+#: it on the room side). Objects keep world coordinates; untagged, category trim.
+_MOULDING = """
+import bpy, bmesh, json, sys
+from mathutils import Vector
+jobs = json.loads({payload!r})
+shp = next(m for n, m in sys.modules.items() if n.endswith(".shapes") and hasattr(m, "_sweep_into") and hasattr(m, "_profile_pts"))
+mat = bpy.data.materials.get("ai_db_moulding")
+if mat is None:
+    mat = bpy.data.materials.new("ai_db_moulding")
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    if bsdf:
+        bsdf.inputs["Base Color"].default_value = (0.92, 0.9, 0.86, 1.0)
+        bsdf.inputs["Roughness"].default_value = 0.45
+    mat.diffuse_color = (0.92, 0.9, 0.86, 1.0)
+made = []
+for job in jobs:
+    prof = [(y, -x) for x, y in shp._profile_pts(job["profile"], job["width"], job["height"])]
+    for k, (path, closed) in enumerate(job["paths"]):
+        old = bpy.data.objects.get(job["name"] + "_" + str(k))
+        if old is not None:
+            bpy.data.objects.remove(old, do_unlink=True)
+        bm = bmesh.new()
+        shp._sweep_into(bm, [Vector((x, y, job["z"])) for x, y in path], prof, closed)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        me = bpy.data.meshes.new(job["name"] + "_" + str(k))
+        bm.to_mesh(me)
+        bm.free()
+        me.materials.append(mat)
+        obj = bpy.data.objects.new(me.name, me)
+        bpy.context.scene.collection.objects.link(obj)
+        obj["category"] = "trim"
+        obj["moulding"] = job["kind"]
+        made.append(obj.name)
+result = {{"mouldings": made}}
+"""
+
+
+def moulding_commands(spec: SceneSpec, placements: list[Placement]) -> list[dict[str, Any]]:
+    """run_code sweeping setting.mouldings (or the style's) along the room's inner outline, 1.5 mm
+    inside the walls, stopping at every opening whose height range it crosses (doors cut the
+    baseboard and chair rail, windows the chair rail when their sill is low)."""
+    kinds = spec.setting.moulding_list()
+    if not kinds or spec.setting.kind != "indoor":
+        return []
+    off = frame_offset(spec)
+    h = spec.setting.bounds_m[2]
+    outline = _inset(footprint(spec, off, _ROOM_ELLIPSE_SEGMENTS), _MOULDING_GAP_M)
+    opens = _openings(spec, placements)
+    scale = min(max(h / 2.8, 1.0), 2.0)  # taller rooms, heavier crown
+    jobs = []
+    for kind in kinds:
+        profile, width, height, where = _MOULDING_PROFILES[kind]
+        if kind == "crown":
+            width, height = width * scale, height * scale
+        z = {"floor": _MOULDING_GAP_M, "rail": _CHAIR_RAIL_Z_M - height / 2,
+             "crown": h - height - _MOULDING_GAP_M}[where]
+        gaps = []
+        for op in opens:
+            if op["sill"] < z + height and op["sill"] + op["height"] > z:
+                s = _arc_position(outline, op["at"])
+                half = op["width"] / 2 + _MOULDING_CLEAR_M
+                gaps.append((s - half, s + half))
+        pieces = _outline_pieces(outline, gaps)
+        if pieces:
+            jobs.append({"kind": kind, "name": f"Moulding_{kind}", "profile": profile, "width": round(width, 4),
+                         "height": round(height, 4), "z": round(z, 4),
+                         "paths": [[[[round(x, 4), round(y, 4)] for x, y in pts], closed] for pts, closed in pieces]})
+    return [{"type": "run_code", "params": {"code": _MOULDING.format(payload=json.dumps(jobs))}}] if jobs else []
+
+
 def _interior_wall_commands(spec: SceneSpec) -> list[dict[str, Any]]:
     """Multi-room buildings: a wall slab on every room edge inside the outer shell (shared with
     another room or facing empty space), with a door gap at each door (layout.room_doors) and a
@@ -456,6 +611,7 @@ def build_layout_commands(
     details = {o.id: o.detail for o in spec.objects}
     cmds = _room_commands(spec, placements) + _interior_wall_commands(spec)
     names = [c["params"].get("name", "room_shell") for c in cmds if c["type"] != "apply_material"]
+    cmds += moulding_commands(spec, placements)
     if placements:
         reserve = [pl.id for pl in placements] + [
             a["asset_name"] for pl in placements
