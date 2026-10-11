@@ -26,8 +26,23 @@ import re
 import time
 from typing import Any
 
-RECIPE_SHAPES = frozenset({"box", "cylinder", "sphere", "tapered_cylinder"})
-_PART_KEYS = frozenset({"id", "shape", "size", "at", "material", "rotation_deg", "radius", "radius_top"})
+RECIPE_SHAPES = frozenset({"box", "cylinder", "sphere", "tapered_cylinder", "rounded_slab", "cushion", "rolled_arm",
+                           "tufted_panel", "turned_leg", "cabriole_leg", "square_tapered_leg", "raised_panel", "skirt"})
+_PART_KEYS = frozenset({"id", "shape", "size", "at", "material", "rotation_deg", "radius", "radius_top",
+                        "bevel", "bevel_segments"})
+#: the addon's soft-goods / furniture shapes and their own params (``size`` still sets the exact
+#: bbox, so the connectivity and unit-box checks hold); see the realistic-modeling skill
+SOFT_SHAPES: dict[str, frozenset[str]] = {
+    "rounded_slab": frozenset({"corner_radius", "segments"}),
+    "cushion": frozenset({"bulge", "corner_radius", "crown", "edge", "piping", "piping_radius", "segments"}),
+    "rolled_arm": frozenset({"roll_radius", "segments"}),
+    "tufted_panel": frozenset({"button_radius", "buttons", "depth_button", "margin", "puff", "tuft_pitch"}),
+    "turned_leg": frozenset({"style", "segments"}),
+    "cabriole_leg": frozenset({"foot", "knee_out", "segments"}),
+    "square_tapered_leg": frozenset({"inner_only", "spade", "taper"}),
+    "raised_panel": frozenset({"border", "field_depth", "inner_bead", "mode", "moulding", "profile"}),
+    "skirt": frozenset({"corner_radius", "pleat_count", "pleat_depth", "seed", "thickness"}),
+}
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _PART_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 RECIPE_MAX_PARTS = 300
@@ -119,9 +134,14 @@ def recipe_errors(parts: Any) -> list[str]:
         if not isinstance(p, dict):
             errors.append(f"{where}: expected an object")
             continue
-        unknown = set(p) - _PART_KEYS
+        own = SOFT_SHAPES.get(str(p.get("shape")), frozenset())
+        unknown = set(p) - _PART_KEYS - own
         if unknown:
-            errors.append(f"{where}: unknown keys {sorted(unknown)}; allowed {sorted(_PART_KEYS)}")
+            errors.append(f"{where}: unknown keys {sorted(unknown)}; allowed {sorted(_PART_KEYS | own)}")
+        bad = [k for k in own & set(p) if not isinstance(p[k], (int, float, bool, str)) or
+               (isinstance(p[k], str) and len(p[k]) > 32)]
+        if bad:
+            errors.append(f"{where}: {sorted(bad)} must be a number, true/false or a short name")
         pid = p.get("id")
         if not isinstance(pid, str) or not _PART_ID.match(pid):
             errors.append(f"{where}.id: expected a short id [A-Za-z0-9_.-], got {pid!r}")

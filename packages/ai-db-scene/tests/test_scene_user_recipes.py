@@ -150,3 +150,15 @@ def test_soften_edges_rounds_boxes_in_real_metres():
     assert shelf["bevel"] * max(dims) == pytest.approx(0.25 * 0.008)  # thin part: 1/4 of 8 mm
     assert "bevel" not in pole and own["bevel"] == 0.1
     assert soften_edges(parts, dims, radius_m=0) == parts
+
+
+def test_soft_shapes_are_allowed_with_their_own_params():
+    from ai_db_scene.user_recipes import recipe_errors
+
+    parts = [{"id": "base", "shape": "rounded_slab", "size": [1.0, 1.0, 0.4], "at": [0, 0, 0], "corner_radius": 0.05,
+              "material": "fabric:linen"},
+             {"id": "seat", "shape": "cushion", "size": [0.9, 0.9, 0.15], "at": [0, 0, 0.4], "crown": 0.02,
+              "piping": True, "material": "fabric:linen"}]
+    assert recipe_errors(parts) == []
+    assert any("unknown keys" in e for e in recipe_errors([{**parts[0], "crown": 0.1}]))  # not a slab param
+    assert any("short name" in e for e in recipe_errors([{**parts[1], "crown": [1, 2]}]))

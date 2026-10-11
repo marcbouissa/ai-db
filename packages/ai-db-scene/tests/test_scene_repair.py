@@ -271,3 +271,29 @@ def test_seeded_recipe_variants_stay_connected_and_deterministic():
             assert recipe_spec(cat, "x", dims, seed=seed) == spec  # same seed, same parts
             seen.add(repr(parts))
         assert len(seen) >= 3, cat
+
+
+@pytest.mark.blender
+def test_live_every_bevelled_recipe_and_soft_shapes_build_exact(private_blender):
+    """Rounded edges (soften_edges) and soft-goods shapes keep each asset at its exact bbox."""
+    from ai_db_scene.blender_client import BlenderClient
+    from ai_db_scene.priors import load_priors
+    from ai_db_scene.recipes import recipe_categories, recipe_spec, soften_edges
+
+    c = BlenderClient(port=private_blender, timeout=120)
+    priors = load_priors()
+    for cat in recipe_categories():
+        dims = priors[cat].typical_m if cat in priors else (1.0, 1.0, 1.0)
+        c.request("build_asset", {"spec": recipe_spec(cat, f"b_{cat}", dims)})
+        got = c.run_code(_BBOX.format(name=f"b_{cat}"))
+        assert got["size"] == pytest.approx(list(dims), abs=3e-3), cat
+    soft = [{"id": "base", "shape": "rounded_slab", "size": [1.0, 1.0, 0.45], "at": [0, 0, 0], "corner_radius": 0.05,
+             "material": "fabric:linen"},
+            {"id": "seat", "shape": "cushion", "size": [0.96, 0.96, 0.2], "at": [0, 0, 0.45], "crown": 0.02,
+             "material": "fabric:linen"},
+            {"id": "back", "shape": "tufted_panel", "size": [1.0, 0.2, 0.35], "at": [0, 0.4, 0.65],
+             "material": "velvet"}]
+    dims = (0.9, 0.85, 1.0)
+    c.request("build_asset", {"spec": {"asset": "soft", "bbox_m": list(dims), "parts": soften_edges(soft, dims)}})
+    got = c.run_code(_BBOX.format(name="soft"))
+    assert got["size"] == pytest.approx(list(dims), abs=3e-3) and got["parts"] >= 3
