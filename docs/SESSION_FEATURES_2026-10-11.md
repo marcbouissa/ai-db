@@ -81,6 +81,8 @@ are uncommitted (mixed with the owner's own work there).
 | Rounded edges on every recipe box (~6 mm, real metres) | [new] |
 | Seeded recipe variants | [new] |
 | Warehouse set with real structure: pallet rack, roller conveyor, forklift, EUR pallet, slatted crate, safety barrier | [new] |
+| Office chair (five-star base, casters, cushions, armrests), toilet (bowl, seat, cistern), hollow bathtub (`shell` op) | [new] |
+| Kitchen and bath: shaker cabinet run with marble top, cooker (grates, knobs, windowed oven), vanity with hollow basin and mixer | [new] |
 | Generated furniture varies per scene and follows the style (seed + preset) | [new] |
 | Trees grown from a branching skeleton; leaf-card foliage on trees, bushes, hedges, plants | [new] (pine, birch and palm types prototyped, not committed) |
 | Material vocabulary incl. `concrete`, `stone`, `foliage`, `plastic`, `paint`, `rubber`, `pbr:<preset>` wear | [new] |
@@ -126,7 +128,7 @@ are uncommitted (mixed with the owner's own work there).
 | Handler / module | Status | Used for |
 |---|---|---|
 | `build_asset` (parts) | [used] | every recipe |
-| `build_asset` shape types | [used] | box with `bevel`, cylinder, tapered_cylinder, sphere, rounded_slab, cushion, tufted_panel |
+| `build_asset` shape types and ops | [used] | box with `bevel`, cylinder, tapered_cylinder, sphere, rounded_slab, cushion, tufted_panel, raised_panel; `shell` op for hollow tubs and basins |
 | `generate_asset` families with `seed` and `preset` | [used] | sofa, armchair, dining_chair, table, desk, bookshelf |
 | `apply_material` and the procedural library (`materials.py`) | [changed] | **new kinds** concrete, stone, foliage, plastic, paint, rubber; micro-roughness on `color` |
 | `room_shell` (openings, floor, ceiling) | [used] | rooms; ceiling now on |
