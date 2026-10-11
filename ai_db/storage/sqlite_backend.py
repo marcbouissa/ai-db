@@ -50,7 +50,7 @@ from ai_db.storage.models import (
     SyntaxErrorRecord,
 )
 
-SCHEMA_VERSION = "12"  # 12: symbol_refs stores seq/await_kind/guard/receiver
+SCHEMA_VERSION = "13"  # 13: module_summaries dropped; re-parse with the G1/G5 naming and query fixes
 
 # Process-wide write mutex (TODO 13.6).
 #
@@ -443,14 +443,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_semantic_cache_hash ON semantic_cache(file_hash)")
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS module_summaries (
-                filepath TEXT PRIMARY KEY,
-                sha256 TEXT NOT NULL,
-                summary TEXT NOT NULL,
-                updated REAL NOT NULL
-            )
-        """)
+        cur.execute("DROP TABLE IF EXISTS module_summaries")  # never written or read (K2)
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS analysis_refs (
@@ -640,11 +633,7 @@ class SQLiteBackend(StorageBackend, VectorCapable):
 
     def status(self) -> dict[str, Any]:
         self._check_closed()
-        cur = self.conn.cursor()
-        counts = {}
-        for tbl in ["files", "chunks", "symbols", "syntax_errors", "skills", "contexts"]:
-            cur.execute(f"SELECT COUNT(*) as c FROM {tbl}")
-            counts[tbl] = cur.fetchone()["c"]
+        counts = self.get_table_counts()
 
         size_bytes = os.path.getsize(self.db_path) if self.db_path != ":memory:" and os.path.exists(self.db_path) else 0
 
@@ -2338,7 +2327,3 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         ]
         scored.sort(key=lambda d: d["distance"])
         return scored[:top_k]
-
-    # =========================================================================
-    # Analysis References
-    # =========================================================================
