@@ -9,6 +9,7 @@ colour, e.g. ``wood:walnut``, ``fabric:linen:#6b7f99``, ``metal:brushed``, ``pla
 from __future__ import annotations
 
 import re
+from typing import TypedDict
 
 #: kind -> variants ("" = the kind takes no variant). Keep in sync with the addon.
 MATERIAL_KINDS: dict[str, tuple[str, ...]] = {
@@ -56,6 +57,63 @@ CATEGORY_MATERIALS: dict[str, str] = {
 DEFAULT_MATERIAL = "plaster"
 FLOOR_MATERIALS = {"indoor": "wood:oak", "outdoor": "color:#6f7d5a", "tabletop": "wood:walnut"}
 WALL_MATERIAL = "plaster"
+
+#: ``setting.style`` -> palette: ``floor``/``wall`` for indoor rooms, ``categories`` per-category
+#: overrides. Explicit spec materials (objects[].material, floor_material, wall_material) win.
+class StylePalette(TypedDict):
+    floor: str
+    wall: str
+    categories: dict[str, str]
+
+
+STYLE_PALETTES: dict[str, StylePalette] = {
+    "modern": {"floor": "wood:oak", "wall": "plaster:#f2f2f0", "categories": {
+        "sofa": "fabric:weave:#5a5f66", "armchair": "fabric:weave:#5a5f66", "coffee_table": "glass:tinted",
+        "side_table": "metal:chrome", "dining_table": "wood:walnut", "dining_chair": "metal:brushed",
+        "chair": "metal:brushed", "bookshelf": "metal:brushed", "tv_stand": "color:#1c1c1c",
+        "floor_lamp": "chrome", "table_lamp": "chrome", "pendant_lamp": "chrome", "rug": "fabric:weave:#8c8c8c"}},
+    "scandinavian": {"floor": "wood:pine", "wall": "plaster:#f4f1ea", "categories": {
+        "sofa": "fabric:linen:#d9d4c7", "armchair": "fabric:linen:#c8bfae", "bed": "fabric:linen:#e8e4da",
+        "coffee_table": "wood:oak", "side_table": "wood:oak", "dining_table": "wood:oak", "chair": "wood:oak",
+        "dining_chair": "wood:oak", "bookshelf": "wood:oak", "tv_stand": "wood:oak", "nightstand": "wood:oak",
+        "floor_lamp": "color:#f0f0f0", "table_lamp": "ceramic", "pendant_lamp": "color:#f0f0f0",
+        "rug": "fabric:weave:#e6e1d6"}},
+    "industrial": {"floor": "color:#6e6e6a", "wall": "plaster:#8f8a84", "categories": {
+        "sofa": "leather", "armchair": "leather", "coffee_table": "wood:dark", "side_table": "metal:steel",
+        "dining_table": "wood:dark", "chair": "metal:steel", "dining_chair": "metal:steel", "stool": "metal:steel",
+        "bookshelf": "metal:steel", "tv_stand": "metal:steel", "desk": "wood:dark",
+        "floor_lamp": "metal:steel", "table_lamp": "metal:steel", "pendant_lamp": "metal:steel",
+        "rug": "fabric:weave:#5b5048"}},
+    "rustic": {"floor": "wood:dark", "wall": "plaster:#e8dcc4", "categories": {
+        "sofa": "fabric:canvas", "armchair": "fabric:canvas", "coffee_table": "wood:pine", "side_table": "wood:pine",
+        "dining_table": "wood:pine", "chair": "wood:pine", "dining_chair": "wood:pine", "bookshelf": "wood:pine",
+        "tv_stand": "wood:pine", "bed": "fabric:weave:#a08060", "floor_lamp": "metal:copper",
+        "table_lamp": "metal:copper", "pendant_lamp": "metal:copper", "rug": "fabric:weave:#8a5a3c"}},
+    "classic": {"floor": "wood:mahogany", "wall": "plaster:#efe6d2", "categories": {
+        "sofa": "velvet", "armchair": "velvet", "coffee_table": "wood:mahogany", "side_table": "wood:mahogany",
+        "dining_table": "wood:mahogany", "chair": "wood:mahogany", "dining_chair": "wood:mahogany",
+        "bookshelf": "wood:mahogany", "desk": "wood:mahogany", "fireplace": "marble:carrara",
+        "floor_lamp": "brass", "table_lamp": "brass", "pendant_lamp": "brass", "rug": "fabric:weave:#7a2e2e"}},
+}
+
+
+def style_error(value: object) -> str | None:
+    """Why ``value`` is not a known ``setting.style``, or None."""
+    if value in STYLE_PALETTES:
+        return None
+    return f"unknown style {value!r}; allowed: {sorted(STYLE_PALETTES)}"
+
+
+def style_material(style: str | None, key: str) -> str | None:
+    """The style's material for a category, or for ``floor`` / ``wall``; None = no override."""
+    palette = STYLE_PALETTES.get(style or "")
+    if not palette:
+        return None
+    if key == "floor":
+        return palette["floor"]
+    if key == "wall":
+        return palette["wall"]
+    return palette["categories"].get(key)
 
 
 def material_vocabulary() -> list[str]:

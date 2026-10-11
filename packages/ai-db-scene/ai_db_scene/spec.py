@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ai_db_scene.constants import LAYOUT_GRID_GAP_M, LAYOUT_MAX_BOUND_M, LAYOUT_MAX_COUNT
-from ai_db_scene.materials import material_error, material_vocabulary
+from ai_db_scene.materials import STYLE_PALETTES, material_error, material_vocabulary, style_error
 from ai_db_scene.priors import SUPPORTS, categories
 from ai_db_scene.shapes import polygon_wall_names
 
@@ -125,7 +125,8 @@ def spec_schema() -> dict[str, Any]:
                         "maxItems": 3,
                         "description": "[x width, y depth, z height] in meters",
                     },
-                    "style": {"type": "string"},
+                    "style": {"enum": sorted(STYLE_PALETTES),
+                              "description": "material palette (floor, walls, furniture); explicit materials win"},
                     "shape": {"enum": list(SHAPES), "description": "room footprint inside bounds_m x/y; default rect"},
                     "floor_material": {"type": "string", "description": "floor surface, e.g. wood:oak, marble:carrara (see objects.material)"},
                     "wall_material": {"type": "string", "description": "wall surface, e.g. plaster:#e8e0d0 (see objects.material)"},
@@ -251,8 +252,8 @@ def _parse_setting(raw: Any, errors: list[str]) -> Setting | None:
         if not bad:
             bounds = (float(b[0]), float(b[1]), float(b[2]))
     style = raw.get("style")
-    if style is not None and not isinstance(style, str):
-        errors.append(f"setting.style: expected string, got {_typename(style)}")
+    if style is not None and style_error(style):
+        errors.append(f"setting.style: {style_error(style)}")
     shape = raw.get("shape", "rect")
     if shape not in SHAPES:
         errors.append(f"setting.shape: {shape!r} is not allowed; allowed values: {list(SHAPES)}")

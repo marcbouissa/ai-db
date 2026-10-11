@@ -28,7 +28,13 @@ from ai_db_scene.constants import (
     SCENE_SUN_ENERGY,
 )
 from ai_db_scene.layout import LayoutError, Placement, solve_layout
-from ai_db_scene.materials import FLOOR_MATERIALS, WALL_MATERIAL, material_for
+from ai_db_scene.materials import (
+    FLOOR_MATERIALS,
+    STYLE_PALETTES,
+    WALL_MATERIAL,
+    material_for,
+    style_material,
+)
 from ai_db_scene.models import RUN_OUTCOMES, RunRecord
 from ai_db_scene.priors import load_priors
 from ai_db_scene.recipes import has_recipe, recipe_spec
@@ -348,7 +354,8 @@ def build_layout_commands(
 
     priors = load_priors()
     heroes = {o.id for o in spec.objects if o.hero}
-    materials = {o.id: o.material for o in spec.objects}
+    # the style's palette counts as a choice: it wins over generator/category defaults
+    materials = {o.id: o.material or style_material(spec.setting.style, o.category) for o in spec.objects}
     details = {o.id: o.detail for o in spec.objects}
     cmds = _room_commands(spec, placements)
     names = [c["params"].get("name", "room_shell") for c in cmds]
@@ -435,10 +442,11 @@ def build_layout_commands(
         cmds.append({"type": "run_code", "params": {"code": _RESKIN.format(payload=json.dumps(reskin))}})
     if spec.setting.kind != "single_asset":
         st = spec.setting
-        floor = st.floor_material or FLOOR_MATERIALS.get(st.kind, "plaster")
+        indoor_style = st.style if st.kind == "indoor" else None  # outdoor ground stays ground
+        floor = st.floor_material or style_material(indoor_style, "floor") or FLOOR_MATERIALS.get(st.kind, "plaster")
         surfaces = [("floor" if st.kind == "outdoor" and st.shape == "rect" else "Room_Floor", floor)]
         if st.kind == "indoor":
-            surfaces.append(("Room_Walls", st.wall_material or WALL_MATERIAL))
+            surfaces.append(("Room_Walls", st.wall_material or style_material(st.style, "wall") or WALL_MATERIAL))
         for obj, mat in surfaces:
             cmds.append({"type": "apply_material", "params": {"name": obj, "material": material_for("", mat)}})
         # anything else of the shell (ceiling, trim) gets the neutral room material
@@ -652,6 +660,7 @@ def _handle_get_scene_spec_schema(args: dict[str, Any]) -> Any:
         "other_categories": sorted(set(priors) - relevant),
         "relations": list(RELATIONS),
         "setting_kinds": list(SETTING_KINDS),
+        "styles": sorted(STYLE_PALETTES),
         "exemplars": exemplars[:_MAX_EXEMPLARS] or [{"brief": "a small reading corner", "spec": _EXAMPLE_SPEC}],
         "next": "submit_scene_spec(spec) to check it, then build_scene(spec)",
     }

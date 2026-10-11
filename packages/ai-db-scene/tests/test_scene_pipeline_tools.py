@@ -94,7 +94,8 @@ def test_build_commands_placeholder_and_mapped():
     # every placeholder gets a category material; room surfaces and a camera are added
     mats = {c["params"]["name"]: c["params"]["material"] for c in cmds if c["type"] == "apply_material"}
     assert "lamp" not in mats  # generated pieces and recipes bring their own materials
-    assert mats["Room_Floor"] == "wood:oak:proj=box" and mats["Room_Walls"] == "plaster:proj=box"
+    # scandinavian style: its palette paints the room
+    assert mats["Room_Floor"] == "wood:pine:proj=box" and mats["Room_Walls"] == "plaster:#f4f1ea:proj=box"
     assert any(c["type"] == "run_code" and "ai_db_room" in c["params"]["code"] for c in cmds)
     cam = cmds[-1]
     assert cam["type"] == "set_camera" and cam["params"]["location"][2] == pytest.approx(1.6)
@@ -110,6 +111,25 @@ def test_build_commands_placeholder_and_mapped():
     one["setting"]["kind"] = "single_asset"
     one["relations"] = []
     assert sp._room_commands(sp._parse_spec(one)[0]) == []
+
+
+def test_style_palette_with_explicit_materials_winning():
+    raw = json.loads(json.dumps(SPEC))
+    raw["setting"]["style"] = "industrial"
+    raw["setting"]["wall_material"] = "plaster:#ffffff"
+    raw["objects"][1]["material"] = "marble:verde"
+    spec, _ = sp._parse_spec(raw)
+    pls = sp.parse_placements(sp._handle_solve_layout({"spec": raw})["placements"])
+    cmds, _ = sp.build_layout_commands(spec, pls, geometry="boxes")
+    mats = {c["params"]["name"]: c["params"]["material"] for c in cmds if c["type"] == "apply_material"}
+    assert mats["Room_Floor"] == "color:#6e6e6a" and mats["Room_Walls"] == "plaster:#ffffff:proj=box"
+    assert mats["sofa"] == "leather:proj=box" and mats["table"] == "marble:verde:proj=box"
+    assert mats["lamp"] == "metal:steel:proj=box"
+    raw["setting"]["style"] = "bohemian"
+    bad = sp._handle_submit_scene_spec({"spec": raw})
+    assert bad["status"] == "invalid"
+    assert any("unknown style 'bohemian'" in e and "scandinavian" in e for e in bad["errors"])
+    assert "rustic" in sp._handle_get_scene_spec_schema({})["styles"]
 
 
 class FakeClient:
