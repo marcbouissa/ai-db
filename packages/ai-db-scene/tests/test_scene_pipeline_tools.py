@@ -99,8 +99,10 @@ def test_build_commands_placeholder_and_mapped():
     # scandinavian style: its palette paints the room
     assert mats["Room_Floor"] == "wood:pine:proj=box" and mats["Room_Walls"] == "plaster:#f4f1ea:proj=box"
     assert any(c["type"] == "run_code" and "ai_db_room" in c["params"]["code"] for c in cmds)
-    cam = cmds[-1]
-    assert cam["type"] == "set_camera" and cam["params"]["location"][2] == pytest.approx(1.6)
+    cam = cmds[-2]
+    assert cam["type"] == "set_camera" and cam["params"]["location"][2] == pytest.approx(1.4)
+    assert cam["params"]["rotation"][0] == 90.0  # level: verticals stay vertical
+    assert cmds[-1]["type"] == "run_code" and "shift_y" in cmds[-1]["params"]["code"]  # framed by lens shift
     x, y, _ = cam["params"]["location"]  # inside the (centred) room, at a corner
     assert abs(x) < 3 and abs(y) < 2.5 and abs(x) > 1.5 and abs(y) > 1.0
     assert any(c["type"] == "daylight_rig" for c in cmds)
@@ -152,7 +154,7 @@ def test_apply_layout_one_batch(monkeypatch):
     pls = sp._handle_solve_layout({"spec": SPEC})["placements"]
     out = sp._handle_apply_layout({"spec": SPEC, "placements": pls})
     assert out["status"] == "partial" and out["created"][0] == "room_shell"
-    assert out["failed"][0]["type"] == "set_camera" and len(FakeClient.sent) == out["commands"]
+    assert out["failed"][0]["type"] == "run_code" and len(FakeClient.sent) == out["commands"]  # the camera shift
     assert sp._handle_apply_layout({"spec": {}, "placements": []})["status"] == "invalid"
 
 
@@ -512,7 +514,9 @@ def test_camera_spots_stay_inside_curved_and_polygon_rooms():
     spec, _ = sp._parse_spec(oval)
     poses = sp.camera_poses(spec, pls, sp.frame_offset(spec))
     assert len(poses) == 8 and len({p["location"][2] for p in poses}) == 2
-    assert sp.camera_command(spec, pls, sp.frame_offset(spec))["params"] == poses[0]
+    assert sp.camera_command(spec, pls, sp.frame_offset(spec))["params"] == {k: v for k, v in poses[0].items()
+                                                                             if k != "shift_y"}
+    assert all(p["rotation"][0] == 90.0 and abs(p["shift_y"]) <= 0.35 for p in poses)
     fp = sp.footprint(spec, sp.frame_offset(spec))
     assert all(math.isclose((x / 5) ** 2 + (y / 3.5) ** 2, 1) for x, y in fp)
 

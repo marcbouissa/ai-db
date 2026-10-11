@@ -41,7 +41,9 @@ SCENE_FILL_CEILING_GAP_M = 0.05  # below the ceiling plane, so it is inside the 
 SCENE_LAMP_W = {"floor_lamp": 80.0, "table_lamp": 40.0, "pendant_lamp": 100.0, "ceiling_light": 150.0,
                 "wall_sconce": 40.0, "street_lamp": 300.0, "lamp_post_double": 500.0}  # a point light in each lamp object
 SCENE_CAMERA_INSET = 0.12  # interior camera: corner inset as a fraction of the room size
-SCENE_CAMERA_HEIGHT_M = 1.6  # eye height indoors (outdoors: 2.5 m)
+SCENE_CAMERA_HEIGHT_M = 1.4  # indoors (outdoors: 2.5 m); interior photographers shoot from 1.2-1.5 m
+SCENE_CAMERA_LENS_MM = 20.0  # indoors; wider than ~16 mm distorts the corners (outdoors: 24 mm)
+SCENE_CAMERA_MAX_SHIFT = 0.35  # lens shift that frames the subject while the camera stays level
 REPAIR_GROWTH = 1.2  # build_scene: room x/y growth per repair step
 REPAIR_MAX_GROWTH = 1.8  # build_scene: never more than this times the requested size
 BUILD_MAX_REPAIRS = 6  # build_scene: spec edits before giving up
@@ -80,6 +82,7 @@ RECIPE_EDGE_BEVEL_MAX_SHARE = 0.25  # never more than this share of the part's t
 SCENE_CEILING = True        # indoor rooms get a ceiling slab (an open top shows the sky)
 SCENE_PLANK_FLOOR = True    # a wood floor in a rect room is real planks, not one textured sheet
 SCENE_PLANK_TOP_M = 0.001   # plank tops this far above z=0, so they hide the floor slab cleanly
+SCENE_PLANK_GRAIN_SCALE = 2.5  # wood figure scale on planks: the default reads as room-sized swirls
 SCENE_RUG_PILE_DENSITY = 1500.0  # carpet tufts per m2 on rugs; 0 turns the pile off
 
 # --- Blender (addon socket server) ---

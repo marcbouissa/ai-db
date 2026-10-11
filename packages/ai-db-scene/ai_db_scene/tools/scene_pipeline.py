@@ -18,6 +18,8 @@ from ai_db_scene.constants import (
     LAYOUT_DOOR_HEIGHT_M,
     SCENE_CAMERA_HEIGHT_M,
     SCENE_CAMERA_INSET,
+    SCENE_CAMERA_LENS_MM,
+    SCENE_CAMERA_MAX_SHIFT,
     SCENE_CEILING,
     SCENE_EXPOSURE_INDOOR,
     SCENE_EXPOSURE_OUTDOOR,
@@ -29,6 +31,7 @@ from ai_db_scene.constants import (
     SCENE_FILL_W_RANGE,
     SCENE_LAMP_W,
     SCENE_PLANK_FLOOR,
+    SCENE_PLANK_GRAIN_SCALE,
     SCENE_PLANK_TOP_M,
     SCENE_REF_FLOOR_M2,
     SCENE_RUG_PILE_DENSITY,
@@ -750,6 +753,9 @@ def build_layout_commands(
         cmds.append(_wear_command(wear))
     cmds += lighting_commands(spec, placements, off)
     cmds.append(camera_command(spec, placements, off))
+    shift_cmd = camera_shift_command(spec, placements, off)
+    if shift_cmd:
+        cmds.append(shift_cmd)
     return cmds, names
 
 
@@ -900,9 +906,14 @@ def camera_poses(spec: SceneSpec, placements: list[Placement], off: tuple[float,
         for cx, cy in spots:
             dx, dy, dz = fx - cx, fy - cy, 0.8 - height
             yaw = math.degrees(math.atan2(-dx, dy))  # Euler Z: [90, 0, 0] looks along +Y
-            pitch = 90.0 + math.degrees(math.atan2(dz, math.hypot(dx, dy)))
-            poses.append({"location": _shift((cx, cy, height), off), "rotation": [round(pitch, 2), 0.0, round(yaw, 2)],
-                          "name": "ai_db_camera", "lens": 16 if indoor else 24})
+            # Level camera (pitch 90): verticals stay vertical (two-point perspective, as interior
+            # photographers shoot); a vertical lens shift brings the subject into frame instead of
+            # tilting, which made walls lean in. Blender's shift is a fraction of the sensor width.
+            lens = SCENE_CAMERA_LENS_MM if indoor else 24.0
+            shift = dz / max(math.hypot(dx, dy), 0.5) * lens / 36.0
+            shift = max(-SCENE_CAMERA_MAX_SHIFT, min(SCENE_CAMERA_MAX_SHIFT, shift))
+            poses.append({"location": _shift((cx, cy, height), off), "rotation": [90.0, 0.0, round(yaw, 2)],
+                          "name": "ai_db_camera", "lens": lens, "shift_y": round(shift, 4)})
     return poses
 
 
@@ -914,7 +925,19 @@ def camera_command(spec: SceneSpec, placements: list[Placement], off: tuple[floa
         # small subjects: a close three-quarter view that frames them, not a room corner
         direction = [0.8, -1.0, 0.5] if spec.setting.kind == "single_asset" else [0.6, -1.0, 0.7]
         return {"type": "frame_camera", "params": {"direction": direction, "margin": 1.2, "lens": 50}}
-    return {"type": "set_camera", "params": camera_poses(spec, placements, off)[0]}
+    pose = camera_poses(spec, placements, off)[0]
+    return {"type": "set_camera", "params": {k: v for k, v in pose.items() if k != "shift_y"}}
+
+
+def camera_shift_command(spec: SceneSpec, placements: list[Placement], off: tuple[float, float, float]) -> \
+        dict[str, Any] | None:
+    """The lens shift of the chosen pose (set_camera has no shift parameter)."""
+    if spec.setting.kind in ("single_asset", "tabletop") or not placements:
+        return None
+    shift = camera_poses(spec, placements, off)[0]["shift_y"]
+    return {"type": "run_code", "params": {"code": (
+        "import bpy\ncam = bpy.data.objects.get('ai_db_camera')\n"
+        f"if cam is not None:\n    cam.data.shift_y = {shift!r}\nresult = {{'shift_y': {shift!r}}}")}}
 
 
 #: is the scene camera inside the room, and which targets does it see (in frame, not hidden behind
@@ -979,6 +1002,7 @@ def pose(p):
     cam.location = p["location"]
     cam.rotation_euler = [math.radians(a) for a in p["rotation"]]
     cam.data.lens = p["lens"]
+    cam.data.shift_y = p.get("shift_y", 0.0)
 
 if cam is None:
     result = {{"skipped": "no scene camera"}}
@@ -1488,7 +1512,7 @@ def _floor_and_rug_detail(spec: SceneSpec, placements: list[Placement], floor: s
             and not st.rooms and pbr_preset(floor) is None:
         w, d, _ = st.bounds_m
         cmds.append({"type": "wood_plank_floor", "params": {
-            "name": "Room_Planks", "size": [w, d], "material": floor.split(":proj")[0] + ":proj=uv",
+            "name": "Room_Planks", "size": [w, d], "material": floor.split(":proj")[0] + ":proj=uv:scale=" + str(SCENE_PLANK_GRAIN_SCALE),
             "location": [0.0, 0.0, SCENE_PLANK_TOP_M - 0.015], "thickness": 0.015}})
     if SCENE_RUG_PILE_DENSITY > 0:
         cmds += [{"type": "carpet_pile", "params": {"name": pl.id, "density": SCENE_RUG_PILE_DENSITY}}
