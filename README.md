@@ -405,6 +405,9 @@ The 3D scene and video tools live in [`packages/ai-db-scene`](packages/ai-db-sce
 pip install -e packages/ai-db-scene
 ```
 
+End-to-end walkthrough (Blender addon, build/edit/version/export, recipes, skills):
+[docs/SCENE_TUTORIAL.md](docs/SCENE_TUTORIAL.md).
+
 ### MCP Server via Daemon
 
 Connect the MCP stdio server to the daemon to share loaded models:
