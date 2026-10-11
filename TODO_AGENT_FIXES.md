@@ -68,6 +68,7 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   `: "${OPENROUTER_API_KEY_NAIVE:?set it}"` and add `benchmark.sh` to `.gitignore` (not only
   `.git/info/exclude`). **The agent must not print, copy or move the keys.**
 - **Check:** `grep -c 'sk-or-' benchmark.sh` prints `0`.
+- **Skipped 2026-10-11:** user action (rotate the keys); the agent must not touch them.
 
 ### D2. Syncing one project can prune another project's files
 - [x] **Observed:** `SQLiteBackend.get_files_by_prefix` runs
@@ -153,15 +154,19 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 ### E5. Small storage bugs (one commit)
 - [x] `delete_skill(filepath, project, name=None)` deletes from `skills` but not `fts_skills` or
   `skill_vectors` → `search_skills` returns deleted names. Delete from all three.
-- [ ] **(deferred to K7)** `cosine_distance` returns "worst" on a dimension mismatch instead of raising (§0.1).
+- [x] **(deferred to K7)** `cosine_distance` returns "worst" on a dimension mismatch instead of raising (§0.1).
   Raise `AiDbQueryError` with both dimensions. Deferred: `tests/test_phase11.py` pins the
   current behaviour and its only callers are the skill/context vector paths K7 may delete.
+  **Done 2026-10-11 (verified):** landed with K7; `cosine_distance` raises `AiDbStorageError`
+  on mixed dimensions.
 - [x] `get_weak_points` joins `files.id = symbols.file_id`; neither column exists, so it always
   crashes. Nothing calls it. Delete it and the `backend.py` stub that returns empty results;
   the working implementation was `ai_db/storage/state.py:get_telemetry_weak_points` (now `SqliteBackend.get_weak_points`, K3).
-- [ ] **(partly done; rest deferred to K7)** `search_skills_hybrid` keys RRF by `name` only, but `skills` PK is `(name, project)`.
+- [x] **(partly done; rest deferred to K7)** `search_skills_hybrid` keys RRF by `name` only, but `skills` PK is `(name, project)`.
   Key by `(name, project)` (needs `search_skills`/`search_skills_vector` to return the project;
   only worth it if K7 keeps the vector path). `rrf_k` now defaults to `RRF_K` (done).
+  **Done 2026-10-11 (verified):** K7 deleted `search_*_hybrid`; recall providers return
+  `(name, project)` keys.
 - **Check:** one test per bullet.
 
 ---
@@ -479,11 +484,13 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - [ ] `ai_db/scene/storage/sqlite_vec.py` never sets `PRAGMA foreign_keys=ON`, so
   `ON DELETE CASCADE` never fires (also on `INSERT OR REPLACE`). Enable it on connect.
   **Check:** test counts `scene_objects` and `prompt_contexts` rows after delete → 0.
+- **Skipped 2026-10-11:** the code lives in `packages/ai-db-scene/` (K10), which the core-fixes pass may not modify (another agent owns the plugin). Nothing in `ai_db/` to change.
 
 ### I2. Scene prompt search crashes on normal input
 - [ ] `search_scenes_by_prompt` passes raw text to FTS5 `MATCH`; `desk-chair`, `desk:chair`,
   `AND`, `chair OR` raise `OperationalError`. Reuse the core FTS sanitizer (find it with
   `grep -n "def .*fts\|MATCH" ai_db/storage/sqlite_backend.py`). **Check:** parametrized test.
+- **Skipped 2026-10-11:** the code lives in `packages/ai-db-scene/` (K10), which the core-fixes pass may not modify (another agent owns the plugin). Nothing in `ai_db/` to change: the core sanitizer is already public (`ai_db.search.query_builder.expand_terms` + `build_fts`), so the fix is plugin-only.
 
 ### I3. MCP startup imports torch (~1.1 s)
 - [x] `ai_db/video/processors/base.py` loads entry points at import time;
@@ -502,6 +509,7 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - [ ] `scene_tools.get_scene_memory` caches the memory and attaches the Blender capture only if
   Blender answered on the first call. Resolve the client inside `snapshot_scene`. **Check:**
   test: memory created while Blender down, later snapshot works when a fake client is up.
+- **Skipped 2026-10-11:** the code lives in `packages/ai-db-scene/` (K10), which the core-fixes pass may not modify (another agent owns the plugin). Nothing in `ai_db/` to change.
 
 ### I6. Scene storage drift
 - [ ] Default path `~/.ai-db/scene_memory.db` ignores XDG/`AI_DB_PATH`; derive from core's
@@ -510,6 +518,7 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - [ ] `prompt_embeddings` vec0 table (384-dim, banned model name) is never written; the
   `has_vectors ... pass` branch is dead; `fts_query` unused. Delete all three.
 - [ ] `BlenderClient._roundtrip`: monotonic overall deadline + max buffer size (constants).
+- **Skipped 2026-10-11:** the code lives in `packages/ai-db-scene/` (K10), which the core-fixes pass may not modify (another agent owns the plugin). Nothing in `ai_db/` to change (all three bullets).
 
 ---
 
@@ -592,14 +601,17 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   `search_*_hybrid` deleted, `cosine_distance` raises on mixed dimensions (E5 bullet).
   Tests: `tests/test_recall.py`. Still to do: tune `SKILL_W_RECALL` / `SKILL_RECALL_MIN_SIM`
   with the skills eval in hybrid mode (real model).
+  **Skipped 2026-10-11:** tuning needs a real embedding model and the locally installed skills (the eval DBs here run with `embedding: none`); left for a run with the model.
 - [ ] `retrieval.doc_weight` is parsed and validated (`config.py`) but never read; the Ranker
   uses `index.doc_weight`. Remove the `retrieval` copy (and migrate configs that set it).
 - [ ] `QueryEngine.__init__` re-derives `doc_weight`/`rerank_top_n` with `getattr` defaults
   0.5/30 that `VectorDB` then overrides; `Ranker.__init__` repeats the same literal defaults.
   One source: `DEFAULT_DOC_WEIGHT`/`DEFAULT_RERANK_TOP_N`.
-- [ ] Skill/context vectors: embedded on every save (errors swallowed), never read outside
+- [x] Skill/context vectors: embedded on every save (errors swallowed), never read outside
   tests. Wire into `route_skills`/`query_contexts` with an eval showing gain, or delete
   `search_*_hybrid`, `search_*_vector`, `skill_vectors`, the embed calls.
+  **Done 2026-10-11 (verified):** superseded by the first K7 bullet (wired as a built-in
+  recall extension).
 - [ ] `ai_db.chunkers` entry points (markdown/usd/segmentation in `pyproject.toml`) are never
   loaded: `ai_db/ext/markdown.py`, `usd.py`, `segmentation.py` are dead and untested.
 - [ ] Custom linter validators from config never load (`get_linter()` without config);
@@ -648,6 +660,7 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   small-model-generated spec through `get_scene_spec_schema → solve_layout → apply_layout`;
   keep the hand-authored file only as a labelled reference baseline. Fix the stale v1
   docstring ("solver handles rectangular rooms only").
+- **Skipped 2026-10-11:** the code lives in `packages/ai-db-scene/` (K10), which the core-fixes pass may not modify (another agent owns the plugin). Nothing in `ai_db/` to change: the showcase scripts moved to `packages/ai-db-scene/showcase/`.
 
 ---
 
