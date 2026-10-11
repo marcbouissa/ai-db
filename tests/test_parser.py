@@ -297,9 +297,8 @@ class TestParserTier2BoundaryAndCorner:
 
     def test_external_linter_missing_binary(self):
         """Linter gracefully returns None when configured tool is not in PATH."""
-        linter = ExternalLinter(config_validators={
-            ".custom": ["__non_existent_binary_tool_12345__", "{file}"]
-        })
+        linter = ExternalLinter()
+        linter.validators[".custom"] = ["__non_existent_binary_tool_12345__", "{file}"]
         res = linter.validate("test.custom", "some content")
         assert res is None
 

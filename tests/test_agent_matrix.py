@@ -148,8 +148,8 @@ class TestDocWeight:
             new = json.load(fh)
         with open(base, encoding="utf-8") as fh:
             old = json.load(fh)
-        assert new["retrieval"]["doc_weight"] == 0.7
-        assert "doc_weight" not in old["retrieval"], "source config was mutated"
+        assert new["index"]["doc_weight"] == 0.7
+        assert "index" not in old, "source config was mutated"
 
     def test_decimal_weights_produce_distinct_filenames(self, tmp_path):
         base = tmp_path / "c.json"

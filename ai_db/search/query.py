@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-from ai_db.constants import CANDIDATE_POOL
+from ai_db.constants import CANDIDATE_POOL, DEFAULT_DOC_WEIGHT, DEFAULT_RERANK_TOP_N
 from ai_db.search.ranking import Ranker
 from ai_db.search.retriever import LexicalRetriever, Retriever
 from ai_db.utils import get_allowed_projects
@@ -17,14 +17,13 @@ def _display_path(path: str, relative_to: str) -> str:
 
 
 class QueryEngine:
-    def __init__(self, db: Any = None, conn: Any = None):
+    def __init__(self, db: Any = None, conn: Any = None,
+                 doc_weight: float = DEFAULT_DOC_WEIGHT, rerank_top_n: int = DEFAULT_RERANK_TOP_N):
         self.db = db if db is not None else conn
         self.cross_project: dict[str, list[str]] = {}
         # Replaced once by VectorDB according to retrieval.mode.
         self.retriever: Retriever = LexicalRetriever(self.db)
-        cfg = getattr(db, "config", None)
-        doc_weight = getattr(cfg.index, "doc_weight", 0.5) if cfg and hasattr(cfg, "index") else 0.5
-        rerank_top_n = getattr(cfg.rerank, "top_n", 30) if cfg and hasattr(cfg, "rerank") else 30
+        # VectorDB passes index.doc_weight / rerank.top_n (and swaps in a reranker).
         self.ranker = Ranker(self.db, doc_weight=doc_weight, rerank_top_n=rerank_top_n)
 
     def query(

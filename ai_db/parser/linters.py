@@ -1,8 +1,8 @@
 """
 ai_db.parser.linters
 Runs external linter tools on file content and returns (line, col, message) errors.
-Validators are opt-in: each only fires if the CLI tool is found on PATH.
-Custom validators can be added via config.json: { "validators": { ".ts": ["npx","tsc","--noEmit","{file}"] } }
+Validators are opt-in: each only fires if the CLI tool is found on PATH. They cover only
+extensions without a tree-sitter grammar (grammar languages are checked by the parser).
 """
 import ast
 import os
@@ -12,13 +12,11 @@ import subprocess
 import tempfile
 from collections.abc import Collection
 
+from ai_db.constants import LINTER_TIMEOUT_S
 from ai_db.parser.languages import SUPPORTED_LANGUAGES, enabled_language_for, language_for
 
 # Built-in validator registry: ext -> command template (use {file} for the temp filepath)
 BUILTIN_VALIDATORS: dict[str, list[str]] = {
-    ".js":   ["node", "--check", "{file}"],
-    ".ts":   ["npx", "--yes", "tsc", "--noEmit", "--allowJs", "--checkJs",
-               "--target", "ESNext", "--moduleResolution", "node", "{file}"],
     ".sh":   ["bash", "-n", "{file}"],
     ".bash": ["bash", "-n", "{file}"],
     ".yml":  ["python3", "-c",
@@ -55,10 +53,8 @@ def _parse_error_location(output: str) -> tuple[int, int]:
 class ExternalLinter:
     """Validates non-Python source files using external CLI tools."""
 
-    def __init__(self, config_validators: dict[str, list[str]] | None = None):
+    def __init__(self) -> None:
         self.validators: dict[str, list[str]] = dict(BUILTIN_VALIDATORS)
-        if config_validators:
-            self.validators.update(config_validators)
 
     def validate(self, filepath: str, content: str) -> tuple[int, int, str] | None:
         """
@@ -91,7 +87,7 @@ class ExternalLinter:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=15, check=False,
+                timeout=LINTER_TIMEOUT_S, check=False,
             )
             if result.returncode != 0:
                 output = (result.stderr or result.stdout or "").strip()
@@ -124,14 +120,14 @@ def validate_python_syntax(content: str, filepath: str) -> tuple[int, int, str] 
     return None
 
 
-# Module-level singleton — avoids re-reading config on every file
+# Module-level singleton: one validator table for every file
 _linter: ExternalLinter | None = None
 
 
-def get_linter(config_validators: dict[str, list[str]] | None = None) -> ExternalLinter:
+def get_linter() -> ExternalLinter:
     global _linter
     if _linter is None:
-        _linter = ExternalLinter(config_validators)
+        _linter = ExternalLinter()
     return _linter
 
 

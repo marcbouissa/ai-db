@@ -52,7 +52,10 @@ class VectorDB:
         self.indexer = Indexer(db=self.backend)
         self.indexer.set_ignore_patterns(self.config.index.ignore)
         self.indexer.set_languages(self.config.index.languages)
-        self.query_engine = QueryEngine(db=self.backend)
+        # index.doc_weight applies with or without a reranker (it used to be dropped,
+        # 0.5 hardcoded, whenever rerank.provider was 'none').
+        self.query_engine = QueryEngine(db=self.backend, doc_weight=self.config.index.doc_weight,
+                                        rerank_top_n=self.config.rerank.top_n)
         self.skill_router = SkillRouter(db=self.backend, db_path=self.db_path)
         self.analyzer_engine = AnalyzerEngine(db=self.backend, query_engine=self.query_engine)
         self.analyzer_engine.languages = self.config.index.languages

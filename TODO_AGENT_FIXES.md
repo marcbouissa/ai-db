@@ -624,11 +624,22 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   Tests: `tests/test_recall.py`. Still to do: tune `SKILL_W_RECALL` / `SKILL_RECALL_MIN_SIM`
   with the skills eval in hybrid mode (real model).
   **Skipped 2026-10-11:** tuning needs a real embedding model and the locally installed skills (the eval DBs here run with `embedding: none`); left for a run with the model.
-- [ ] `retrieval.doc_weight` is parsed and validated (`config.py`) but never read; the Ranker
+- [x] `retrieval.doc_weight` is parsed and validated (`config.py`) but never read; the Ranker
   uses `index.doc_weight`. Remove the `retrieval` copy (and migrate configs that set it).
-- [ ] `QueryEngine.__init__` re-derives `doc_weight`/`rerank_top_n` with `getattr` defaults
+  **Done 2026-10-11:** a config that still sets it is refused with "Run: ai-db init
+  --migrate"; `migrate` (v1 and v2) drops it (no ranking change: it was never read).
+  `eval/agent_matrix.with_doc_weight` wrote this dead key, so its doc-weight conditions were
+  identical runs; it now writes `index.doc_weight`. **Note for the user:** a live config
+  with `retrieval.doc_weight` (configs migrated from v1 have it) needs `ai-db init --migrate`.
+- [x] `QueryEngine.__init__` re-derives `doc_weight`/`rerank_top_n` with `getattr` defaults
   0.5/30 that `VectorDB` then overrides; `Ranker.__init__` repeats the same literal defaults.
   One source: `DEFAULT_DOC_WEIGHT`/`DEFAULT_RERANK_TOP_N`.
+  **Done 2026-10-11:** both constants in `ai_db/constants.py` (re-exported by `config`);
+  `QueryEngine`/`Ranker` take them as parameter defaults. Bug found on the way: `VectorDB`
+  only overrode the ranker when a reranker was configured, so with `rerank.provider: none`
+  `index.doc_weight` was ignored (0.5 hardcoded, because `QueryEngine` got the backend, which
+  has no `config`); `VectorDB` now passes both values to `QueryEngine`. Tests in
+  `tests/test_config.py`.
 - [x] Skill/context vectors: embedded on every save (errors swallowed), never read outside
   tests. Wire into `route_skills`/`query_contexts` with an eval showing gain, or delete
   `search_*_hybrid`, `search_*_vector`, `skill_vectors`, the embed calls.
@@ -636,10 +647,23 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   recall extension).
 - [ ] `ai_db.chunkers` entry points (markdown/usd/segmentation in `pyproject.toml`) are never
   loaded: `ai_db/ext/markdown.py`, `usd.py`, `segmentation.py` are dead and untested.
-- [ ] Custom linter validators from config never load (`get_linter()` without config);
+  **Skipped 2026-10-11:** needs a decision across both packages. The plugin still imports
+  `ai_db.ext.base` (its segmentation chunker) and `ai_db.ext.markdown` (its
+  `chunkers/example_usage.py`) and registers usd/segmentation under the same unused group,
+  so deleting the core half breaks `packages/ai-db-scene/`, which this pass may not edit.
+  Either wire the group into `chunk_file` or delete both halves together.
+- [x] Custom linter validators from config never load (`get_linter()` without config);
   `.js/.ts` validator entries are dead.
-- [ ] `/templates` daemon endpoint hardcodes banned model names: delete.
+  **Done 2026-10-11:** default applied (delete): the config-validators parameter (the config
+  schema never had the key) and the `.js`/`.ts` entries are gone; timeout is
+  `LINTER_TIMEOUT_S`.
+- [x] `/templates` daemon endpoint hardcodes banned model names: delete.
+  **Done 2026-10-11 (verified):** removed with the H rewrite (`grep templates
+  ai_db/daemon/server.py` is empty).
 - [ ] Root `vectordb.py` (nothing imports it): delete.
+  **Skipped 2026-10-11:** it was deliberately restored in `0dc9923` as a declared root
+  `py-module` (`pyproject.toml`, TODO_NEXT 10.5, `python vectordb.py` contract, listed as a
+  root facade in `TODO_NEXT.md`); deleting it reverses that decision, so the user decides.
 
 ### K8. Docs drift
 - [ ] `ARCHITECTURE.md`: HTTP "removed" claim (§4) vs the daemon (per H decision);

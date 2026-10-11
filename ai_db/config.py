@@ -15,6 +15,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from ai_db.constants import DEFAULT_DOC_WEIGHT, DEFAULT_RERANK_TOP_N
 from ai_db.errors import AiDbConfigError
 from ai_db.parser.languages import SUPPORTED_LANGUAGES, validate_languages
 
@@ -22,10 +23,8 @@ CONFIG_VERSION = 2
 
 RETRIEVAL_MODES = ("lexical", "hybrid")
 
-# v2 defaults. Defined here (next to CONFIG_VERSION) because both `parse_config`
-# fallbacks and `config_template` must agree on them.
-DEFAULT_DOC_WEIGHT = 0.5
-DEFAULT_RERANK_TOP_N = 10
+# v2 defaults. `parse_config` fallbacks, `config_template` and the Ranker must agree on
+# them; the two weights live in constants (the Ranker imports no config).
 DEFAULT_INDEX_IGNORE: list[str] = [".agents/**"]
 
 # provider -> (required option keys, optional option keys)
@@ -88,7 +87,6 @@ class IndexConfig:
 @dataclass(frozen=True)
 class RetrievalConfig:
     mode: str
-    doc_weight: float = DEFAULT_DOC_WEIGHT
 
 
 @dataclass(frozen=True)
@@ -164,7 +162,7 @@ class AppConfig:
         return {
             "version": self.version,
             "storage": {"provider": self.storage.provider, "options": dict(self.storage.options)},
-            "retrieval": {"mode": self.retrieval.mode, "doc_weight": self.retrieval.doc_weight},
+            "retrieval": {"mode": self.retrieval.mode},
             "embedding": {"provider": self.embedding.provider, **self.embedding.options},
             "rerank": {"provider": self.rerank.provider, "top_n": self.rerank.top_n, **self.rerank.options},
             "index": {"doc_weight": self.index.doc_weight, "ignore": self.index.ignore,
@@ -273,13 +271,15 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
     )
 
     retrieval_raw = _require_dict(data["retrieval"], "retrieval")
-    _check_keys(retrieval_raw, frozenset({"mode", "doc_weight"}), "retrieval")
+    if "doc_weight" in retrieval_raw:
+        # Parsed and validated but never read: the Ranker always used index.doc_weight.
+        raise AiDbConfigError(
+            "'retrieval.doc_weight' is no longer accepted (it never had an effect; the "
+            "weight is 'index.doc_weight'). Run: ai-db init --migrate")
+    _check_keys(retrieval_raw, frozenset({"mode"}), "retrieval")
     mode = os.environ.get("AI_DB_RETRIEVAL_MODE") or retrieval_raw.get("mode")
     if mode not in RETRIEVAL_MODES:
         raise AiDbConfigError(f"'retrieval.mode' must be one of {RETRIEVAL_MODES}, got {mode!r}")
-    doc_weight = retrieval_raw.get("doc_weight", DEFAULT_DOC_WEIGHT)
-    if not isinstance(doc_weight, (int, float)) or not (0.0 < doc_weight <= 1.0):
-        raise AiDbConfigError("'retrieval.doc_weight' must be a float in (0.0, 1.0]")
 
     embedding = _parse_provider(data["embedding"], "embedding", EMBEDDING_PROVIDERS)
     rerank_raw = _require_dict(data["rerank"], "rerank")
@@ -436,7 +436,7 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
     return AppConfig(
         version=CONFIG_VERSION,
         storage=storage,
-        retrieval=RetrievalConfig(mode=mode, doc_weight=doc_weight),
+        retrieval=RetrievalConfig(mode=mode),
         embedding=embedding,
         rerank=rerank,
         cross_project=cross,

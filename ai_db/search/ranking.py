@@ -18,6 +18,8 @@ import time
 from typing import Any
 
 from ai_db.constants import (
+    DEFAULT_DOC_WEIGHT,
+    DEFAULT_RERANK_TOP_N,
     DIVERSITY_MAX_PER_FILE,
     DIVERSITY_WINDOW,
     NORERANK_W_EXACT,
@@ -63,7 +65,8 @@ def diversify(results: list[SearchResult], window: int = DIVERSITY_WINDOW,
 
 
 class Ranker:
-    def __init__(self, db: Any, reranker: RerankProvider | None = None, doc_weight: float = 0.5, rerank_top_n: int = 30):
+    def __init__(self, db: Any, reranker: RerankProvider | None = None,
+                 doc_weight: float = DEFAULT_DOC_WEIGHT, rerank_top_n: int = DEFAULT_RERANK_TOP_N):
         self.db = db
         self.reranker = reranker
         self.doc_weight = doc_weight

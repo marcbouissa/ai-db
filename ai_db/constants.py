@@ -84,6 +84,8 @@ CODE_STOPWORDS = frozenset({
 # Retrieval
 CANDIDATE_POOL = 50  # candidates per retriever list before fusion/rerank
 RRF_K = 60
+DEFAULT_DOC_WEIGHT = 0.5  # index.doc_weight: score factor for md/txt chunks (docs rank below code)
+DEFAULT_RERANK_TOP_N = 10  # rerank.top_n: fused candidates the reranker re-scores
 
 # Final ranking (tune only with `ai-db eval`)
 RERANK_TOP = 30
@@ -117,6 +119,7 @@ PACK_STUB_MAX_ITEMS = 20
 PACK_STUB_WHY_CHARS = 160
 DIFF_DEFAULT_SINCE = "HEAD"  # diff mode compares the working tree against this unless told otherwise
 GIT_TIMEOUT_S = 10  # git invocations from investigate/trace must not stall a request
+LINTER_TIMEOUT_S = 15  # an external linter (bash -n, yaml) taking longer is reported as an error
 EVAL_GIT_TIMEOUT_S = 120  # `ai-db eval` worktree checkouts (a whole tree, not one request)
 STALE_RESYNC_MAX_FILES = 20  # stale result files re-synced inline per read; above this they are flagged
 DELEGATE_MAX_TOKENS = 120  # seeds this small also get their callees' callees
