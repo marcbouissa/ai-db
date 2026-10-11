@@ -561,14 +561,24 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   `QueryEngine` `getattr` defaults are K7 bullet 3. Golden/scenario paths follow the moves.
 
 ### K2. Split `SQLiteBackend` (2306-line god class)
-- [ ] Repositories sharing one connection + `transaction()`: `chunks` (+FTS), `vectors`,
+- [x] Repositories sharing one connection + `transaction()`: `chunks` (+FTS), `vectors`,
   `graph` (symbols/refs/centrality), `memory` (contexts/skills), `cache` (query cache/log),
   `state`. `SQLiteBackend` composes them. Do it **after** E1 (single transaction path).
-- [ ] Make `backend.py` a real contract: abstract methods only; delete the
+- [x] Make `backend.py` a real contract: abstract methods only; delete the
   `NotImplementedError` "defaults" and aliases (`search_chunks_bm25`, `upsert_symbols`,
   `search_symbols`) after updating callers.
-- [ ] Table counts exist three times (`backend.py`, `sqlite_backend.py`, `state.py`): keep one.
-- [ ] Delete unused `module_summaries` table and the empty "Analysis References" header.
+- [x] Table counts exist three times (`backend.py`, `sqlite_backend.py`, `state.py`): keep one.
+- [x] Delete unused `module_summaries` table and the empty "Analysis References" header.
+- **Done 2026-10-11:** `ai_db/storage/sqlite_repos/` holds one mixin per concern
+  (`ChunkRepository` with files/FTS/diagnostics/annotations, `VectorRepository`,
+  `GraphRepository`, `MemoryRepository` with recall vectors, `CacheRepository` with query
+  log, analysis refs and semantic cache, `StateRepository`) on a shared
+  `SQLiteRepository` base (`_WRITE_LOCK`, `@_writes`, codecs); `SQLiteBackend` (835 lines,
+  was 2329) keeps connection, schema, transactions, status/optimize and composes them, so
+  every caller and `@_writes` path is unchanged. All 75 `StorageBackend` methods are
+  abstract; the aliases and the status-derived `get_table_counts` default are gone and
+  `status` uses `get_table_counts`. `module_summaries` is dropped (`SCHEMA_VERSION` 13: the
+  next sync re-indexes, which also applies the G1/G5 parser changes).
 
 ### K3. Slim `ai_db/__init__.py`
 - [x] Move `VectorDB` to `ai_db/facade.py`; `__init__` exports lazily (`__getattr__`), so

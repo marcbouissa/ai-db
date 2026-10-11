@@ -71,8 +71,8 @@ class TestSummary:
 
     def test_count_and_average_cover_the_same_window(self, telemetry_db, monkeypatch):
         """The old blob averaged the last 1000 samples but counted every query ever."""
-        from ai_db.storage import sqlite_backend
-        monkeypatch.setattr(sqlite_backend, "QUERY_LOG_KEEP", 5)
+        from ai_db.storage.sqlite_repos import cache
+        monkeypatch.setattr(cache, "QUERY_LOG_KEEP", 5)
         backend = telemetry_db["vdb"].backend
         for ms in (100.0, 100.0, 100.0, 1.0, 1.0, 1.0, 1.0, 1.0):
             _log(backend, ms)
