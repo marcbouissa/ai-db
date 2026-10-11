@@ -9,11 +9,36 @@ from typing import Any
 
 import briefs
 
+#: arm suffixes in table order: ai-db v1, ai-db v2 (build_scene/edit_scene), then without ai-db
+MODES = ("aidb", "aidb2", "raw")
+
+
+def _split(arm: str) -> tuple[str, str]:
+    model, mode = arm.rsplit("-", 1)
+    return model, mode
+
+
 def _arms(out: str) -> list[str]:
-    """Every arm folder with at least one finished scene, raw and aidb of a model side by side."""
+    """Every arm folder with at least one finished scene; a model's arms side by side in MODES order."""
     found = [d for d in os.listdir(out) if os.path.isdir(os.path.join(out, d)) and not d.startswith(".")
+             and "-" in d and _split(d)[1] in MODES
              and any(os.path.exists(os.path.join(out, d, b, "metrics.json")) for b in briefs.BRIEFS)]
-    return sorted(found, key=lambda a: (a.rsplit("-", 1)[0], a.endswith("-raw")))
+    return sorted(found, key=lambda a: (_split(a)[0], MODES.index(_split(a)[1])))
+
+
+def _version(m: dict[str, Any]) -> str:
+    """Short ai-db version of a scene (a hash of the ai-db-scene code it ran with); none for raw arms."""
+    v = m.get("aidb_version")
+    return str(v)[:7] if v else "–"
+
+
+def _thumb(out: str, m: dict[str, Any]) -> str:
+    """A small linked image of the scene's interior probe render, relative to the report."""
+    path = os.path.join(m["dir"], "probe_interior.png")
+    if not os.path.exists(path):
+        return "–"
+    rel = os.path.relpath(path, out).replace(os.sep, "/")
+    return f'[<img src="{rel}" width="120" alt="{m["arm"]}/{m["brief"]}">]({rel})'
 
 
 def _load(out: str) -> list[dict[str, Any]]:
@@ -57,7 +82,8 @@ def write(out: str) -> str:
     L += ["Arms: every free OpenCode model that was available (OpenCode headless, isolated home, file/web tools "
           "off; the shell has to stay for OpenCode's free tier, the prompt forbids it, see Shell use) and the "
           "Strata model (qwen3.8-flash, new generic agent), each with the Blender addon's tools only (raw) or those + "
-          "ai-db scene tools (aidb). Same briefs, same Blender build, a fresh Blender per scene, 30 min cap.",
+          "ai-db scene tools (aidb; aidb2 = ai-db with build_scene/edit_scene). `ai-db` = short hash of the "
+          "ai-db-scene code a scene ran with (results of different versions must not be mixed). Same briefs, same Blender build, a fresh Blender per scene, 30 min cap.",
           "Quality (formula v2) = 40% brief checklist + 15% size plausibility + 10% mesh coverage + 25% "
           "validator (100 - 8/blocking - 2/warning) + 10% basics (camera, lights, materials). The checklist "
           "counts an object matched by name or category only for real geometry: an asset root with >= 2 mesh "
@@ -71,36 +97,44 @@ def write(out: str) -> str:
           "mode, comparing all scenes of the brief). `aidb` = ai-db rubric + ai-db measurements, `plain` = "
           "renders + brief only.", ""]
     L += ["## Summary per arm", "",
-          "| arm | scenes | quality | judge aidb | judge plain | wall min | model min | tool min | tokens (k) | cost $ |",
-          "|---|---|---|---|---|---|---|---|---|---|"]
+          "| arm | ai-db | scenes | quality | judge aidb | judge plain | wall min | model min | tool min | tokens (k) | cost $ |",
+          "|---|---|---|---|---|---|---|---|---|---|---|"]
     for arm in ARMS:
         rs = [r for r in rows if r["arm"] == arm]
         if not rs:
             continue
         ja = [x for x in (_j(r, "aidb") for r in rs) if x is not None]
         jp = [x for x in (_j(r, "plain") for r in rs) if x is not None]
-        L.append(f"| {arm} | {len(rs)} | {mean(r['quality']['score'] for r in rs):.1f} | "
+        versions = ", ".join(sorted({_version(r) for r in rs}))  # more than one: results span ai-db changes
+        L.append(f"| {arm} | {versions} | {len(rs)} | {mean(r['quality']['score'] for r in rs):.1f} | "
                  f"{_fmt(mean(ja) if ja else None)} | {_fmt(mean(jp) if jp else None)} | "
                  f"{mean(r['agent']['wall_s'] for r in rs) / 60:.1f} | {mean(r['agent']['model_s'] for r in rs) / 60:.1f} | "
                  f"{mean(r['agent']['tool_s'] for r in rs) / 60:.1f} | {mean(_tok(r['agent']['tokens']) for r in rs) / 1000:.0f} | "
                  f"{sum((r['agent'].get('cost_usd') or 0) for r in rs):.2f} |")
-    L += ["", "## With vs without ai-db, paired (same model, same brief: ai-db arm minus raw arm)", "",
+    L += ["", "## With vs without ai-db, paired (same model, same brief: first arm minus second arm)", "",
           "Arm averages above mix different brief sets (rate-limited models finished only the first briefs); "
-          "this table compares like with like.", "",
-          "| model | pairs | judge aidb Δ | judge plain Δ | quality Δ | wall min Δ | tokens k Δ |", "|---|---|---|---|---|---|---|"]
+          "this table compares like with like. `aidb2` is ai-db after the benchmark-driven fixes "
+          "(build_scene, edit_scene); `aidb2 vs aidb` isolates what those fixes changed.", "",
+          "| model | comparison | pairs | judge aidb Δ | judge plain Δ | quality Δ | wall min Δ | tokens k Δ |",
+          "|---|---|---|---|---|---|---|---|"]
     by = {(r["arm"], r["brief"]): r for r in rows}
-    for model, mode in sorted({(a.rsplit("-", 1)[0], m) for a in ARMS for m in ("aidb", "aidb2")}):
-        prs = [(by[(f"{model}-{mode}", b)], by[(f"{model}-raw", b)]) for b in briefs.BRIEFS
-               if (f"{model}-{mode}", b) in by and (f"{model}-raw", b) in by]
-        if not prs:
-            continue
-        def d(f):
-            vals = [f(a) - f(r) for a, r in prs if f(a) is not None and f(r) is not None]
-            return mean(vals) if vals else None
-        ja, jp = d(lambda x: _j(x, "aidb")), d(lambda x: _j(x, "plain"))
-        dq, dw = d(lambda x: x["quality"]["score"]), d(lambda x: x["agent"]["wall_s"] / 60)
-        dt = d(lambda x: _tok(x["agent"]["tokens"]) / 1000)
-        L.append(f"| {model} ({mode}) | {len(prs)} | {_fmt(ja, 2)} | {_fmt(jp, 2)} | {_fmt(dq)} | {_fmt(dw)} | {_fmt(dt, 0)} |")
+    comparisons = (("aidb", "raw"), ("aidb2", "raw"), ("aidb2", "aidb"))
+    for model in sorted({_split(a)[0] for a in ARMS}):
+        for first, second in comparisons:
+            prs = [(by[(f"{model}-{first}", b)], by[(f"{model}-{second}", b)]) for b in briefs.BRIEFS
+                   if (f"{model}-{first}", b) in by and (f"{model}-{second}", b) in by]
+            if not prs:
+                continue
+
+            def d(f: Any, prs: list[Any] = prs) -> float | None:
+                vals = [f(a) - f(r) for a, r in prs if f(a) is not None and f(r) is not None]
+                return mean(vals) if vals else None
+
+            ja, jp = d(lambda x: _j(x, "aidb")), d(lambda x: _j(x, "plain"))
+            dq, dw = d(lambda x: x["quality"]["score"]), d(lambda x: x["agent"]["wall_s"] / 60)
+            dt = d(lambda x: _tok(x["agent"]["tokens"]) / 1000)
+            L.append(f"| {model} | {first} vs {second} | {len(prs)} | {_fmt(ja, 2)} | {_fmt(jp, 2)} | {_fmt(dq)} | "
+                     f"{_fmt(dw)} | {_fmt(dt, 0)} |")
     L += ["", "## Best scene per brief (judge aidb, then plain, then quality)", "",
           "| brief | best arm | judge aidb | judge plain | quality | blend |", "|---|---|---|---|---|---|"]
     for brief in briefs.BRIEFS:
@@ -111,11 +145,12 @@ def write(out: str) -> str:
         L.append(f"| {brief} | **{best['arm']}** | {_fmt(_j(best, 'aidb'))} | {_fmt(_j(best, 'plain'))} | "
                  f"{best['quality']['score']} | `{os.path.relpath(best['dir'], out)}/scene.blend` |")
     L += ["", "## Every scene", "",
-          "| arm | brief | done | quality | checklist | blocking | judge aidb | judge plain | wall s | model s | tool s | turns | in | out | cache w | cache r | cost $ |",
-          "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+          "| arm | brief | ai-db | view | done | quality | checklist | blocking | judge aidb | judge plain | wall s | model s | tool s | turns | in | out | cache w | cache r | cost $ |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         a, q, t = r["agent"], r["quality"], r["agent"]["tokens"]
-        L.append(f"| {r['arm']} | {r['brief']} | {'yes' if a['ok'] else ('timeout' if a.get('timed_out') else 'no')} | "
+        L.append(f"| {r['arm']} | {r['brief']} | {_version(r)} | {_thumb(out, r)} | "
+                 f"{'yes' if a['ok'] else ('timeout' if a.get('timed_out') else 'no')} | "
                  f"{q['score']} | {q['checklist_pct']}% | {q['blocking']} | {_fmt(_j(r, 'aidb'))} | {_fmt(_j(r, 'plain'))} | "
                  f"{a['wall_s']:.0f} | {a['model_s']:.0f} | {a['tool_s']:.0f} | {a.get('turns')} | {t['input']} | {t['output']} | "
                  f"{t['cache_write']} | {t['cache_read']} | {_fmt(a.get('cost_usd'), 3)} |")

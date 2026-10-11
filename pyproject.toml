@@ -133,7 +133,9 @@ include = [
 # --exclude flag.
 # packages/*/showcase/* are Blender scripts (run inside `blender --python`, importing
 # bpy after a sys.path tweak); they are throwaway harnesses, not project code.
-exclude = ["token_benchmark.py", "packages/*/showcase"]
+# .claude/ holds agent git worktrees (full checkouts of other branches, possibly mid-edit):
+# `include` matches their ai_db/ too, so a whole-tree lint would judge someone else's work.
+exclude = ["token_benchmark.py", "packages/*/showcase", ".claude"]
 
 [tool.mypy]
 python_version = "3.12"
