@@ -163,17 +163,71 @@ def _lookup_asset(asset_map: dict[str, Any], pl: Placement, base_id: str) -> dic
     return None
 
 
-_FINALIZE = """
+#: first command of every build batch. A name the batch is about to create may still be held by an
+#: object outside the current scene (in another scene, or a leftover clear_scene could not remove):
+#: Blender would then call the new object "sofa.001", and every later command addressing "sofa"
+#: (modify_object, apply_material, the tags below) would hit the leftover. Move such holders aside.
+_RESERVE = """
 import bpy, json
+scene = bpy.context.scene
+moved = []
+for name in json.loads({payload!r}):
+    held = bpy.data.objects.get(name)
+    if held is not None and scene.objects.get(name) is None:
+        held.name = name + "_stale"
+        moved.append(held.name)
+result = {{"moved": moved}}
+"""
+
+#: after clear_scene in build_scene/edit_scene: drop every object and data block nothing uses any
+#: more. clear_scene's own purge (an outliner operator) does nothing without a UI context, so
+#: orphans piled up over edits and pushed rebuilt names to ".001".
+_PURGE = """
+import bpy
+removed = 0
+for _ in range(8):  # an orphan object frees its mesh, the mesh its material: repeat until stable
+    n = 0
+    for coll in (bpy.data.objects, bpy.data.meshes, bpy.data.curves, bpy.data.materials, bpy.data.lights,
+                 bpy.data.cameras, bpy.data.collections, bpy.data.node_groups, bpy.data.images):
+        for blk in list(coll):
+            if blk.users == 0 and not blk.use_fake_user:
+                coll.remove(blk)
+                n += 1
+    removed += n
+    if not n:
+        break
+result = {"purged": removed}
+"""
+
+_FINALIZE = """
+import bpy, json, re
+scene = bpy.context.scene
+suffix = re.compile(r"[.][0-9]{{3,}}$")
+
+def fresh(base):
+    # the untagged object this batch made for `base` when Blender had to rename it ("base.001")
+    for o in scene.objects:
+        if o.get("ai_db_id") is None and o.name.startswith(base + ".") and suffix.search(o.name):
+            return o
+    return None
+
+def claim(obj, name):
+    held = bpy.data.objects.get(name)
+    if held is not None and held is not obj and scene.objects.get(name) is None:
+        held.name = name + "_stale"  # a leftover outside the scene: the scene object gets the name
+    obj.name = name
+
 for ent in json.loads({payload!r}):
-    obj = bpy.data.objects.get(ent["name"])
-    if obj is None and ent.get("asset_name"):
-        for o in bpy.data.objects:
-            if o.get("ai_db_id") is None and (o.name == ent["asset_name"] or o.name.startswith(ent["asset_name"] + ".")):
-                obj = o
-                break
+    obj = scene.objects.get(ent["name"])
+    if obj is not None and obj.get("ai_db_id") not in (None, ent["name"]):
+        obj = None  # an older object of another id
+    if obj is None:
+        obj = fresh(ent.get("asset_name") or ent["name"])
+        if obj is None and ent.get("asset_name"):
+            obj = scene.objects.get(ent["asset_name"])
+            obj = obj if obj is not None and obj.get("ai_db_id") is None else None
         if obj is not None:
-            obj.name = ent["name"]
+            claim(obj, ent["name"])
     if obj is None:
         continue
     if ent.get("asset_name"):
@@ -255,6 +309,13 @@ def build_layout_commands(
     details = {o.id: o.detail for o in spec.objects}
     cmds = _room_commands(spec, placements)
     names = [c["params"].get("name", "room_shell") for c in cmds]
+    if placements:
+        reserve = [pl.id for pl in placements] + [
+            a["asset_name"] for pl in placements
+            if (a := _lookup_asset(asset_map, pl, _SUFFIX.sub("", pl.id))) is not None]
+        if spec.setting.kind != "single_asset":  # shell surfaces and the fill are addressed by name too
+            reserve += ["Room_Floor", "Room_Walls", "floor", "ai_db_fill"]
+        cmds.insert(0, {"type": "run_code", "params": {"code": _RESERVE.format(payload=json.dumps(reserve))}})
     off = frame_offset(spec)
     reskin: list[dict[str, Any]] = []
     tag: list[dict[str, Any]] = []
@@ -641,6 +702,7 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
     if args.get("clear"):
         try:
             BlenderClient().request("clear_scene", {"keep_camera": False, "purge_orphans": True})
+            BlenderClient().request("run_code", {"code": _PURGE})
         except BlenderError as e:
             return {"status": "error", "message": f"clear_scene failed: {e}", "repairs": repairs}
     built = _handle_apply_layout({"spec": data, "placements": [placement_to_dict(p) for p in placements],

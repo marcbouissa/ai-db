@@ -137,7 +137,8 @@ def test_apply_layout_room_shell_openings_detail_and_facing_prop():
     })
     pls = solve_layout(spec)
     cmds, names = sp.build_layout_commands(spec, pls)
-    shell = cmds[0]
+    assert cmds[0]["type"] == "run_code" and "_stale" in cmds[0]["params"]["code"]  # names reserved first
+    shell = cmds[1]
     assert shell["type"] == "room_shell" and names[0] == "room_shell"
     prm = shell["params"]
     assert prm["shape"] == "ellipse" and prm["size"] == [10.0, 8.0] and prm["height"] == 3.0 and "wall_thickness" in prm

@@ -69,8 +69,12 @@ def test_build_commands_placeholder_and_mapped():
     spec, _ = sp._parse_spec(SPEC)
     pls = sp.parse_placements(sp._handle_solve_layout({"spec": SPEC})["placements"])
     cmds, names = sp.build_layout_commands(spec, pls)
-    assert names[0] == "room_shell" and cmds[0]["type"] == "room_shell"
+    assert names[0] == "room_shell" and cmds[1]["type"] == "room_shell"
     assert names[1:] == [p.id for p in pls]
+    # before anything is created, every name the batch will use is reserved
+    reserve = cmds[0]["params"]["code"]
+    assert cmds[0]["type"] == "run_code" and all(f'"{p.id}"' in reserve for p in pls)
+    compile(reserve, "<reserve>", "exec")
     # sofa and coffee table have generators (real furniture); the floor lamp is a box
     gen = {c["params"]["name"]: c["params"] for c in cmds if c["type"] == "generate_asset"}
     assert set(gen) == {"sofa", "table"} and gen["sofa"]["family"] == "sofa"
