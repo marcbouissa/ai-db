@@ -8,6 +8,16 @@ works for every arm, including agents that never tag categories.
 from __future__ import annotations
 
 BRIEFS: dict[str, dict] = {
+    # not in run_arms.sh's default set: run on demand (bench.py run <arm> oval_office)
+    "oval_office": {
+        "brief": ("The Oval Office: an oval room in classic style with a large desk in front of three tall "
+                  "windows, two sofas facing each other across a coffee table on an oval rug, two armchairs "
+                  "by the fireplace on the opposite wall, and paintings on the walls."),
+        "checklist": [("desk", 1, ("desk",)), ("sofas", 2, ("sofa", "couch")), ("coffee table", 1, ("coffee",)),
+                      ("rug", 1, ("rug", "carpet")), ("armchairs", 2, ("armchair", "arm_chair")),
+                      ("fireplace", 1, ("fireplace", "mantel")), ("windows", 3, ("window",)),
+                      ("paintings", 2, ("picture", "painting", "frame"))],
+    },
     "living_room": {
         "brief": ("A cozy living room: a sofa facing a TV on a TV stand, a coffee table in front of "
                   "the sofa on a rug, two armchairs and a floor lamp."),
