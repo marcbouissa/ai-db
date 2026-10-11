@@ -172,3 +172,45 @@ def test_missing_objects_counts_instances():
     assert {i["objects"][0]: i["message"] for i in issues} == {
         "lamp": "lamp: 0 of 1 in the scene", "chair": "chair: 1 of 2 in the scene"}
     assert all(i["severity"] == "blocking" for i in issues)
+
+
+def _lights(raw):
+    spec = _parsed(raw)
+    return sp.lighting_commands(spec, [], sp.frame_offset(spec))
+
+
+def _sized(w, d, kind="indoor"):
+    return {**SPEC, "relations": SPEC["relations"][1:], "setting": {"kind": kind, "bounds_m": [w, d, 3.0]}}
+
+
+def test_indoor_exposure_and_fill_scale_with_floor_area():
+    small, big = _lights(_sized(4, 3)), _lights(_sized(20, 16))
+    rig_s, rig_b = small[0]["params"], big[0]["params"]
+    assert rig_s["window_portals"] and rig_b["window_portals"]  # windows keep their portals
+    assert rig_s["exposure"] < rig_b["exposure"] <= 1.5
+    fill_s = next(c["params"] for c in small if c["type"] == "add_light")
+    fill_b = next(c["params"] for c in big if c["type"] == "add_light")
+    assert fill_s["light_type"] == fill_b["light_type"] == "AREA"
+    assert fill_s["energy"] < fill_b["energy"]
+    assert fill_b["energy"] == pytest.approx(min(8.0 * 20 * 16, 2500.0))
+    # centre of the (origin-centred) room, just under the ceiling
+    assert fill_b["location"] == pytest.approx([0.0, 0.0, 3.0 - 0.05])
+    shape = next(c["params"]["code"] for c in big if c["type"] == "run_code")
+    assert "ai_db_fill" in shape and "10.0" in shape and "8.0" in shape
+    compile(shape, "<fill>", "exec")
+
+
+def test_outdoor_keeps_lower_exposure_and_no_fill():
+    cmds = _lights(_sized(30, 30, kind="outdoor"))
+    assert cmds[0]["params"]["exposure"] < 0 and not cmds[0]["params"]["window_portals"]
+    assert not any(c["type"] == "add_light" and c["params"]["light_type"] == "AREA" for c in cmds)
+
+
+def test_floor_area_by_shape():
+    ell = {**SPEC, "relations": [], "setting": {"kind": "indoor", "bounds_m": [4, 4, 3], "shape": "ellipse"}}
+    poly = {**SPEC, "relations": [], "setting": {"kind": "indoor", "bounds_m": [6, 5, 3], "shape": "polygon",
+                                                 "points": [[0, 0], [6, 0], [6, 5], [0, 5]]}}
+    assert sp.floor_area_m2(_parsed(ell)) == pytest.approx(3.14159 * 4, rel=1e-4)
+    assert sp.floor_area_m2(_parsed(poly)) == pytest.approx(30.0)
+    fill = next(c["params"] for c in _lights(poly) if c["type"] == "add_light")
+    assert fill["location"][:2] == pytest.approx([3.0, 2.5])  # polygon rooms keep the layout frame

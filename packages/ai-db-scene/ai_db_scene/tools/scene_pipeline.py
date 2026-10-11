@@ -14,7 +14,16 @@ from ai_db_scene.blender_client import BlenderClient, BlenderError
 from ai_db_scene.constants import (
     SCENE_CAMERA_HEIGHT_M,
     SCENE_CAMERA_INSET,
+    SCENE_EXPOSURE_INDOOR,
+    SCENE_EXPOSURE_OUTDOOR,
+    SCENE_EXPOSURE_PER_DOUBLING,
+    SCENE_EXPOSURE_RANGE,
+    SCENE_FILL_CEILING_GAP_M,
+    SCENE_FILL_SIZE_FRACTION,
+    SCENE_FILL_W_PER_M2,
+    SCENE_FILL_W_RANGE,
     SCENE_LAMP_W,
+    SCENE_REF_FLOOR_M2,
     SCENE_SUN_ENERGY,
 )
 from ai_db_scene.layout import LayoutError, Placement, solve_layout
@@ -317,14 +326,70 @@ def build_layout_commands(
     return cmds, names
 
 
+def floor_area_m2(spec: SceneSpec) -> float:
+    """Floor area of the setting: rectangle, ellipse inscribed in the bounds, or polygon."""
+    import math
+
+    st = spec.setting
+    w, d, _h = st.bounds_m
+    if st.shape == "polygon" and len(st.points) >= 3:
+        pts = st.points
+        return abs(sum(pts[i][0] * pts[i - 1][1] - pts[i - 1][0] * pts[i][1] for i in range(len(pts)))) / 2
+    if st.shape == "ellipse":
+        return math.pi * w * d / 4
+    return w * d
+
+
+def _room_centre(spec: SceneSpec, off: tuple[float, float, float]) -> tuple[float, float]:
+    st = spec.setting
+    if st.shape == "polygon" and st.points:
+        xs, ys = [p[0] for p in st.points], [p[1] for p in st.points]
+        return ((min(xs) + max(xs)) / 2 + off[0], (min(ys) + max(ys)) / 2 + off[1])
+    w, d, _h = st.bounds_m
+    return (w / 2 + off[0], d / 2 + off[1])
+
+
+def indoor_exposure(area_m2: float) -> float:
+    """Exposure (stops) for a room: windows light a small room well, the middle of a big one
+    much less, so each doubling of floor area over the reference adds a fraction of a stop."""
+    import math
+
+    lo, hi = SCENE_EXPOSURE_RANGE
+    stops = SCENE_EXPOSURE_INDOOR + SCENE_EXPOSURE_PER_DOUBLING * math.log2(max(area_m2, 1.0) / SCENE_REF_FLOOR_M2)
+    return round(min(max(stops, lo), hi), 2)
+
+
+_AREA_SHAPE = """
+import bpy
+o = bpy.data.objects.get({name!r})
+if o is not None and o.type == "LIGHT" and o.data.type == "AREA":
+    o.data.shape = "RECTANGLE"
+    o.data.size, o.data.size_y = {sx!r}, {sy!r}
+result = {{"fill": o.name if o else None}}
+"""
+
+
 def lighting_commands(spec: SceneSpec, placements: list[Placement], off: tuple[float, float, float]) -> list[dict[str, Any]]:
-    """Daylight (sky world, sun, a portal per window) plus a warm point light in every lamp.
-    A lone sun left interiors flat and dark (judges' second most common complaint)."""
+    """Daylight (sky world, sun, a portal per window), an interior fill, and a warm point light in
+    every lamp. A lone sun left interiors flat and dark (judges' second most common complaint),
+    and window light alone does not reach the middle of a large room: indoors the exposure grows
+    with the floor area and a soft ceiling area light (energy by floor area) fills the room."""
+    indoor = spec.setting.kind == "indoor"
+    area = floor_area_m2(spec)
     cmds: list[dict[str, Any]] = [{"type": "daylight_rig", "params": {
         "sun_elevation": 40.0, "sun_azimuth": 135.0, "strength": SCENE_SUN_ENERGY, "sky": "nishita",
-        "window_portals": spec.setting.kind == "indoor", "sky_strength": 0.8, "name": "ai_db_daylight",
-        # open air gets the full sun and sky: +1 stop (the rig's default) washed outdoor scenes out
-        "exposure": 0.5 if spec.setting.kind == "indoor" else -0.7}}]
+        "window_portals": indoor, "sky_strength": 0.8, "name": "ai_db_daylight",
+        "exposure": indoor_exposure(area) if indoor else SCENE_EXPOSURE_OUTDOOR}}]
+    if indoor:
+        w, d, h = spec.setting.bounds_m
+        lo, hi = SCENE_FILL_W_RANGE
+        cx, cy = _room_centre(spec, off)
+        cmds.append({"type": "add_light", "params": {
+            "light_type": "AREA", "name": "ai_db_fill", "energy": round(min(max(SCENE_FILL_W_PER_M2 * area, lo), hi), 1),
+            "color": [1.0, 0.96, 0.9], "location": [cx, cy, h - SCENE_FILL_CEILING_GAP_M],
+            "rotation": [0.0, 0.0, 0.0]}})  # shines along -Z: down
+        cmds.append({"type": "run_code", "params": {"code": _AREA_SHAPE.format(
+            name="ai_db_fill", sx=round(w * SCENE_FILL_SIZE_FRACTION, 3), sy=round(d * SCENE_FILL_SIZE_FRACTION, 3))}})
     for pl in placements:
         watts = SCENE_LAMP_W.get(pl.category)
         if watts is None:

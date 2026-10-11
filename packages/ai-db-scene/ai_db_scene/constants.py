@@ -26,6 +26,15 @@ LAYOUT_MAX_BOUND_M = 500.0
 LAYOUT_RESTARTS = 4  # greedy passes (fresh random draws) before reporting a conflict
 
 SCENE_SUN_ENERGY = 4.0  # W/m² of the daylight sun apply_layout adds (AgX view: a bright interior)
+SCENE_EXPOSURE_INDOOR = 0.5  # stops for a reference room (SCENE_REF_FLOOR_M2): windows light it well
+SCENE_EXPOSURE_OUTDOOR = -0.7  # open air gets the full sun and sky: +1 stop washed scenes out
+SCENE_REF_FLOOR_M2 = 20.0  # floor area the indoor exposure is tuned for
+SCENE_EXPOSURE_PER_DOUBLING = 0.35  # stops added each time the floor area doubles (deeper rooms)
+SCENE_EXPOSURE_RANGE = (0.2, 1.5)  # indoor exposure clamp, stops
+SCENE_FILL_W_PER_M2 = 8.0  # ceiling area fill: W per m² of floor (≈ an evenly lit room under AgX)
+SCENE_FILL_W_RANGE = (100.0, 2500.0)
+SCENE_FILL_SIZE_FRACTION = 0.5  # fill light size as a fraction of the room footprint (soft shadows)
+SCENE_FILL_CEILING_GAP_M = 0.05  # below the ceiling plane, so it is inside the room
 SCENE_LAMP_W = {"floor_lamp": 80.0, "table_lamp": 40.0, "pendant_lamp": 100.0, "ceiling_light": 150.0,
                 "wall_sconce": 40.0, "street_lamp": 300.0}  # a point light in each lamp object
 SCENE_CAMERA_INSET = 0.12  # interior camera: corner inset as a fraction of the room size
