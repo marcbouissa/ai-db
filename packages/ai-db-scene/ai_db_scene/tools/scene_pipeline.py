@@ -10,6 +10,7 @@ import json
 import re
 from typing import Any
 
+from ai_db.errors import AiDbConfigError
 from ai_db_scene.blender_client import BlenderClient, BlenderError
 from ai_db_scene.constants import (
     SCENE_CAMERA_HEIGHT_M,
@@ -272,6 +273,36 @@ GEOMETRY_MODES = ("generated", "boxes")
 #: parts a spec material must not repaint on generated furniture (wooden legs, the books)
 _KEEP_PARTS = {"sofa": ("leg",), "armchair": ("leg",), "bookshelf": ("book",)}
 
+#: after import_file into collection "ai_db_asset_<id>": one root named <id> (an empty parenting
+#: the file's roots), scaled uniformly to fit the placement, base centre on the floor point,
+#: turned to the placement's yaw. Files come at any scale and origin; the layout does not.
+_ADOPT = """
+import bpy, json
+from mathutils import Vector
+ent = json.loads({payload!r})
+coll = bpy.data.collections.get(ent["collection"])
+objs = list(coll.objects) if coll else []
+roots = [o for o in objs if o.parent not in objs]
+root = bpy.data.objects.new(ent["name"], None)
+(coll or bpy.context.scene.collection).objects.link(root)
+for o in roots:
+    o.parent = root
+bpy.context.view_layer.update()
+pts = [o.matrix_world @ Vector(c) for o in objs if o.type == "MESH" for c in o.bound_box]
+if pts:
+    lo = Vector([min(p[i] for p in pts) for i in range(3)])
+    hi = Vector([max(p[i] for p in pts) for i in range(3)])
+    size = hi - lo
+    s = min(ent["dims"][i] / size[i] for i in range(3) if size[i] > 1e-6)
+    for o in roots:  # recentre the content on the root's origin: XY centre, base at z=0
+        o.location -= Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z))
+    root.scale = (s, s, s)
+root.location = ent["location"]
+root.rotation_euler[2] = ent["rot_z"]
+result = {{"root": root.name, "parts": len(objs)}}
+"""
+
+
 _RESKIN = """
 import bpy, sys, json
 mod = next(m for n, m in sys.modules.items() if n.endswith(".materials") and hasattr(m, "resolve_material"))
@@ -293,16 +324,28 @@ result = {{"reskinned": done}}
 
 def build_layout_commands(
     spec: SceneSpec, placements: list[Placement], asset_map: dict[str, Any] | None = None,
-    geometry: str = "generated",
+    geometry: str = "generated", providers: list[Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Blender batch for room shell + one object per placement. Returns (commands, created names).
 
-    ``geometry="generated"`` builds parametric furniture for the categories in ``_GENERATED``
-    (sized to the placement); everything else, or ``"boxes"``, is a textured placeholder box.
+    Per placement, the first that applies: an ``asset_map`` entry; with ``geometry="generated"``
+    a model file from an asset provider (see providers.py; none unless configured), parametric
+    furniture for the categories in ``_GENERATED``, a part recipe; else a textured box.
     """
     import math
 
+    from ai_db_scene.providers import AssetFile, find_asset
+
     asset_map = asset_map or {}
+    provided: dict[str, AssetFile | None] = {}
+
+    def provider_file(category: str) -> AssetFile | None:
+        if geometry != "generated" or not providers:
+            return None
+        if category not in provided:  # one lookup (and download) per category per build
+            provided[category] = find_asset(providers, category)
+        return provided[category]
+
     priors = load_priors()
     heroes = {o.id for o in spec.objects if o.hero}
     materials = {o.id: o.material for o in spec.objects}
@@ -313,6 +356,8 @@ def build_layout_commands(
         reserve = [pl.id for pl in placements] + [
             a["asset_name"] for pl in placements
             if (a := _lookup_asset(asset_map, pl, _SUFFIX.sub("", pl.id))) is not None]
+        reserve += [f.asset_name for pl in placements
+                    if (f := provider_file(pl.category)) is not None and f.asset_name]
         if spec.setting.kind != "single_asset":  # shell surfaces and the fill are addressed by name too
             reserve += ["Room_Floor", "Room_Walls", "floor", "ai_db_fill"]
         cmds.insert(0, {"type": "run_code", "params": {"code": _RESERVE.format(payload=json.dumps(reserve))}})
@@ -332,7 +377,23 @@ def build_layout_commands(
         if pl.facing_target:
             props["facing_target"] = pl.facing_target
         asset = _lookup_asset(asset_map, pl, base)
-        if asset:
+        found = None if asset else provider_file(pl.category)
+        if found is not None and found.kind == "blend":
+            asset = {"filepath": found.filepath, "asset_name": found.asset_name}
+        if found is not None:
+            props["asset_source"] = found.source
+        if found is not None and found.kind == "gltf":
+            loc = _shift(pl.location, off)
+            coll = f"ai_db_asset_{pl.id}"
+            cmds.append({"type": "import_file", "params": {"filepath": found.filepath, "collection": coll}})
+            cmds.append({"type": "run_code", "params": {"code": _ADOPT.format(payload=json.dumps({
+                "name": pl.id, "collection": coll, "dims": list(pl.dims),
+                "location": [loc[0], loc[1], loc[2] - pl.dims[2] / 2],
+                "rot_z": math.radians(pl.rotation_deg_z)}))}})
+            tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
+            if materials.get(base):
+                reskin.append({"name": pl.id, "material": material_for(pl.category, materials[base]), "keep": []})
+        elif asset:
             cmds.append({"type": "append_asset", "params": {
                 "filepath": asset["filepath"], "asset_name": asset["asset_name"], "location": _shift(pl.location, off)}})
             tag.append({"name": pl.id, "asset_name": asset["asset_name"], "location": _shift(pl.location, off),
@@ -639,7 +700,13 @@ def _handle_apply_layout(args: dict[str, Any]) -> Any:
     geometry = args.get("geometry", "generated")
     if geometry not in GEOMETRY_MODES:
         return _err(f"geometry must be one of {list(GEOMETRY_MODES)}")
-    cmds, names = build_layout_commands(spec, pls, args.get("asset_map"), geometry)
+    try:
+        from ai_db_scene.providers import providers_from_config
+
+        providers = providers_from_config()
+    except AiDbConfigError as e:  # a bad plugins.scene section: say so instead of ignoring it
+        return _err(str(e))
+    cmds, names = build_layout_commands(spec, pls, args.get("asset_map"), geometry, providers)
     try:
         results = BlenderClient().batch(cmds)
     except BlenderError as e:

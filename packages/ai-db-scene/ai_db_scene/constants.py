@@ -49,3 +49,12 @@ BUILD_FIX_ROUNDS = 2  # build_scene: rounds of applying validate_scene's fix act
 BLENDER_OX_HOST = "127.0.0.1"
 BLENDER_OX_PORT = 9877  # override: AI_DB_BLENDER_PORT
 BLENDER_OX_TIMEOUT_S = 15.0
+
+# --- Asset providers (ai_db_scene/providers.py; off unless configured) ---
+ASSET_FILE_TYPES = (".glb", ".gltf", ".blend")  # local library files indexed by filename tokens
+POLYHAVEN_API = "https://api.polyhaven.com"
+POLYHAVEN_USER_AGENT = "ai-db-scene/0.1 (scene pipeline asset provider)"  # the API rejects requests without one
+POLYHAVEN_RESOLUTIONS = ("1k", "2k", "4k")
+POLYHAVEN_TIMEOUT_S = 30.0
+POLYHAVEN_INDEX_TTL_S = 24 * 3600  # the model list is cached on disk this long
+POLYHAVEN_CACHE_DIR = "ai-db/polyhaven"  # under $XDG_CACHE_HOME (~/.cache)
