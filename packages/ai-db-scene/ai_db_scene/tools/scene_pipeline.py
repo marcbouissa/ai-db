@@ -1332,6 +1332,12 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
         if exp_issue:
             left.append(exp_issue)
     try:
+        from ai_db_scene import ergonomics
+
+        left += ergonomics.check(spec, placements)
+    except Exception as e:  # noqa: BLE001 - a check must never fail a finished build
+        left.append({"check": "ergonomics", "severity": "warning", "message": f"not checked: {e}"})
+    try:
         from ai_db_scene import feedback
 
         left += feedback.apply(left, placements, args.get("project", "default"))
