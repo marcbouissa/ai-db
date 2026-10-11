@@ -70,7 +70,7 @@ def test_route_skill_uses_the_router_threshold_by_default(project, monkeypatch):
 
 
 def test_keyerror_inside_a_handler_is_not_reported_as_unknown_tool(tmp_path, monkeypatch):
-    from mcp_server import StdioMCPServer
+    from ai_db.transports.mcp import StdioMCPServer
 
     server = StdioMCPServer(str(tmp_path / "m.db"))
 

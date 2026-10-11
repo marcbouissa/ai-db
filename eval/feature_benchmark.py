@@ -55,7 +55,7 @@ def make_ref() -> str:
     """Mint a ref handle for the in-process `expand` measurement.
 
     Ref handles live in an in-memory ``ReferenceStore`` (see
-    ``ai_db/analyzer/references.py``), so they cannot cross a process boundary:
+    ``ai_db/analysis/refs.py``), so they cannot cross a process boundary:
     a handle minted by one subprocess is unknown to the next. This is why
     `expand` is measured in-process and is absent from the CLI probes.
     """
@@ -282,7 +282,7 @@ def inprocess_probe() -> dict[str, float]:
               lambda m=mode: db.investigate("how are search results ranked",
                                             budget_tokens=8000, mode=m, project=project))
     data = copy.deepcopy(db.analyze_file("ai_db/device.py", no_cache=True))
-    from ai_db.analyzer.formatters import annotate_formatted_tokens
+    from ai_db.analysis.formatters import annotate_formatted_tokens
     for fmt in ("stub", "json"):
         timed(f"analyze (fmt {fmt})",
               lambda f=fmt: annotate_formatted_tokens(copy.deepcopy(data), f))

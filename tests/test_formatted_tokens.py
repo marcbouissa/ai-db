@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from ai_db.analyzer.formatters import (
+from ai_db.analysis.formatters import (
     ANALYZE_FORMATS,
     annotate_formatted_tokens,
     format_analyze,

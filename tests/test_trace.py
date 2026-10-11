@@ -132,3 +132,23 @@ def test_annotation_tags_are_real_tags(line, expected):
 
     hits = [(h["kind"], h["content"]) for h in extract_annotations("m.js", line)]
     assert hits == ([expected] if expected else [])
+
+
+def _node(name, kind=None, children=()):
+    from ai_db.analysis.trace import TraceNode
+    return TraceNode(qualified_name=name, filepath="/x/m.py", start_line=1, end_line=2,
+                     call_line=5, await_kind=kind, children=list(children))
+
+
+def test_readiness_awaited_ancestor_is_reported_as_awaited():
+    from ai_db.analysis.trace import TraceEngine
+    eng = TraceEngine(backend=None, trace_wait_patterns=["no_such_wait"])
+    root = _node("main", children=[_node("run", "await", [_node("job", "spawn")])])
+    assert eng._generate_readiness(root) == ["`job` spawned by `run` (awaited, m.py:5)"]
+
+
+def test_readiness_without_awaited_ancestor_is_not_awaited():
+    from ai_db.analysis.trace import TraceEngine
+    eng = TraceEngine(backend=None, trace_wait_patterns=["no_such_wait"])
+    root = _node("main", children=[_node("run", None, [_node("job", "spawn")])])
+    assert eng._generate_readiness(root) == ["`job` spawned by `run` (not awaited)"]

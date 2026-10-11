@@ -34,6 +34,7 @@ class StorageBackend(ABC):
     def backend_name(self) -> str:
         """Return canonical identifier for this storage backend (e.g. 'sqlite', 'mysql')."""
 
+    @abstractmethod
     def capabilities(self) -> frozenset:
         """Feature set this backend supports: subset of {'fts', 'vector', 'graph'}."""
         return frozenset({"fts", "graph"})
@@ -82,71 +83,76 @@ class StorageBackend(ABC):
     def insert_chunks(self, chunks: list[ChunkRecord]) -> None:
         """Persist chunk records and synchronize full-text search index."""
 
+    @abstractmethod
     def replace_file_chunks(self, filepath: str, chunks: list[ChunkRecord]) -> dict[str, int]:
         """Make ``chunks`` the stored chunks of ``filepath``, keeping ids of unchanged
         chunks (matched by ``(content_hash, name)``) and resolving ``parent_index``.
         Returns ``{"kept", "inserted", "deleted"}`` counts."""
-        raise NotImplementedError(f"{type(self).__name__} must implement replace_file_chunks")
 
+    @abstractmethod
     def get_chunks_by_ids(self, ids: list[int]) -> list[ChunkRecord]:
         """Chunks (with content) for ``ids``, in the given order; unknown ids are skipped."""
-        raise NotImplementedError(f"{type(self).__name__} must implement get_chunks_by_ids")
 
+    @abstractmethod
     def rebuild_symbol_centrality(self, projects: list[str] | None = None) -> None:
         """('graph' capability) Recompute per-symbol normalized call in-degree.
 
         ``projects=None`` recomputes every project; a list scopes the rebuild.
         """
-        raise NotImplementedError(f"{type(self).__name__} must implement rebuild_symbol_centrality")
 
+    @abstractmethod
     def get_symbol_centrality(self, names: list[str],
                               allowed_projects: list[str] | None = None) -> dict[str, float]:
         """('graph' capability) ``{bare_symbol_name: score in [0, 1]}``."""
-        raise NotImplementedError(f"{type(self).__name__} must implement get_symbol_centrality")
 
+    @abstractmethod
     def get_refs_from(self, filepath: str, caller_scope: str | None,
                       ref_types: tuple[str, ...] = ("call",)) -> list[SymbolRefRecord]:
         """('graph') References made inside ``caller_scope`` (``module.Class.method``);
         None means every scope of the file."""
-        raise NotImplementedError(f"{type(self).__name__} must implement get_refs_from")
 
+    @abstractmethod
     def find_chunks_by_symbol(self, names: list[str], allowed_projects: list[str] | None = None,
                               limit_per_name: int = 8) -> dict[str, list[ChunkRecord]]:
         """('graph') Definition chunks whose last qualified-name component is in ``names``."""
-        raise NotImplementedError(f"{type(self).__name__} must implement find_chunks_by_symbol")
 
+    @abstractmethod
     def get_chunk_by_qualified_name(self, filepath: str, qualified_name: str) -> ChunkRecord | None:
         """First chunk of ``qualified_name`` in ``filepath`` or None."""
-        raise NotImplementedError(f"{type(self).__name__} must implement get_chunk_by_qualified_name")
 
+    @abstractmethod
     def get_index_generation(self) -> int:
         """Counter incremented by every sync that changed the index."""
-        raise NotImplementedError(f"{type(self).__name__} must implement get_index_generation")
 
+    @abstractmethod
     def bump_index_generation(self) -> int:
         """Increment the generation, delete cache rows of older generations, return it."""
-        raise NotImplementedError(f"{type(self).__name__} must implement bump_index_generation")
 
+    @abstractmethod
     def get_query_cache(self, cache_key: str, index_gen: int) -> Any | None:
         """Cached JSON result for ``cache_key`` at ``index_gen`` or None (miss)."""
-        raise NotImplementedError(f"{type(self).__name__} must implement get_query_cache")
 
+    @abstractmethod
     def set_query_cache(self, cache_key: str, index_gen: int, result: Any) -> None:
-        raise NotImplementedError(f"{type(self).__name__} must implement set_query_cache")
+        """Store ``result`` for ``cache_key`` at generation ``index_gen``."""
 
+    @abstractmethod
     def log_query(self, entry: dict[str, Any]) -> None:
         """Append a query-log entry: timestamp, tool, query, mode, total_ms, cache_hit,
         stages {name: ms}, providers {stage: model_id}, top [[chunk_id, score], ...]."""
-        raise NotImplementedError(f"{type(self).__name__} must implement log_query")
 
+    @abstractmethod
     def get_query_log(self, min_total_ms: float = 0.0, limit: int = 50) -> list[dict[str, Any]]:
         """Newest-first log entries with ``total_ms >= min_total_ms``."""
-        raise NotImplementedError(f"{type(self).__name__} must implement get_query_log")
 
+    @abstractmethod
+    def clear_query_log(self) -> None:
+        """Delete every query-log entry (``telemetry --reset``)."""
+
+    @abstractmethod
     def clear_file_metadata(self, filepath: str) -> None:
         """Delete symbols, refs, annotations, syntax errors and analysis refs of a file
         (but not its file row or chunks)."""
-        raise NotImplementedError(f"{type(self).__name__} must implement clear_file_metadata")
 
     @abstractmethod
     def get_chunks_for_file(self, filepath: str) -> list[ChunkRecord]:
@@ -408,34 +414,14 @@ class StorageBackend(ABC):
     ) -> dict[str, Any]:
         """Optimize full-text indexes, prune missing files, vacuum storage, update format."""
 
+    @abstractmethod
     def get_table_counts(self) -> dict[str, int]:
-        """Return row counts for all core tables without leaking direct SQL queries."""
-        st = self.status()
-        return {
-            "files": st.get("files", 0),
-            "chunks": st.get("chunks", 0),
-            "symbols": st.get("symbols", 0),
-            "syntax_errors": st.get("syntax_errors", 0),
-            "skills": st.get("skills", 0),
-            "contexts": st.get("contexts", 0),
-        }
+        """Row counts of the core tables (files, chunks, symbols, syntax_errors, skills,
+        contexts); ``status`` reports the same numbers."""
 
+    @abstractmethod
     def get_weak_points(self) -> dict[str, Any]:
         """Telemetry weak points: syntax-error density, symbol-heavy files, stale files."""
-        raise NotImplementedError(f"{type(self).__name__} must implement get_weak_points")
-
-    def search_chunks_bm25(self, query: str, limit: int = 10) -> list[SearchResult]:
-        """Convenience alias for search_chunks supporting single-string queries."""
-        tokens = [t for t in query.split() if t.strip()]
-        return self.search_chunks(tokens, top_k=limit)
-
-    def upsert_symbols(self, symbols: list[SymbolRecord]) -> None:
-        """Convenience alias for insert_symbols."""
-        return self.insert_symbols(symbols)
-
-    def search_symbols(self, query: str, limit: int = 10) -> list[SymbolRecord]:
-        """Convenience alias for query_symbols."""
-        return self.query_symbols(query, limit=limit)
 
 
 class VectorCapable(ABC):

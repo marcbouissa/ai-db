@@ -9,17 +9,27 @@ one project are serialised by that project's execution lock, so ``/health`` and 
 projects stay responsive while a long ``sync`` runs.
 
 Auth (fail closed once configured): ``AI_DB_API_KEYS="proj=key,..."`` sets per-project
-keys and ``AI_DB_ADMIN_KEY`` the admin key. With neither set the daemon is open (it binds
-to localhost by default). Otherwise every route except ``/health`` needs
-``Authorization: Bearer <key>``: project routes accept that project's key or the admin
-key; management routes (``/projects``, ``/metrics``, ``/query/cross-project``,
-``/daemon/*``) accept only the admin key.
+keys, ``AI_DB_USER_KEYS="user=key,..."`` per-user keys (shared machines: each user's
+projects are listed in config ``daemon.users.<user>.projects``, ``"*"`` for all) and
+``AI_DB_ADMIN_KEY`` the admin key. With none set the daemon is open (it binds to
+localhost by default). Otherwise every route except ``/health`` needs
+``Authorization: Bearer <key>``: project routes accept that project's key, the key of a
+user allowed that project, or the admin key; management routes (``/projects``,
+``/metrics``, ``/query/cross-project``, ``/daemon/*``) accept only the admin key. A user
+key whose user has no ``daemon.users`` entry opens nothing.
+
+``GET /status/html`` is a read-only status page (projects, model load state, call queue
+and progress, file watching, uptime), served to loopback clients or with the admin key.
+
+``daemon.watch_sync_paths: true`` watches every ``auto_sync_paths`` directory
+(``ai_db.watcher``) and syncs changed files into the project named after the directory.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import html
 import json
 import logging
 import os
@@ -34,10 +44,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from ai_db import VectorDB, load_config
-from ai_db.config import AppConfig, DaemonProjectConfig
+from ai_db.config import AppConfig, DaemonProjectConfig, DaemonUserConfig
 from ai_db.constants import (
     DAEMON_CONFIG_POLL_S,
     DAEMON_IDLE_CHECK_S,
@@ -45,7 +55,9 @@ from ai_db.constants import (
     DAEMON_PROGRESS_KEEPALIVE_S,
     DAEMON_RATE_LIMIT,
     DAEMON_RATE_WINDOW_S,
+    DAEMON_STATUS_REFRESH_S,
     DAEMON_WAL_CHECKPOINT_S,
+    DAEMON_WATCH_DEBOUNCE_MS,
     DEFAULT_DB_FILE,
 )
 from ai_db.daemon.models import (
@@ -66,6 +78,7 @@ from ai_db.dispatcher import ServiceDispatcher
 from ai_db.errors import AiDbError, UnknownToolError
 from ai_db.lazy import release_models
 from ai_db.storage.sqlite_backend import SQLiteBackend
+from ai_db.watcher import awatch_roots
 
 _logger = logging.getLogger("ai_db.daemon")
 
@@ -73,6 +86,8 @@ _logger = logging.getLogger("ai_db.daemon")
 # other route except /health is a management route.
 _PROJECT_ROUTE = re.compile(r"^/projects/(?P<name>[^/]+)/(?:status|tools(?:/.*)?)$")
 _PROJECT_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+STATUS_PAGE = "/status/html"
+_LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 class UnknownProjectError(AiDbError):
@@ -115,6 +130,9 @@ class ProjectPool:
         self.metrics: dict[str, ProjectMetrics] = {}
         self.warmed: set[str] = set()
         self.start_time = time.time()
+        # Status page: calls waiting for a project's execution lock, and the running one.
+        self.waiting: dict[str, int] = {}
+        self.running: dict[str, tuple[str, float]] = {}  # project -> (tool, started)
 
     def _load_lock(self, name: str) -> asyncio.Lock:
         return self._load_locks.setdefault(name, asyncio.Lock())
@@ -266,7 +284,7 @@ class ProjectPool:
         m = self._metrics(name)
         start = time.time()
         try:
-            async with self._exec_lock(name):
+            async with self._exclusive(name, tool):
                 result = await asyncio.to_thread(dispatcher.execute, tool, args, progress)
         except Exception:
             m.requests_errors += 1
@@ -279,6 +297,52 @@ class ProjectPool:
             m.last_access = time.time()
         return result
 
+    @contextlib.asynccontextmanager
+    async def _exclusive(self, name: str, what: str) -> AsyncIterator[None]:
+        """The project's execution lock, counted for the status page while waited on."""
+        self.waiting[name] = self.waiting.get(name, 0) + 1
+        acquired = False
+        try:
+            async with self._exec_lock(name):
+                self.waiting[name] -= 1
+                acquired = True
+                self.running[name] = (what, time.time())
+                try:
+                    yield
+                finally:
+                    self.running.pop(name, None)
+        finally:
+            if not acquired:  # cancelled while queued
+                self.waiting[name] -= 1
+
+    async def sync_root(self, name: str, root: str) -> dict[str, int]:
+        """Full (incremental) sync of ``root`` into project ``name``."""
+        db, _ = await self.get_or_create(name)
+        async with self._exclusive(name, "watch sync"):
+            result: dict[str, int] = await asyncio.to_thread(db.sync, root, name, False)
+            return result
+
+    async def sync_paths(self, name: str, root: str, paths: list[str]) -> dict[str, int]:
+        """Sync only ``paths`` (changed under ``root``) into project ``name``."""
+        db, _ = await self.get_or_create(name)
+        async with self._exclusive(name, "watch sync"):
+            result: dict[str, int] = await asyncio.to_thread(db.sync_paths, root, paths, name)
+            return result
+
+    def model_state(self, name: str) -> dict[str, Any]:
+        """Configured models of a loaded project and whether they are in memory."""
+        db = self.projects.get(name)
+        if db is None:
+            return {"embedding": None, "rerank": None}
+        out: dict[str, Any] = {}
+        for kind, cfg, lazy in (("embedding", db.config.embedding, db.embedder),
+                                ("rerank", db.config.rerank, db.reranker)):
+            if lazy is None:
+                out[kind] = None
+            else:
+                out[kind] = {"model": cfg.options.get("model", cfg.provider), "loaded": lazy.loaded}
+        return out
+
 
 # =============================================================================
 # Daemon state, lifecycle and reload
@@ -286,12 +350,26 @@ class ProjectPool:
 
 
 @dataclass
+class WatchState:
+    """``daemon.watch_sync_paths``: what is watched and what it did (status page)."""
+    roots: dict[str, str] = field(default_factory=dict)  # root -> project
+    batches: int = 0
+    files_synced: int = 0
+    last_sync: float | None = None
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
 class _State:
     pool: ProjectPool | None = None
     tasks: list[asyncio.Task[None]] = field(default_factory=list)
     project_keys: dict[str, str] = field(default_factory=dict)
+    user_keys: dict[str, str] = field(default_factory=dict)
+    users: dict[str, DaemonUserConfig] = field(default_factory=dict)
     admin_key: str | None = None
     reload_lock: asyncio.Lock | None = None
+    watch_task: asyncio.Task[None] | None = None
+    watch: WatchState | None = None
 
 
 _state = _State()
@@ -303,14 +381,25 @@ def get_pool() -> ProjectPool:
     return _state.pool
 
 
-def _load_auth() -> None:
+def _parse_keys(variable: str) -> dict[str, str]:
+    """``"name=key,name2=key2"`` from the environment; empty names/keys are skipped."""
     keys: dict[str, str] = {}
-    for pair in os.environ.get("AI_DB_API_KEYS", "").split(","):
+    for pair in os.environ.get(variable, "").split(","):
         if "=" in pair:
-            project, key = pair.split("=", 1)
-            keys[project.strip()] = key.strip()
-    _state.project_keys = keys
+            name, key = pair.split("=", 1)
+            if name.strip() and key.strip():
+                keys[name.strip()] = key.strip()
+    return keys
+
+
+def _load_auth(config: AppConfig) -> None:
+    _state.project_keys = _parse_keys("AI_DB_API_KEYS")
+    _state.user_keys = _parse_keys("AI_DB_USER_KEYS")
+    _state.users = dict(config.daemon.users)
     _state.admin_key = os.environ.get("AI_DB_ADMIN_KEY") or None
+    unknown = sorted(set(_state.user_keys) - set(_state.users))
+    if unknown:
+        _logger.warning("[daemon] user keys without a daemon.users entry (no access): %s", unknown)
 
 
 async def _start_projects(pool: ProjectPool, previously_loaded: set[str] | None = None) -> None:
@@ -338,8 +427,11 @@ async def reload_daemon_config() -> None:
         new_config = await asyncio.to_thread(load_config)
         new = ProjectPool(new_config, runtime_projects=old.runtime_projects)
         await _start_projects(new, previously_loaded=set(old.projects))
+        await _stop_watching()
         _state.pool = new
+        _state.users = dict(new_config.daemon.users)
         await old.shutdown()
+        _start_watching(new_config)
         _logger.info("[daemon] configuration reloaded from %s", new_config.source_path)
 
 
@@ -350,6 +442,59 @@ async def _every(interval: float, job: Callable[[], Awaitable[None]], what: str)
             await job()
         except Exception:  # a periodic job failing must not stop the daemon
             _logger.exception("[daemon] %s failed", what)
+
+
+def watched_roots(config: AppConfig) -> dict[str, str]:
+    """``{root: project}`` for ``daemon.watch_sync_paths``: every existing
+    ``auto_sync_paths`` directory, synced into the project named after it."""
+    roots: dict[str, str] = {}
+    for path in config.auto_sync_paths:
+        root = os.path.abspath(os.path.expanduser(path))
+        if os.path.isdir(root):
+            roots[root] = os.path.basename(root)
+    return roots
+
+
+async def _watch_sync(roots: dict[str, str], state: WatchState) -> None:
+    """Catch up on changes made while the daemon was down, then sync what changes."""
+    def failed(what: str, exc: Exception) -> None:
+        _logger.error("[daemon] watch sync of %s failed: %s", what, exc, exc_info=exc)
+        state.errors = [*state.errors[-9:], f"{time.strftime('%H:%M:%S')} {what}: {exc}"]
+
+    for root, name in roots.items():
+        try:
+            await get_pool().sync_root(name, root)
+            state.last_sync = time.time()
+        except Exception as exc:  # noqa: BLE001 - one root failing must not stop watching
+            failed(root, exc)
+    async for batch in awatch_roots(list(roots), DAEMON_WATCH_DEBOUNCE_MS):
+        state.batches += 1
+        for root, paths in batch.items():
+            try:
+                await get_pool().sync_paths(roots[root], root, paths)
+                state.files_synced += len(paths)
+                state.last_sync = time.time()
+            except Exception as exc:  # noqa: BLE001 - one batch failing must not stop watching
+                failed(f"{len(paths)} file(s) under {root}", exc)
+
+
+def _start_watching(config: AppConfig) -> None:
+    if not config.daemon.watch_sync_paths:
+        _state.watch = None
+        return
+    roots = watched_roots(config)
+    _state.watch = WatchState(roots=roots)
+    if roots:
+        _state.watch_task = asyncio.create_task(_watch_sync(roots, _state.watch))
+        _logger.info("[daemon] watching %s", ", ".join(f"{r} -> {p}" for r, p in roots.items()))
+
+
+async def _stop_watching() -> None:
+    task, _state.watch_task = _state.watch_task, None
+    if task is not None:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 def _config_watcher(config_path: str | None) -> Callable[[], Awaitable[None]]:
@@ -372,10 +517,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The CLI exports AI_DB_CONFIG (incl. `ai-db --config X daemon start`), so the
     # daemon reads the same file the user pointed at.
     config = await asyncio.to_thread(load_config)
-    _load_auth()
+    _load_auth(config)
     _state.pool = ProjectPool(config)
     _state.reload_lock = asyncio.Lock()
     await _start_projects(_state.pool)
+    _start_watching(config)
     _state.tasks = [
         asyncio.create_task(_every(DAEMON_CONFIG_POLL_S, _config_watcher(config.source_path),
                                    "config reload")),
@@ -387,6 +533,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await _stop_watching()
+        _state.watch = None
         for task in _state.tasks:
             task.cancel()
         for task in _state.tasks:
@@ -403,22 +551,76 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 # =============================================================================
 
 
+def _auth_enabled() -> bool:
+    return bool(_state.project_keys or _state.user_keys or _state.admin_key)
+
+
+def _bearer(authorization: str | None) -> str | None:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    return authorization[len("Bearer "):]
+
+
+def _is_admin(token: str | None) -> bool:
+    return bool(token and _state.admin_key and secrets.compare_digest(token, _state.admin_key))
+
+
+def _user_of(token: str) -> str | None:
+    """The user whose key ``token`` is (every key is compared, in constant time)."""
+    found = None
+    for user, key in _state.user_keys.items():
+        if secrets.compare_digest(token, key):
+            found = user
+    return found
+
+
 def _auth_failure(path: str, authorization: str | None) -> tuple[int, str] | None:
     """``(status, detail)`` when the request is not allowed, else None."""
-    if path == "/health" or (not _state.project_keys and not _state.admin_key):
+    if path == "/health" or not _auth_enabled():
+        return None
+    token = _bearer(authorization)
+    if token is None:
+        return 401, "Missing or invalid Authorization header"
+    if _is_admin(token):
         return None
     match = _PROJECT_ROUTE.match(path)
-    accepted = [k for k in (_state.admin_key,) if k]
     if match:
-        project_key = _state.project_keys.get(match["name"])
-        if project_key:
-            accepted.append(project_key)
-    if not authorization or not authorization.startswith("Bearer "):
-        return 401, "Missing or invalid Authorization header"
-    token = authorization[len("Bearer "):]
-    if not any(secrets.compare_digest(token, k) for k in accepted):
-        return 403, "Invalid API key for this route"
-    return None
+        name = match["name"]
+        project_key = _state.project_keys.get(name)
+        if project_key and secrets.compare_digest(token, project_key):
+            return None
+        user = _user_of(token)
+        if user is not None:
+            allowed = _state.users.get(user)
+            if allowed is not None and allowed.allows(name):
+                return None
+            return 403, f"User '{user}' may not use project '{name}'"
+    return 403, "Invalid API key for this route"
+
+
+def _status_page_failure(client_ip: str, authorization: str | None) -> tuple[int, str] | None:
+    """The status page is for loopback clients, or anyone with the admin key."""
+    if client_ip in _LOOPBACK or _is_admin(_bearer(authorization)):
+        return None
+    if _bearer(authorization) is None:
+        return 401, "The status page needs a loopback client or the admin key"
+    return 403, "The status page needs a loopback client or the admin key"
+
+
+def _caller(authorization: str | None) -> str:
+    """Who is calling, for the access log (never the key)."""
+    token = _bearer(authorization)
+    if token is None:
+        return "-"
+    if _is_admin(token):
+        return "admin"
+    user = _user_of(token)
+    if user is not None:
+        return f"user:{user}"
+    for project, key in _state.project_keys.items():
+        if secrets.compare_digest(token, key):
+            return f"project:{project}"
+    return "unknown"
 
 
 class RateLimiter:
@@ -453,7 +655,9 @@ async def guard(request: Request, call_next: Callable[[Request], Awaitable[Respo
     path = request.url.path
     project = _route_project(path)
     client_ip = request.client.host if request.client else "unknown"
-    failure = _auth_failure(path, request.headers.get("Authorization"))
+    authorization = request.headers.get("Authorization")
+    failure = (_status_page_failure(client_ip, authorization) if path == STATUS_PAGE
+               else _auth_failure(path, authorization))
     if failure is not None:
         response: Response = JSONResponse(status_code=failure[0], content={"detail": failure[1]})
     elif path != "/health" and not rate_limiter.is_allowed(
@@ -464,6 +668,7 @@ async def guard(request: Request, call_next: Callable[[Request], Awaitable[Respo
         response = await call_next(request)
     _logger.info(json.dumps({
         "method": request.method, "path": path, "project": project, "client_ip": client_ip,
+        "caller": _caller(authorization),
         "status_code": response.status_code, "duration_ms": round((time.time() - start) * 1000, 2),
     }))
     return response
@@ -511,6 +716,103 @@ async def health() -> DaemonHealth:
     pool = get_pool()
     projects = await asyncio.to_thread(pool.list_projects)
     return DaemonHealth(status="ok", projects=projects, uptime_seconds=time.time() - pool.start_time)
+
+
+def status_snapshot() -> dict[str, Any]:
+    """Everything the status page shows (no keys, no request contents)."""
+    pool = get_pool()
+    projects = pool.list_projects()
+    now = time.time()
+    rows = []
+    for name in sorted(projects):
+        st = projects[name]
+        m = pool.metrics.get(name, ProjectMetrics())
+        running = pool.running.get(name)
+        rows.append({
+            "name": name, "loaded": st.loaded, "db_path": st.db_path, "files": st.files,
+            "chunks": st.chunks, "symbols": st.symbols, "size_kb": st.size_kb,
+            "warmed": name in pool.warmed, "models": pool.model_state(name),
+            "requests": m.requests_total, "errors": m.requests_errors,
+            "avg_latency_ms": round(m.latency_sum_ms / m.requests_total, 1) if m.requests_total else 0.0,
+            "last_access": m.last_access or None,
+            "running": ({"tool": running[0], "for_s": round(now - running[1], 1)} if running else None),
+            "waiting": pool.waiting.get(name, 0),
+        })
+    watch = _state.watch
+    return {
+        "uptime_s": round(now - pool.start_time, 1),
+        "auth": ("open" if not _auth_enabled() else
+                 f"{len(_state.project_keys)} project key(s), {len(_state.user_keys)} user key(s), "
+                 f"admin key {'set' if _state.admin_key else 'not set'}"),
+        "projects": rows,
+        "progress_streams": sorted(pool._progress),
+        "watch": None if watch is None else {
+            "roots": dict(watch.roots), "batches": watch.batches,
+            "files_synced": watch.files_synced, "last_sync": watch.last_sync,
+            "errors": list(watch.errors)},
+    }
+
+
+def _ago(ts: float | None) -> str:
+    return "never" if not ts else f"{time.time() - ts:.0f} s ago"
+
+
+def render_status_page(snap: dict[str, Any]) -> str:
+    """The status snapshot as a self-refreshing HTML page (every value escaped)."""
+    e = html.escape
+
+    def model(m: dict[str, Any] | None) -> str:
+        if m is None:
+            return "none"
+        return f"{e(str(m['model']))} ({'loaded' if m['loaded'] else 'not loaded'})"
+
+    rows = []
+    for p in snap["projects"]:
+        running = (f"{e(p['running']['tool'])} for {p['running']['for_s']} s" if p["running"] else "idle")
+        rows.append(
+            "<tr>" + "".join(f"<td>{c}</td>" for c in (
+                e(p["name"]), "loaded" if p["loaded"] else "not loaded", p["files"], p["chunks"],
+                p["symbols"], p["size_kb"], model(p["models"]["embedding"]),
+                model(p["models"]["rerank"]), "yes" if p["warmed"] else "no", running, p["waiting"],
+                p["requests"], p["errors"], p["avg_latency_ms"], _ago(p["last_access"]))) + "</tr>")
+    watch = snap["watch"]
+    if watch is None:
+        watch_html = "<p>File watching is off (<code>daemon.watch_sync_paths</code>).</p>"
+    else:
+        roots = "".join(f"<li><code>{e(r)}</code> &rarr; {e(p)}</li>" for r, p in watch["roots"].items())
+        errors = "".join(f"<li>{e(x)}</li>" for x in watch["errors"]) or "<li>none</li>"
+        watch_html = (f"<ul>{roots or '<li>no existing auto_sync_paths directory</li>'}</ul>"
+                      f"<p>{watch['batches']} change batch(es), {watch['files_synced']} file(s) synced, "
+                      f"last sync {_ago(watch['last_sync'])}.</p><p>Recent errors:</p><ul>{errors}</ul>")
+    streams = ", ".join(e(t) for t in snap["progress_streams"]) or "none"
+    head = ("Project", "State", "Files", "Chunks", "Symbols", "KB", "Embedding", "Rerank", "Warmed",
+            "Running", "Queued", "Calls", "Errors", "Avg ms", "Last call")
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="{DAEMON_STATUS_REFRESH_S}">
+<title>ai-db daemon</title>
+<style>
+body {{ font: 14px system-ui, sans-serif; margin: 1.5em; color: #222; background: #fff; }}
+table {{ border-collapse: collapse; }} td, th {{ border: 1px solid #ccc; padding: 3px 8px; text-align: left; }}
+th {{ background: #f2f2f2; }} code {{ font-size: 13px; }}
+</style></head><body>
+<h1>ai-db daemon</h1>
+<p>Up {snap['uptime_s']:.0f} s. Auth: {e(snap['auth'])}. Read-only; refreshes every {DAEMON_STATUS_REFRESH_S} s.</p>
+<h2>Projects</h2>
+<table><tr>{''.join(f'<th>{h}</th>' for h in head)}</tr>
+{''.join(rows) or '<tr><td colspan="15">no project</td></tr>'}
+</table>
+<h2>Progress streams</h2><p>{streams}</p>
+<h2>File watching</h2>{watch_html}
+</body></html>
+"""
+
+
+@app.get(STATUS_PAGE, response_class=HTMLResponse)
+async def status_page() -> HTMLResponse:
+    """Read-only HTML status (loopback clients or the admin key; see the middleware)."""
+    snap = await asyncio.to_thread(status_snapshot)
+    return HTMLResponse(render_status_page(snap))
 
 
 @app.get("/metrics", response_model=MetricsResponse)

@@ -1,10 +1,10 @@
-{"query": "where is bm25 ranking of chunks done", "expected": [{"filepath": "ai_db/storage/sqlite_backend.py", "symbol": "search_chunks"}], "kind": "locate"}
-{"query": "insert chunks compress content into fts index", "expected": [{"filepath": "ai_db/storage/sqlite_backend.py", "symbol": "insert_chunks"}], "kind": "locate"}
-{"query": "delete file cascade remove symbols annotations", "expected": [{"filepath": "ai_db/storage/sqlite_backend.py", "symbol": "delete_file"}], "kind": "locate"}
+{"query": "where is bm25 ranking of chunks done", "expected": [{"filepath": "ai_db/storage/sqlite_repos/chunks.py", "symbol": "search_chunks"}], "kind": "locate"}
+{"query": "insert chunks compress content into fts index", "expected": [{"filepath": "ai_db/storage/sqlite_repos/chunks.py", "symbol": "insert_chunks"}], "kind": "locate"}
+{"query": "delete file cascade remove symbols annotations", "expected": [{"filepath": "ai_db/storage/sqlite_repos/chunks.py", "symbol": "delete_file"}], "kind": "locate"}
 {"query": "nested transaction savepoint rollback", "expected": [{"filepath": "ai_db/storage/sqlite_backend.py", "symbol": "transaction"}], "kind": "locate"}
 {"query": "create tables schema initialize wal pragmas", "expected": [{"filepath": "ai_db/storage/sqlite_backend.py", "symbol": "initialize"}], "kind": "locate"}
 {"query": "vacuum optimize fts and prune missing files", "expected": [{"filepath": "ai_db/storage/sqlite_backend.py", "symbol": "optimize"}], "kind": "locate"}
-{"query": "semantic cache lookup by file hash", "expected": [{"filepath": "ai_db/storage/sqlite_backend.py", "symbol": "get_semantic_cache"}], "kind": "locate"}
+{"query": "semantic cache lookup by file hash", "expected": [{"filepath": "ai_db/storage/sqlite_repos/cache.py", "symbol": "get_semantic_cache"}], "kind": "locate"}
 {"query": "find callers of a symbol cross references", "expected": [{"filepath": "ai_db/search/query.py", "symbol": "query_callers"}], "kind": "locate"}
 {"query": "query symbol exact resolution", "expected": [{"filepath": "ai_db/search/query.py", "symbol": "query_symbol"}], "kind": "locate"}
 {"query": "chunk markdown by headers", "expected": [{"filepath": "ai_db/parser/chunker.py", "symbol": "chunk_file"}], "kind": "locate"}
@@ -26,15 +26,15 @@
 {"query": "index SKILL.md files", "expected": [{"filepath": "ai_db/search/skills.py", "symbol": "sync_skills"}], "kind": "locate"}
 {"query": "save session context memory", "expected": [{"filepath": "ai_db/memory/context.py", "symbol": "save_context"}], "kind": "locate"}
 {"query": "search stored contexts", "expected": [{"filepath": "ai_db/memory/context.py", "symbol": "query_contexts"}], "kind": "locate"}
-{"query": "progressive disclosure analyze file depth structure targeted", "expected": [{"filepath": "ai_db/analyzer/engine.py", "symbol": "analyze_file"}], "kind": "explain"}
-{"query": "analyze many files with token budget and cursor", "expected": [{"filepath": "ai_db/analyzer/engine.py", "symbol": "analyze_batch"}], "kind": "locate"}
-{"query": "locate targets for a question", "expected": [{"filepath": "ai_db/analyzer/engine.py", "symbol": "locate_targets"}], "kind": "locate"}
-{"query": "expand opaque ref handle", "expected": [{"filepath": "ai_db/analyzer/references.py", "symbol": "expand_ref"}], "kind": "locate"}
-{"query": "diff spans since git ref", "expected": [{"filepath": "ai_db/analyzer/references.py", "symbol": "_diff_spans"}], "kind": "locate"}
-{"query": "format output as s-expression", "expected": [{"filepath": "ai_db/analyzer/formatters.py", "symbol": "format_as_sexp"}], "kind": "locate"}
-{"query": "stub formatter output", "expected": [{"filepath": "ai_db/analyzer/formatters.py", "symbol": "format_as_stub"}], "kind": "locate"}
-{"query": "record query latency percentiles telemetry", "expected": [{"filepath": "ai_db/telemetry/tracker.py", "symbol": "record_query"}], "kind": "locate"}
-{"query": "token savings compression telemetry", "expected": [{"filepath": "ai_db/telemetry/tracker.py", "symbol": "record_token_compression"}], "kind": "locate"}
+{"query": "progressive disclosure analyze file depth structure targeted", "expected": [{"filepath": "ai_db/analysis/analyze.py", "symbol": "analyze_file"}], "kind": "explain"}
+{"query": "analyze many files with token budget and cursor", "expected": [{"filepath": "ai_db/analysis/analyze.py", "symbol": "analyze_batch"}], "kind": "locate"}
+{"query": "locate targets for a question", "expected": [{"filepath": "ai_db/analysis/analyze.py", "symbol": "locate_targets"}], "kind": "locate"}
+{"query": "expand opaque ref handle", "expected": [{"filepath": "ai_db/analysis/refs.py", "symbol": "expand_ref"}], "kind": "locate"}
+{"query": "diff spans since git ref", "expected": [{"filepath": "ai_db/analysis/diff.py", "symbol": "file_diff"}], "kind": "locate"}
+{"query": "format output as s-expression", "expected": [{"filepath": "ai_db/analysis/formatters.py", "symbol": "format_as_sexp"}], "kind": "locate"}
+{"query": "stub formatter output", "expected": [{"filepath": "ai_db/analysis/formatters.py", "symbol": "format_as_stub"}], "kind": "locate"}
+{"query": "record query latency percentiles telemetry", "expected": [{"filepath": "ai_db/telemetry/tracker.py", "symbol": "_latency"}], "kind": "locate"}
+{"query": "token savings compression telemetry", "expected": [{"filepath": "ai_db/analysis/formatters.py", "symbol": "annotate_formatted_tokens"}], "kind": "locate"}
 {"query": "tool registry dispatch execute validate required parameters", "expected": [{"filepath": "ai_db/dispatcher.py", "symbol": "execute"}], "kind": "locate"}
-{"query": "stdio json-rpc mcp server request handling", "expected": [{"filepath": "mcp_server.py", "symbol": "handle_request"}], "kind": "locate"}
+{"query": "stdio json-rpc mcp server request handling", "expected": [{"filepath": "ai_db/transports/mcp.py", "symbol": "handle_request"}], "kind": "locate"}
 {"query": "http server post endpoint json", "expected": [{"filepath": "ai_db/server/http_server.py", "symbol": "do_POST"}], "kind": "locate"}

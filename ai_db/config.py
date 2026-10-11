@@ -15,6 +15,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from ai_db.constants import DEFAULT_DOC_WEIGHT, DEFAULT_RERANK_TOP_N
 from ai_db.errors import AiDbConfigError
 from ai_db.parser.languages import SUPPORTED_LANGUAGES, validate_languages
 
@@ -22,10 +23,8 @@ CONFIG_VERSION = 2
 
 RETRIEVAL_MODES = ("lexical", "hybrid")
 
-# v2 defaults. Defined here (next to CONFIG_VERSION) because both `parse_config`
-# fallbacks and `config_template` must agree on them.
-DEFAULT_DOC_WEIGHT = 0.5
-DEFAULT_RERANK_TOP_N = 10
+# v2 defaults. `parse_config` fallbacks, `config_template` and the Ranker must agree on
+# them; the two weights live in constants (the Ranker imports no config).
 DEFAULT_INDEX_IGNORE: list[str] = [".agents/**"]
 
 # provider -> (required option keys, optional option keys)
@@ -88,7 +87,6 @@ class IndexConfig:
 @dataclass(frozen=True)
 class RetrievalConfig:
     mode: str
-    doc_weight: float = DEFAULT_DOC_WEIGHT
 
 
 @dataclass(frozen=True)
@@ -110,6 +108,16 @@ class DaemonProjectConfig:
 
 
 @dataclass(frozen=True)
+class DaemonUserConfig:
+    """A daemon user (key in ``AI_DB_USER_KEYS``) and the projects that key may use;
+    ``"*"`` allows every project (management routes stay admin-only)."""
+    projects: tuple[str, ...] = ()
+
+    def allows(self, project: str) -> bool:
+        return "*" in self.projects or project in self.projects
+
+
+@dataclass(frozen=True)
 class DaemonConfig:
     enabled: bool = False
     host: str = "127.0.0.1"
@@ -118,6 +126,9 @@ class DaemonConfig:
     projects: dict[str, DaemonProjectConfig] = field(default_factory=dict)
     auto_discover: bool = True
     shutdown_timeout: float = 30.0
+    users: dict[str, DaemonUserConfig] = field(default_factory=dict)
+    # Watch `auto_sync_paths` and sync changed files into their projects.
+    watch_sync_paths: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -127,10 +138,12 @@ class DaemonConfig:
             "pid_file": self.pid_file,
             "auto_discover": self.auto_discover,
             "shutdown_timeout": self.shutdown_timeout,
+            "watch_sync_paths": self.watch_sync_paths,
             "projects": {
                 name: {"db_path": p.db_path, "config_path": p.config_path, "auto_start": p.auto_start}
                 for name, p in self.projects.items()
             },
+            "users": {name: {"projects": list(u.projects)} for name, u in self.users.items()},
         }
 
 
@@ -169,7 +182,7 @@ class AppConfig:
         return {
             "version": self.version,
             "storage": {"provider": self.storage.provider, "options": dict(self.storage.options)},
-            "retrieval": {"mode": self.retrieval.mode, "doc_weight": self.retrieval.doc_weight},
+            "retrieval": {"mode": self.retrieval.mode},
             "embedding": {"provider": self.embedding.provider, **self.embedding.options},
             "rerank": {"provider": self.rerank.provider, "top_n": self.rerank.top_n, **self.rerank.options},
             "index": {"doc_weight": self.index.doc_weight, "ignore": self.index.ignore,
@@ -281,13 +294,15 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
     )
 
     retrieval_raw = _require_dict(data["retrieval"], "retrieval")
-    _check_keys(retrieval_raw, frozenset({"mode", "doc_weight"}), "retrieval")
+    if "doc_weight" in retrieval_raw:
+        # Parsed and validated but never read: the Ranker always used index.doc_weight.
+        raise AiDbConfigError(
+            "'retrieval.doc_weight' is no longer accepted (it never had an effect; the "
+            "weight is 'index.doc_weight'). Run: ai-db init --migrate")
+    _check_keys(retrieval_raw, frozenset({"mode"}), "retrieval")
     mode = os.environ.get("AI_DB_RETRIEVAL_MODE") or retrieval_raw.get("mode")
     if mode not in RETRIEVAL_MODES:
         raise AiDbConfigError(f"'retrieval.mode' must be one of {RETRIEVAL_MODES}, got {mode!r}")
-    doc_weight = retrieval_raw.get("doc_weight", DEFAULT_DOC_WEIGHT)
-    if not isinstance(doc_weight, (int, float)) or not (0.0 < doc_weight <= 1.0):
-        raise AiDbConfigError("'retrieval.doc_weight' must be a float in (0.0, 1.0]")
 
     embedding = _parse_provider(data["embedding"], "embedding", EMBEDDING_PROVIDERS)
     rerank_raw = _require_dict(data["rerank"], "rerank")
@@ -408,7 +423,8 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
 
     # Parse daemon configuration
     daemon_raw = _require_dict(data.get("daemon", {}), "daemon")
-    _check_keys(daemon_raw, frozenset({"enabled", "host", "port", "pid_file", "projects", "auto_discover", "shutdown_timeout"}), "daemon")
+    _check_keys(daemon_raw, frozenset({"enabled", "host", "port", "pid_file", "projects", "auto_discover",
+                                       "shutdown_timeout", "users", "watch_sync_paths"}), "daemon")
     daemon_enabled = bool(daemon_raw.get("enabled", False))
     daemon_host = daemon_raw.get("host", "127.0.0.1")
     if not isinstance(daemon_host, str):
@@ -440,6 +456,18 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         auto_start = bool(proj_section.get("auto_start", True))
         daemon_projects[proj_name] = DaemonProjectConfig(db_path=db_path, config_path=config_path, auto_start=auto_start)
 
+    daemon_users: dict[str, DaemonUserConfig] = {}
+    for user_name, user_data in _require_dict(daemon_raw.get("users", {}), "daemon.users").items():
+        user_section = _require_dict(user_data, f"daemon.users.{user_name}")
+        _check_keys(user_section, frozenset({"projects"}), f"daemon.users.{user_name}")
+        allowed = user_section.get("projects", [])
+        if not isinstance(allowed, list) or not all(isinstance(p, str) for p in allowed):
+            raise AiDbConfigError(f"'daemon.users.{user_name}.projects' must be a list of project names")
+        daemon_users[user_name] = DaemonUserConfig(projects=tuple(allowed))
+    watch_sync_paths = daemon_raw.get("watch_sync_paths", False)
+    if not isinstance(watch_sync_paths, bool):
+        raise AiDbConfigError("'daemon.watch_sync_paths' must be true or false")
+
     daemon = DaemonConfig(
         enabled=daemon_enabled,
         host=daemon_host,
@@ -448,12 +476,14 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         projects=daemon_projects,
         auto_discover=daemon_auto_discover,
         shutdown_timeout=daemon_shutdown_timeout,
+        users=daemon_users,
+        watch_sync_paths=watch_sync_paths,
     )
 
     return AppConfig(
         version=CONFIG_VERSION,
         storage=storage,
-        retrieval=RetrievalConfig(mode=mode, doc_weight=doc_weight),
+        retrieval=RetrievalConfig(mode=mode),
         embedding=embedding,
         rerank=rerank,
         cross_project=cross,

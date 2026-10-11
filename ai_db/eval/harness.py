@@ -1,14 +1,16 @@
 """Run a golden query set against an index and report averaged retrieval metrics."""
 
+import contextlib
 import json
 import os
-import shutil
 import statistics
 import subprocess
+import tempfile
 import time
+from collections.abc import Iterator
 from typing import Any
 
-from ai_db.constants import DEFAULT_SKILL_DIRS
+from ai_db.constants import DEFAULT_SKILL_DIRS, EVAL_GIT_TIMEOUT_S
 from ai_db.errors import AiDbConfigError
 from ai_db.eval.metrics import mrr, ndcg_at_k, recall_at_k
 
@@ -38,22 +40,28 @@ def load_golden(golden_path: str) -> list[dict[str, Any]]:
     return items
 
 
-def materialize_tracked(root: str, dest: str) -> str:
-    """Copy the git-tracked files of ``root`` (working-tree versions) into ``dest``.
+@contextlib.contextmanager
+def git_worktree(repo: str, dest: str, rev: str = "HEAD") -> Iterator[str]:
+    """A detached git worktree of ``repo`` at ``rev`` in ``dest``, removed on exit.
 
-    Makes eval results independent of untracked/ignored local files.
+    The eval corpus is the committed tree (no untracked or ignored local files), and it
+    is a real git checkout, so diff-mode items can run ``git diff`` in it.
     """
-    out = subprocess.run(["git", "-C", root, "ls-files", "-z"], capture_output=True, check=True)
-    for rel in out.stdout.decode("utf-8").split("\0"):
-        if not rel:
-            continue
-        src = os.path.join(root, rel)
-        if not os.path.isfile(src):
-            continue  # deleted in the working tree
-        target = os.path.join(dest, rel)
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        shutil.copy2(src, target)
-    return dest
+    _git(repo, "worktree", "add", "--detach", "--quiet", dest, rev)
+    try:
+        yield dest
+    finally:
+        _git(repo, "worktree", "remove", "--force", dest)
+
+
+def _git(repo: str, *args: str) -> None:
+    try:
+        subprocess.run(["git", "-C", repo, *args], capture_output=True, check=True,
+                       timeout=EVAL_GIT_TIMEOUT_S)
+    except subprocess.CalledProcessError as exc:
+        raise AiDbConfigError(
+            f"git {' '.join(args)} failed in {repo}: {exc.stderr.decode(errors='replace').strip()}"
+        ) from exc
 
 
 def _expected_tuples(item: dict[str, Any]) -> list[tuple[str, str | None]]:
@@ -233,23 +241,37 @@ def run_pack(golden_path: str, root: str, db: Any, budget_tokens: int = 8000,
     tokens: list[int] = []
     latencies: list[float] = []
     per_query: list[dict[str, Any]] = []
-    for item in golden:
-        t0 = time.perf_counter()
-        # Diff-mode items name the git ref to diff against; the other modes
-        # have no such field and must not be handed a made-up one.
-        if item["kind"] == "diff" and not item.get("since"):
-            raise ValueError(
-                f"diff golden item {item['query']!r} needs a 'since' git ref")
-        pack = db.investigate(item["query"], budget_tokens=budget_tokens, mode=item["kind"],
-                              project=EVAL_PROJECT, since=item.get("since"),
-                              root=item.get("root", root))
-        latencies.append((time.perf_counter() - t0) * 1000.0)
-        ranked = [(os.path.relpath(e["filepath"], root), e["qualified_name"]) for e in pack["evidence"]]
-        r = recall_at_k(ranked, _expected_tuples(item), len(ranked) or 1)
-        recalls.append(r)
-        tokens.append(pack["token_count"])
-        per_query.append({"query": item["query"], "mode": item["kind"], "pack_recall": r,
-                          "tokens": pack["token_count"]})
+    with contextlib.ExitStack() as stack:
+        # `A..B` diff items: the index must be the tree at B, not the working tree, or
+        # the diff's line spans land on unrelated chunks. One worktree + project per B.
+        snapshots: dict[str, tuple[str, str]] = {}
+        for item in golden:
+            # Diff-mode items name the git ref to diff against; the other modes
+            # have no such field and must not be handed a made-up one.
+            if item["kind"] == "diff" and not item.get("since"):
+                raise ValueError(
+                    f"diff golden item {item['query']!r} needs a 'since' git ref")
+            item_root, project, since = item.get("root", root), EVAL_PROJECT, item.get("since")
+            if item["kind"] == "diff" and since and ".." in since:
+                base, _, head = since.partition("..")
+                if head not in snapshots:
+                    tmp = stack.enter_context(tempfile.TemporaryDirectory(prefix="ai_db_eval_rev_"))
+                    tree = stack.enter_context(git_worktree(root, os.path.join(tmp, "tree"), head))
+                    snapshots[head] = (tree, f"{EVAL_PROJECT}@{head[:12]}")
+                    db.sync(tree, project=snapshots[head][1], verbose=False)
+                item_root, project = snapshots[head]
+                since = base
+            t0 = time.perf_counter()
+            pack = db.investigate(item["query"], budget_tokens=budget_tokens, mode=item["kind"],
+                                  project=project, since=since, root=item_root)
+            latencies.append((time.perf_counter() - t0) * 1000.0)
+            ranked = [(os.path.relpath(e["filepath"], item_root), e["qualified_name"])
+                      for e in pack["evidence"]]
+            r = recall_at_k(ranked, _expected_tuples(item), len(ranked) or 1)
+            recalls.append(r)
+            tokens.append(pack["token_count"])
+            per_query.append({"query": item["query"], "mode": item["kind"], "pack_recall": r,
+                              "tokens": pack["token_count"]})
     return {
         "queries": len(golden),
         "budget_tokens": budget_tokens,

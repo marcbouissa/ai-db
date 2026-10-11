@@ -28,16 +28,17 @@ from typing import Any
 
 from ai_db.constants import (
     MAX_CHUNK_TOKENS,
+    META_MAX_CHARS,
     TEXT_WINDOW_LINES,
     TEXT_WINDOW_OVERLAP,
 )
-from ai_db.parser.languages import SUPPORTED_LANGUAGES, declared_name, enabled_language_for
+from ai_db.parser.languages import SUPPORTED_LANGUAGES, enabled_language_for
 from ai_db.parser.languages import language_for as _language_for
+from ai_db.parser.naming import SCOPE_CONTAINERS, definition_name, qualified_name
 from ai_db.tokens import count_tokens
 from ai_db.utils import strip_code_bloat
 
 META_FILES = ("package.json", "METADATA", "pyproject.toml")
-META_MAX_CHARS = 1500
 
 
 @cache
@@ -60,65 +61,65 @@ class LangSpec:
 _JS_FUNCS = frozenset({"function_declaration", "generator_function_declaration", "method_definition"})
 _JS_WRAPPERS = {"export_statement": "declaration"}
 _JS_VARS = frozenset({"lexical_declaration", "variable_declaration"})
-_TS_CONTAINERS = frozenset({"class_declaration", "abstract_class_declaration", "interface_declaration"})
 _TS_LEAVES = frozenset({"type_alias_declaration", "enum_declaration"})
 
 LANG_SPECS: dict[str, LangSpec] = {
     "python": LangSpec(
         comment="#",
         funcs=frozenset({"function_definition"}),
-        containers=frozenset({"class_definition"}),
+        containers=SCOPE_CONTAINERS["python"],
         wrappers={"decorated_definition": "definition"},
     ),
     "javascript": LangSpec(
-        comment="//", funcs=_JS_FUNCS, containers=frozenset({"class_declaration"}),
+        comment="//", funcs=_JS_FUNCS, containers=SCOPE_CONTAINERS["javascript"],
         wrappers=_JS_WRAPPERS, var_decls=_JS_VARS,
     ),
     "typescript": LangSpec(
-        comment="//", funcs=_JS_FUNCS, containers=_TS_CONTAINERS, leaves=_TS_LEAVES,
+        comment="//", funcs=_JS_FUNCS, containers=SCOPE_CONTAINERS["typescript"], leaves=_TS_LEAVES,
         wrappers=_JS_WRAPPERS, var_decls=_JS_VARS,
     ),
     "tsx": LangSpec(
-        comment="//", funcs=_JS_FUNCS, containers=_TS_CONTAINERS, leaves=_TS_LEAVES,
+        comment="//", funcs=_JS_FUNCS, containers=SCOPE_CONTAINERS["tsx"], leaves=_TS_LEAVES,
         wrappers=_JS_WRAPPERS, var_decls=_JS_VARS,
     ),
     "go": LangSpec(
         comment="//",
         funcs=frozenset({"function_declaration", "method_declaration"}),
-        containers=frozenset(),
+        containers=SCOPE_CONTAINERS["go"],
         leaves=frozenset({"type_declaration"}),
     ),
     "rust": LangSpec(
         comment="//",
         funcs=frozenset({"function_item"}),
-        containers=frozenset({"impl_item", "trait_item", "mod_item"}),
+        containers=SCOPE_CONTAINERS["rust"],
         leaves=frozenset({"struct_item", "enum_item", "type_item"}),
     ),
     "c": LangSpec(
         comment="//",
         funcs=frozenset({"function_definition"}),
-        containers=frozenset(),
+        containers=SCOPE_CONTAINERS["c"],
         leaves=frozenset({"struct_specifier", "enum_specifier", "type_definition"}),
     ),
     "cpp": LangSpec(
         comment="//",
         funcs=frozenset({"function_definition"}),
-        containers=frozenset({"class_specifier", "struct_specifier", "namespace_definition"}),
+        containers=SCOPE_CONTAINERS["cpp"],
         leaves=frozenset({"enum_specifier", "type_definition"}),
+        # `template <...>` wraps the function/class it declares (no field: last child)
+        wrappers={"template_declaration": "declaration"},
     ),
     "java": LangSpec(
         comment="//",
         funcs=frozenset({"method_declaration", "constructor_declaration"}),
-        containers=frozenset({"class_declaration", "interface_declaration", "enum_declaration"}),
+        containers=SCOPE_CONTAINERS["java"],
     ),
     "csharp": LangSpec(
         comment="//",
         funcs=frozenset({"method_declaration", "constructor_declaration", "destructor_declaration",
                          "operator_declaration"}),
         # Namespaces are containers so their classes are chunked (and qualified) like
-        # the call graph names them (ts_graph._QUALIFYING_NODES).
-        containers=frozenset({"namespace_declaration", "class_declaration", "struct_declaration",
-                              "interface_declaration", "record_declaration"}),
+        # the call graph names them (ai_db.parser.naming).
+        containers=SCOPE_CONTAINERS["csharp"],
         leaves=frozenset({"enum_declaration", "delegate_declaration"}),
     ),
     # Apple Pkl. Module-level properties (the config values) stay in the module
@@ -126,7 +127,7 @@ LANG_SPECS: dict[str, LangSpec] = {
     "pkl": LangSpec(
         comment="//",
         funcs=frozenset({"classMethod"}),
-        containers=frozenset({"clazz"}),
+        containers=SCOPE_CONTAINERS["pkl"],
         leaves=frozenset({"typeAlias"}),
     ),
 }
@@ -242,41 +243,8 @@ class _CodeChunker:
         return self.source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
 
     def _name(self, node: Any) -> str:
-        t = node.type
-        if t == "method_declaration" and self.b.language == "go":
-            recv = node.child_by_field_name("receiver")
-            name = node.child_by_field_name("name")
-            recv_type = ""
-            if recv is not None:
-                for ident in _descendants(recv):
-                    if ident.type == "type_identifier":
-                        recv_type = self._text(ident)
-                        break
-            base = self._text(name) if name is not None else "?"
-            return f"{recv_type}.{base}" if recv_type else base
-        if t == "type_declaration":
-            for spec in node.named_children:
-                spec_name = spec.child_by_field_name("name")
-                if spec_name is not None:
-                    return self._text(spec_name)
-        if t == "impl_item":
-            typ = node.child_by_field_name("type")
-            trait = node.child_by_field_name("trait")
-            typ_s = self._text(typ) if typ is not None else "?"
-            return f"{self._text(trait)} for {typ_s}" if trait is not None else typ_s
-        if t == "function_definition" and self.b.language in ("c", "cpp"):
-            decl = node.child_by_field_name("declarator")
-            while decl is not None and decl.type != "function_declarator":
-                decl = decl.child_by_field_name("declarator")
-            if decl is not None:
-                inner = decl.child_by_field_name("declarator")
-                if inner is not None:
-                    return self._text(inner).replace("::", ".")
-            return "?"
-        name = declared_name(node)
-        if name is not None:
-            return self._text(name)
-        return f"L{node.start_point[0] + 1}"
+        name = definition_name(node, self.source, self.b.language)
+        return name if name is not None else f"L{node.start_point[0] + 1}"
 
     def _arrow_name(self, node: Any) -> str | None:
         """Name for ``const f = () => ...`` declarations, else None."""
@@ -310,7 +278,7 @@ class _CodeChunker:
             arrow = self._arrow_name(inner)
             if arrow:
                 return "func", inner, arrow
-        if node.type == "comment":
+        if node.type in _COMMENT_NODES:
             return "comment", node, None
         return "loose", node, None
 
@@ -356,12 +324,13 @@ class _CodeChunker:
                 module_idx = idx
 
         for kind, outer, inner, name, start in items:
-            self._emit(kind, outer, inner, name, start, [], module_idx)
+            self._emit(kind, outer, inner, name, start, module_idx)
 
     def _emit(self, kind: str, outer: Any, inner: Any, name: str, start: int,
-              scope: list[str], parent: int | None) -> None:
+              parent: int | None) -> None:
         end = _end_line(outer)
-        qualified = ".".join([*scope, name])
+        # The call graph names a caller scope with the same function (ai_db.parser.naming).
+        qualified = qualified_name(inner, self.source, self.b.language, own=name)
         if kind == "func":
             self.b.add_split("code", f"def {qualified}", qualified, start, end,
                              _child_starts(inner), parent)
@@ -381,7 +350,7 @@ class _CodeChunker:
         members: list[tuple[str, Any, Any, str, int]] = []
         if body is not None:
             pending: int | None = None
-            for child in body.named_children:
+            for child in _members(body):
                 c_kind, c_inner, c_name = self._classify(child)
                 c_start = child.start_point[0] + 1
                 if c_kind == "comment":
@@ -399,15 +368,20 @@ class _CodeChunker:
         header_idx = self.b.add_split("class_header", label, qualified, start, end,
                                       _child_starts(body or inner), parent, skip=skip)
         for m_kind, m_outer, m_inner, m_name, m_start in members:
-            self._emit(m_kind, m_outer, m_inner, m_name, m_start, [*scope, name], header_idx)
+            self._emit(m_kind, m_outer, m_inner, m_name, m_start, header_idx)
 
 
-def _descendants(node: Any) -> Any:
-    stack = [node]
-    while stack:
-        n = stack.pop()
-        yield n
-        stack.extend(reversed(n.named_children))
+# Comment node types across grammars (Rust and Java split line and block comments).
+_COMMENT_NODES = frozenset({"comment", "line_comment", "block_comment"})
+
+
+def _members(body: Any) -> list[Any]:
+    """A container body's member nodes (a Java enum's methods sit one level down, in
+    ``enum_body_declarations``)."""
+    out: list[Any] = []
+    for child in body.named_children:
+        out.extend(child.named_children if child.type == "enum_body_declarations" else [child])
+    return out
 
 
 def _end_line(node: Any) -> int:

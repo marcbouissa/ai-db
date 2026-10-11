@@ -84,6 +84,18 @@ CODE_STOPWORDS = frozenset({
 # Retrieval
 CANDIDATE_POOL = 50  # candidates per retriever list before fusion/rerank
 RRF_K = 60
+BM25_WEIGHTS = (8.0, 6.0, 2.0, 1.0, 1.0)  # fts_index bm25 column weights: name, qualified_name, filepath, content, idents
+VEC0_OVERFETCH = 4  # vec0 KNN fetches k * this when a filter needs the chunks/files join (applied afterwards)
+ZLIB_LEVEL = 6  # compression of stored chunk/context/ref bodies
+CONTEXT_FTS_MAX_CHARS = 4000  # saved-context notes indexed for FTS (the full notes are stored compressed)
+SNIPPET_CHARS = 280  # search-result snippet length
+META_MAX_CHARS = 1500  # package metadata file (package.json, pyproject.toml, METADATA) kept as one lib_meta chunk
+ANALYSIS_REF_TTL_S = 7 * 86400  # analysis refs (`expand` handles) older than this are evicted
+ANALYZE_MAX_TARGETS = 32  # files per `analyze` batch (globs expanded first)
+ANALYZE_CTX_LINES = 10  # context lines around an `analyze --span`
+QUERY_LOG_KEEP = 10000  # query_log rows kept (newest); telemetry covers this window
+DEFAULT_DOC_WEIGHT = 0.5  # index.doc_weight: score factor for md/txt chunks (docs rank below code)
+DEFAULT_RERANK_TOP_N = 10  # rerank.top_n: fused candidates the reranker re-scores
 
 # Final ranking (tune only with `ai-db eval`)
 RERANK_TOP = 30
@@ -107,7 +119,7 @@ DIFF_QUERY_BOOST = 25.0  # a full query match must outrank raw diff density, or 
                         # for a targeted "just the X" review; 25 is the density ratio
                         # beyond which density wins.
 DIFF_SEEDS_PER_FILE = 3  # diversity device only: a diff must not spend every seed slot on one file
-# --- investigate pack rendering (see ai_db.analyzer.formatters) ---
+# --- investigate pack rendering (see ai_db.analysis.formatters) ---
 # Cap on how many items a rendered pack lists per section. A pack holds up to
 # the budget's worth of evidence; printing all of it defeats the point of
 # rendering it compactly, and the rest is reachable by ref.
@@ -117,8 +129,17 @@ PACK_STUB_MAX_ITEMS = 20
 PACK_STUB_WHY_CHARS = 160
 DIFF_DEFAULT_SINCE = "HEAD"  # diff mode compares the working tree against this unless told otherwise
 GIT_TIMEOUT_S = 10  # git invocations from investigate/trace must not stall a request
+LINTER_TIMEOUT_S = 15  # an external linter (bash -n, yaml) taking longer is reported as an error
+EVAL_GIT_TIMEOUT_S = 120  # `ai-db eval` worktree checkouts (a whole tree, not one request)
 STALE_RESYNC_MAX_FILES = 20  # stale result files re-synced inline per read; above this they are flagged
 DELEGATE_MAX_TOKENS = 120  # seeds this small also get their callees' callees
+INVESTIGATE_HOP_DECAY = 0.6  # score factor per graph hop for callees/callers of a seed
+INVESTIGATE_PARENT_FACTOR = 0.5  # score of a seed's enclosing class header, relative to the seed
+INVESTIGATE_TEST_FACTOR = 0.4  # score of a test that calls a seed, relative to the seed
+RESOLVE_CALLERS_LIMIT = 100  # call sites read per symbol when resolving callers (investigate/trace)
+RECENT_CHANGES_MAX_FILES = 8  # seed files whose `git log` is shown in a pack
+RECENT_CHANGES_PER_FILE = 5  # commits listed per file
+REF_ID_HEX_LEN = 12  # analysis ref ids `ref:<sha1 prefix>`: 48 bits (32 collided at ~1% over 10k refs)
 
 # Skill router
 SKILL_W_TRIGGER = 8.0  # weight for exact trigger phrase match in prompt
@@ -160,6 +181,8 @@ DAEMON_RATE_LIMIT = 100  # requests per DAEMON_RATE_WINDOW_S, per project and cl
 DAEMON_RATE_WINDOW_S = 60.0
 DAEMON_PROGRESS_KEEPALIVE_S = 30.0  # progress stream keepalive when no event arrives
 DAEMON_CLIENT_TIMEOUT_S = 30.0  # HTTP timeout of DaemonClient / DaemonManager requests
+DAEMON_WATCH_DEBOUNCE_MS = 300  # daemon.watch_sync_paths: changes batched over this window
+DAEMON_STATUS_REFRESH_S = 5  # GET /status/html reloads itself this often
 DAEMON_LOG_FILE = os.path.join(
     os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "ai-db", "daemon.log")
 INDEX_LANGUAGES_STATE_KEY = "index_languages"  # session_state key: grammars the index was built with

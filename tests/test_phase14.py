@@ -18,11 +18,12 @@ from typing import Any
 import pytest
 
 from ai_db import VectorDB
-from ai_db.analysis.investigate import MODES, Investigator, _git_changed_spans
+from ai_db.analysis.diff import changed_lines
+from ai_db.analysis.investigate import MODES, Investigator
 from ai_db.errors import AiDbConfigError
 from ai_db.parser.ts_graph import extract_graph
 from ai_db.storage.models import ChunkRecord, FileRecord
-from mcp_server import StdioMCPServer
+from ai_db.transports.mcp import StdioMCPServer
 
 # ==============================================================================
 # helpers
@@ -165,7 +166,7 @@ def test_git_changed_spans_parses_hunks(tmp_path):
     git("add", "-A")
     git("commit", "-q", "-m", "edit")
 
-    spans = _git_changed_spans("HEAD~1", str(repo))
+    spans = changed_lines("HEAD~1", str(repo))
     assert set(spans) == {str(repo / "sub" / "a.py")}
     assert spans[str(repo / "sub" / "a.py")] == [3, 5]
 

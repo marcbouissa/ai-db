@@ -611,8 +611,11 @@ class TestStorageTier2:
                 StorageBackendFactory.create(m)
 
     @pytest.mark.skipif(not (HAS_STORAGE_FACTORY and HAS_SQLITE_BACKEND), reason="Storage factory not available")
-    def test_factory_windows_style_paths(self, tmp_path):
+    def test_factory_windows_style_paths(self, tmp_path, monkeypatch):
         """TC-T2-F9-03: Windows backslash paths resolve to SQLiteBackend."""
+        # On POSIX this is a relative file name: create it in tmp_path, not in the
+        # caller's directory (it left a stray 'C:\data\project_db.sqlite' in the repo root).
+        monkeypatch.chdir(tmp_path)
         win_path = r"C:\data\project_db.sqlite"
         backend = StorageBackendFactory.create(win_path)
         assert isinstance(backend, SQLiteBackend)
@@ -692,7 +695,7 @@ class TestStorageTier2:
 
     def test_decoupled_analyzer_cache_delegation(self):
         """TC-T2-F11-05: AnalyzerEngine delegates state and cache management to StorageBackend."""
-        from ai_db.analyzer.engine import AnalyzerEngine
+        from ai_db.analysis.analyze import AnalyzerEngine
         mock_backend = MagicMock()
         mock_backend.backend = mock_backend
         mock_backend.get_state.return_value = {"cached_summary": "Analysis result"}

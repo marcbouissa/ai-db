@@ -1,407 +1,179 @@
 """
 tests/test_telemetry.py
-Comprehensive 4-tier test suite for the Performance & Token Telemetry subsystem.
-
-Tiers:
-  - Tier 1: Feature Coverage (query latency percentiles, 4-format token savings, cache hit rates, weak points, exposure)
-  - Tier 2: Boundary & Corner Cases (zero queries, zero cache lookups, zero raw tokens, metrics reset, :memory: db)
-  - Tier 3: Pairwise Combinations (query engine telemetry integration, analyzer cache tracking, session persistence)
-  - Tier 4: Real-World Workflows (developer session telemetry dashboard, CI codebase health audit)
+Telemetry derived from the query log (K5): latency percentiles over one window, cache hit
+rates, per-tool and per-stage breakdowns, storage and weak points, CLI/MCP exposure.
 """
 import json
 import subprocess
 import sys
+import time
 
 import pytest
 
 from ai_db import VectorDB
+from ai_db.telemetry.tracker import TelemetryTracker
 
-try:
-    from ai_db.telemetry.tracker import TelemetryTracker
-except ImportError:
-    try:
-        from ai_db.telemetry import TelemetryTracker
-    except ImportError:
-        TelemetryTracker = None
-
-
-# ==============================================================================
-# Helpers & Fixtures
-# ==============================================================================
 
 @pytest.fixture
 def telemetry_db(tmp_path):
-    """Provides an isolated database and VectorDB instance for telemetry verification."""
+    """An isolated database and VectorDB instance."""
     db_file = str(tmp_path / "telemetry.db")
     src_dir = tmp_path / "src"
     src_dir.mkdir()
-
     (src_dir / "calc.py").write_text("def add(a, b): return a + b\n")
 
     vdb = VectorDB(db_file)
     vdb.sync(str(src_dir), project="telemetry_test", verbose=False)
-
-    yield {
-        "db_file": db_file,
-        "src_dir": src_dir,
-        "vdb": vdb,
-        "tmp_path": tmp_path,
-    }
+    vdb.backend.clear_query_log()
+    yield {"db_file": db_file, "src_dir": src_dir, "vdb": vdb, "tmp_path": tmp_path}
     vdb.close()
 
 
-def _require_telemetry():
-    if TelemetryTracker is None:
-        pytest.skip("Telemetry subsystem (ai_db.telemetry) not yet implemented (planned for Milestone 4)")
+def _log(backend, total_ms, tool="query", cache_hit=False, stages=None):
+    backend.log_query({"timestamp": time.time(), "tool": tool, "query": "q", "mode": None,
+                       "total_ms": total_ms, "cache_hit": cache_hit, "stages": stages or {},
+                       "providers": {}, "top": []})
 
 
-# ==============================================================================
-# Tier 1: Feature Coverage (Happy Path Isolation)
-# ==============================================================================
+class TestSummary:
+    def test_latency_over_logged_calls(self, telemetry_db):
+        backend = telemetry_db["vdb"].backend
+        for ms in (10.0, 20.0, 30.0):
+            _log(backend, ms)
+        lat = TelemetryTracker(backend).get_summary()["latency"]
+        assert (lat["count"], lat["min_ms"], lat["max_ms"], lat["avg_ms"]) == (3, 10.0, 30.0, 20.0)
 
-class TestTelemetryTier1FeatureCoverage:
-    """Happy-path tests for latency percentiles, token compression, cache metrics, and diagnostics."""
-
-    def test_telemetry_tracker_record_query(self, telemetry_db):
-        """TelemetryTracker records query latency and computes count, min, max, and avg."""
-        _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
-        tracker.record_query(backend="sqlite_wal", latency_ms=10.0, results_count=5)
-        tracker.record_query(backend="sqlite_wal", latency_ms=20.0, results_count=3)
-        tracker.record_query(backend="sqlite_wal", latency_ms=30.0, results_count=8)
-
-        summary = tracker.get_summary()
-        lat = summary.get("latency", {}).get("sqlite_wal", summary.get("latency", {}))
-        assert lat["count"] == 3
-        assert lat["min_ms"] == 10.0
-        assert lat["max_ms"] == 30.0
-        assert lat["avg_ms"] == 20.0
-
-    def test_telemetry_latency_percentiles(self, telemetry_db):
-        """Calculates p50, p95, and p99 percentiles from 100 recorded latency samples."""
-        _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
+    def test_percentiles(self, telemetry_db):
+        backend = telemetry_db["vdb"].backend
         for val in range(1, 101):
-            tracker.record_query(backend="sqlite_wal", latency_ms=float(val), results_count=1)
-
-        summary = tracker.get_summary()
-        lat = summary.get("latency", {}).get("sqlite_wal", summary.get("latency", {}))
+            _log(backend, float(val))
+        lat = TelemetryTracker(backend).get_summary()["latency"]
         assert 48.0 <= lat["p50_ms"] <= 52.0
         assert 94.0 <= lat["p95_ms"] <= 96.0
         assert 98.0 <= lat["p99_ms"] <= 100.0
 
-    def test_telemetry_multi_backend_latency(self, telemetry_db):
-        """Maintains independent latency distributions across multiple storage backends."""
-        _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
-        tracker.record_query(backend="sqlite_wal", latency_ms=5.0, results_count=2)
-        tracker.record_query(backend="mysql_adapter", latency_ms=25.0, results_count=2)
+    def test_per_tool_breakdown(self, telemetry_db):
+        backend = telemetry_db["vdb"].backend
+        _log(backend, 5.0, tool="query")
+        _log(backend, 25.0, tool="investigate")
+        by_tool = TelemetryTracker(backend).get_summary()["latency"]["by_tool"]
+        assert by_tool["query"]["avg_ms"] == 5.0
+        assert by_tool["investigate"]["avg_ms"] == 25.0
 
-        summary = tracker.get_summary()
-        assert "sqlite_wal" in summary["latency"]
-        assert "mysql_adapter" in summary["latency"]
-        assert summary["latency"]["sqlite_wal"]["avg_ms"] == 5.0
-        assert summary["latency"]["mysql_adapter"]["avg_ms"] == 25.0
-
-    def test_telemetry_token_compression_savings(self, telemetry_db):
-        """Calculates net tokens saved and compression ratio across Stub, S-Exp, and JSON."""
-        _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
-        # 10,000 raw tokens compressed to 2,000 stub tokens
-        tracker.record_token_compression(raw_tokens=10000, stub_tokens=2000, sexp_tokens=3500, json_tokens=6000)
-
-        summary = tracker.get_summary()
-        tok = summary["tokens"]
-        assert tok["raw_tokens"] == 10000
-        assert tok["stub_tokens"] == 2000
-        assert tok["net_saved_tokens"] == 8000
-        assert tok["savings_pct"] == 80.0
-
-    def test_telemetry_cost_savings_calculation(self, telemetry_db):
-        """Calculates estimated financial savings based on $3.00 / 1M tokens saved."""
-        _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
-        # 1,000,000 saved tokens = $3.00
-        tracker.record_token_compression(raw_tokens=2000000, stub_tokens=1000000, sexp_tokens=1200000, json_tokens=1500000)
-
-        summary = tracker.get_summary()
-        usd = summary["tokens"]["estimated_cost_saved_usd"]
-        assert round(usd, 2) == 3.00
-
-    def test_telemetry_cache_access_metrics(self, telemetry_db):
-        """Computes cache hit rate percentage from recorded hits and misses."""
-        _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
+    def test_cache_hit_rate(self, telemetry_db):
+        backend = telemetry_db["vdb"].backend
         for _ in range(8):
-            tracker.record_cache_access(hit=True, tokens_saved=250)
+            _log(backend, 1.0, cache_hit=True)
         for _ in range(2):
-            tracker.record_cache_access(hit=False, tokens_saved=0)
+            _log(backend, 9.0, cache_hit=False)
+        cache = TelemetryTracker(backend).get_summary()["cache"]
+        assert cache == {"lookups": 10, "hits": 8, "misses": 2, "hit_rate_pct": 80.0}
 
-        summary = tracker.get_summary()
-        cache = summary["cache"]
-        assert cache["lookups"] == 10
-        assert cache["hits"] == 8
-        assert cache["misses"] == 2
-        assert cache["hit_rate_pct"] == 80.0
-        assert cache["tokens_saved"] == 2000
+    def test_count_and_average_cover_the_same_window(self, telemetry_db, monkeypatch):
+        """The old blob averaged the last 1000 samples but counted every query ever."""
+        from ai_db.storage.sqlite_repos import cache
+        monkeypatch.setattr(cache, "QUERY_LOG_KEEP", 5)
+        backend = telemetry_db["vdb"].backend
+        for ms in (100.0, 100.0, 100.0, 1.0, 1.0, 1.0, 1.0, 1.0):
+            _log(backend, ms)
+        summary = TelemetryTracker(backend).get_summary()
+        assert summary["latency"]["count"] == summary["window"]["calls"] == 5
+        assert summary["latency"]["avg_ms"] == 1.0
 
-    def test_telemetry_disk_and_memory_trends(self, telemetry_db):
-        """Tracks SQLite file size, table row counts, and storage trends."""
-        _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].backend, db_path=telemetry_db["db_file"])
-        summary = tracker.get_summary()
-        storage = summary.get("storage", {})
-        assert storage.get("db_size_kb", 0) > 0
-        assert "table_rows" in storage
+    def test_stages(self, telemetry_db):
+        backend = telemetry_db["vdb"].backend
+        _log(backend, 12.0, stages={"bm25": 3.0, "rank": 4.0})
+        stages = TelemetryTracker(backend).get_summary()["stages"]
+        assert stages["bm25"]["count"] == 1 and stages["total"]["p50_ms"] == 12.0
 
-    def test_telemetry_weak_points_syntax_density(self, telemetry_db):
-        """Weak points diagnostic calculates syntax error density as % of total files."""
-        _require_telemetry()
-        vdb = telemetry_db["vdb"]
-        src = telemetry_db["src_dir"]
+    def test_storage(self, telemetry_db):
+        summary = TelemetryTracker(telemetry_db["vdb"].backend,
+                                   db_path=telemetry_db["db_file"]).get_summary()
+        assert summary["storage"]["db_size_kb"] > 0.0
+        assert summary["storage"]["table_rows"]["chunks"] >= 1
 
-        (src / "clean1.py").write_text("def a(): pass\n")
-        (src / "clean2.py").write_text("def b(): pass\n")
-        # Must be an ERROR/MISSING node for tree-sitter; note that `def c( :` alone
-        # parses cleanly (tree-sitter is more lenient than ast.parse).
-        (src / "broken.py").write_text("def c():\n    return 1 +\n")
-        vdb.sync(str(src), project="weak_points", verbose=False)
+    def test_empty_log_has_no_division_by_zero(self, telemetry_db):
+        summary = TelemetryTracker(telemetry_db["vdb"].backend).get_summary()
+        assert summary["latency"]["count"] == 0 and summary["latency"]["avg_ms"] == 0.0
+        assert summary["cache"]["hit_rate_pct"] == 0.0
 
-        tracker = TelemetryTracker(vdb.backend)
-        wp = tracker.compute_weak_points()
-        assert "syntax_error_density_pct" in wp
-        # 1 error in 4 total files (including initial calc.py) = 25%
-        assert 20.0 <= wp["syntax_error_density_pct"] <= 35.0
-
-    def test_telemetry_weak_points_complexity_hotspots(self, telemetry_db):
-        """Weak points identifies top complexity hotspots by chunk and symbol density."""
-        _require_telemetry()
-        vdb = telemetry_db["vdb"]
-        src = telemetry_db["src_dir"]
-
-        # High complexity file with many functions
-        complex_code = "\n".join([f"def func_{i}(): pass" for i in range(20)])
-        (src / "complex_module.py").write_text(complex_code)
-        vdb.sync(str(src), project="telemetry_test", verbose=False)
-
-        tracker = TelemetryTracker(vdb.backend)
-        wp = tracker.compute_weak_points()
-        assert "complexity_hotspots" in wp
-        hotspots = wp["complexity_hotspots"]
-        assert len(hotspots) > 0
-        assert "complex_module.py" in hotspots[0]["filepath"]
-
-    def test_telemetry_cli_dashboard_output(self, telemetry_db):
-        """CLI telemetry command formats dashboard with Token, Latency, and Cache sections."""
-        db_file = telemetry_db["db_file"]
-        proc = subprocess.run(
-            [sys.executable, "-m", "ai_db.cli", "telemetry", "--db", db_file],
-            capture_output=True,
-            text=True,
-            check=False
-        )
-        if proc.returncode != 0 and "invalid choice: 'telemetry'" in proc.stderr:
-            pytest.skip("CLI subcommand 'telemetry' not yet implemented (planned for Milestone 4)")
-
-        assert proc.returncode == 0
-        assert "Token" in proc.stdout or "Latency" in proc.stdout or "Cache" in proc.stdout
-
-    def test_telemetry_mcp_tool_exposure(self, telemetry_db):
-        """MCP server exposes 'telemetry' tool returning summary metrics."""
-        from mcp_server import StdioMCPServer
-        server = StdioMCPServer(telemetry_db["db_file"])
-        resp = server.handle_request({
-            "jsonrpc": "2.0",
-            "id": 10,
-            "method": "tools/call",
-            "params": {"name": "telemetry", "arguments": {}}
-        })
-        if resp["result"].get("isError") and "Unknown tool" in resp["result"]["content"][0]["text"]:
-            pytest.skip("MCP 'telemetry' tool not yet registered (planned for Milestone 4)")
-
-        assert resp["result"]["isError"] is False
-
-    def test_telemetry_zero_queries_no_div_zero(self, telemetry_db):
-        """ZeroDivisionError is avoided when retrieving summary with zero recorded queries."""
-        _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
-        summary = tracker.get_summary()
-        lat = summary.get("latency", {})
-        assert lat.get("count", 0) == 0
-        assert lat.get("avg_ms", 0.0) == 0.0
-        assert lat.get("qps", 0.0) == 0.0
-
-    def test_telemetry_zero_cache_access_no_div_zero(self, telemetry_db):
-        """Zero cache lookups safely returns 0.0% hit rate without division error."""
-        _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
-        summary = tracker.get_summary()
-        cache = summary.get("cache", {})
-        assert cache.get("lookups", 0) == 0
-        assert cache.get("hit_rate_pct", 0.0) == 0.0
-
-    def test_telemetry_zero_raw_tokens_no_div_zero(self, telemetry_db):
-        """Recording zero raw tokens defaults compression ratio to 1.0 (0% savings)."""
-        _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
-        tracker.record_token_compression(raw_tokens=0, stub_tokens=0, sexp_tokens=0, json_tokens=0)
-        summary = tracker.get_summary()
-        tok = summary.get("tokens", {})
-        assert tok.get("compression_ratio", 1.0) == 1.0
-        assert tok.get("savings_pct", 0.0) == 0.0
-
-    def test_telemetry_reset_metrics(self, telemetry_db):
-        """Calling reset() clears all accumulated latency, token, and cache counters."""
-        _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
-        tracker.record_query(backend="sqlite_wal", latency_ms=15.0, results_count=2)
-        tracker.record_cache_access(hit=True, tokens_saved=500)
+    def test_reset_clears_the_log(self, telemetry_db):
+        backend = telemetry_db["vdb"].backend
+        _log(backend, 15.0, cache_hit=True)
+        tracker = TelemetryTracker(backend)
         tracker.reset()
-
         summary = tracker.get_summary()
-        assert summary.get("latency", {}).get("count", 0) == 0
-        assert summary.get("cache", {}).get("hits", 0) == 0
+        assert summary["latency"]["count"] == 0 and summary["cache"]["hits"] == 0
 
-    def test_telemetry_cli_reset_flag(self, telemetry_db):
-        """CLI telemetry --reset clears metrics in persistent session_state."""
-        db_file = telemetry_db["db_file"]
-        proc = subprocess.run(
-            [sys.executable, "-m", "ai_db.cli", "telemetry", "--reset", "--db", db_file],
-            capture_output=True,
-            text=True,
-            check=False
-        )
-        if proc.returncode != 0 and "invalid choice: 'telemetry'" in proc.stderr:
-            pytest.skip("CLI subcommand 'telemetry' not yet implemented (planned for Milestone 4)")
-
-        assert proc.returncode == 0
-        assert "reset" in proc.stdout.lower() or "cleared" in proc.stdout.lower()
-
-    def test_telemetry_cli_format_json(self, telemetry_db):
-        """CLI telemetry --format json outputs machine-readable JSON dictionary."""
-        db_file = telemetry_db["db_file"]
-        proc = subprocess.run(
-            [sys.executable, "-m", "ai_db.cli", "telemetry", "--format", "json", "--db", db_file],
-            capture_output=True,
-            text=True,
-            check=False
-        )
-        if proc.returncode != 0 and "invalid choice: 'telemetry'" in proc.stderr:
-            pytest.skip("CLI subcommand 'telemetry' not yet implemented (planned for Milestone 4)")
-
-        assert proc.returncode == 0
-        data = json.loads(proc.stdout)
-        assert isinstance(data, dict)
-
-    def test_telemetry_in_memory_db_disk_size(self):
-        """In-memory SQLite database (:memory:) does not crash file size queries."""
-        _require_telemetry()
+    def test_in_memory_db_has_no_size(self):
         from ai_db.storage.sqlite_backend import SQLiteBackend
         backend = SQLiteBackend(":memory:")
         backend.initialize()
-        tracker = TelemetryTracker(backend, db_path=":memory:")
-        summary = tracker.get_summary()
-        storage = summary.get("storage", {})
-        assert storage.get("db_size_kb", 0) == 0.0
+        assert TelemetryTracker(backend, db_path=":memory:").get_summary()["storage"]["db_size_kb"] == 0.0
         backend.close()
 
+    def test_persists_across_reconnects_and_processes(self, telemetry_db):
+        db_file = telemetry_db["db_file"]
+        _log(telemetry_db["vdb"].backend, 7.0)
+        other = VectorDB(db_file)  # a second process appends rows; nothing is overwritten
+        try:
+            _log(other.backend, 9.0)
+            assert TelemetryTracker(other.backend).get_summary()["latency"]["count"] == 2
+        finally:
+            other.close()
 
-# ==============================================================================
-# Tier 3: Pairwise Combinations
-# ==============================================================================
 
-class TestTelemetryTier3Combinations:
-    """Integration between TelemetryTracker and core query/analyzer engines."""
-
-    def test_telemetry_query_engine_integration(self, telemetry_db):
-        """QueryEngine executions automatically record latency and results in TelemetryTracker."""
-        _require_telemetry()
+class TestIntegration:
+    def test_query_calls_are_logged(self, telemetry_db):
         vdb = telemetry_db["vdb"]
-        # Execute query
         vdb.query("add", project="telemetry_test")
+        vdb.query("add", project="telemetry_test")
+        summary = vdb.telemetry_tracker.get_summary()
+        assert summary["latency"]["by_tool"]["query"]["count"] == 2
+        assert summary["cache"]["hits"] == 1  # the second call is a query-cache hit
 
-        tracker = getattr(vdb, "telemetry_tracker", None)
-        if tracker is None:
-            pytest.skip("VectorDB automatic telemetry integration planned for Milestone 4")
-
-        summary = tracker.get_summary()
-        assert summary["latency"]["count"] >= 1
-
-    def test_telemetry_analyzer_engine_cache_integration(self, telemetry_db):
-        """Subsequent analyze_file calls record cache misses then hits in TelemetryTracker."""
-        _require_telemetry()
+    def test_analyze_calls_log_the_semantic_cache(self, telemetry_db):
         vdb = telemetry_db["vdb"]
         target = str(telemetry_db["src_dir"] / "calc.py")
+        vdb.analyze_file(target, depth="structure")  # miss
+        vdb.analyze_file(target, depth="structure")  # hit
+        summary = vdb.telemetry_tracker.get_summary()
+        assert summary["latency"]["by_tool"]["analyze"]["count"] == 2
+        assert summary["cache"]["hits"] == 1
 
-        # 1st call: cache miss
-        vdb.analyze_file(target, depth="structure")
-        # 2nd call: cache hit
-        vdb.analyze_file(target, depth="structure")
+    def test_weak_points(self, telemetry_db):
+        report = telemetry_db["vdb"].telemetry_tracker.compute_weak_points()
+        assert {"syntax_error_density_pct", "complexity_hotspots", "unindexed_or_stale_files"} <= set(report)
 
-        tracker = getattr(vdb, "telemetry_tracker", None)
-        if tracker is None:
-            pytest.skip("VectorDB automatic telemetry integration planned for Milestone 4")
+    def test_dispatcher_has_no_fabricated_fallback(self, telemetry_db):
+        from ai_db.dispatcher import ServiceDispatcher
+        out = ServiceDispatcher(db=telemetry_db["vdb"]).execute("telemetry", {})
+        assert "token_savings" not in out and out["window"]["calls"] == 0
 
-        cache = tracker.get_summary()["cache"]
-        assert cache["lookups"] >= 2
-        assert cache["hits"] >= 1
-
-    def test_telemetry_persistence_across_process_restart(self, telemetry_db):
-        """Telemetry metrics stored in session_state survive database reconnects."""
-        _require_telemetry()
-        db_file = telemetry_db["db_file"]
-
-        # Session 1: Record metric
-        vdb1 = VectorDB(db_file)
-        t1 = TelemetryTracker(vdb1.backend, db_path=db_file)
-        t1.record_token_compression(raw_tokens=5000, stub_tokens=1000, sexp_tokens=2000, json_tokens=3000)
-        vdb1.close()
-
-        # Session 2: Restore and verify
-        vdb2 = VectorDB(db_file)
-        t2 = TelemetryTracker(vdb2.backend, db_path=db_file)
-        summary = t2.get_summary()
-        assert summary["tokens"]["raw_tokens"] == 5000
-        vdb2.close()
+    def test_mcp_tool(self, telemetry_db):
+        from ai_db.transports.mcp import StdioMCPServer
+        server = StdioMCPServer(telemetry_db["db_file"])
+        resp = server.handle_request({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
+                                      "params": {"name": "telemetry", "arguments": {}}})
+        assert resp["result"]["isError"] is False
 
 
-# ==============================================================================
-# Tier 4: Real-World Application Workflows
-# ==============================================================================
+class TestCli:
+    def _run(self, db_file, *args):
+        return subprocess.run([sys.executable, "-m", "ai_db.cli", "telemetry", *args, "--db", db_file],
+                              capture_output=True, text=True, check=False)
 
-class TestTelemetryTier4Workflows:
-    """Simulated production monitoring and developer audit sessions."""
+    def test_dashboard(self, telemetry_db):
+        proc = self._run(telemetry_db["db_file"])
+        assert proc.returncode == 0, proc.stderr
+        assert "Latency" in proc.stdout and "Cache" in proc.stdout
 
-    def test_workflow_developer_session_telemetry(self, telemetry_db):
-        """
-        Developer session workflow:
-        1. Indexes codebase
-        2. Performs AST search and analyses
-        3. Retrieves telemetry summary to quantify token and latency savings
-        """
-        _require_telemetry()
-        vdb = telemetry_db["vdb"]
-        tracker = TelemetryTracker(vdb.backend, db_path=telemetry_db["db_file"])
+    def test_json(self, telemetry_db):
+        proc = self._run(telemetry_db["db_file"], "--format", "json")
+        assert proc.returncode == 0, proc.stderr
+        assert "latency" in json.loads(proc.stdout)
 
-        # Simulate queries & token usage
-        tracker.record_query("sqlite_wal", latency_ms=12.4, results_count=4)
-        tracker.record_token_compression(raw_tokens=8000, stub_tokens=1600, sexp_tokens=2400, json_tokens=4500)
-        tracker.record_cache_access(hit=True, tokens_saved=6400)
-
-        summary = tracker.get_summary()
-        assert summary["tokens"]["savings_pct"] >= 75.0
-        assert summary["cache"]["tokens_saved"] == 6400
-
-    def test_workflow_codebase_health_audit(self, telemetry_db):
-        """
-        CI codebase health audit workflow:
-        Analyzes weak points report to detect syntax errors, hotspots, and stale files.
-        """
-        _require_telemetry()
-        vdb = telemetry_db["vdb"]
-        tracker = TelemetryTracker(vdb.backend, db_path=telemetry_db["db_file"])
-
-        report = tracker.compute_weak_points()
-        assert "syntax_error_density_pct" in report
-        assert "complexity_hotspots" in report
-        assert "unindexed_or_stale_files" in report
+    def test_reset(self, telemetry_db):
+        proc = self._run(telemetry_db["db_file"], "--reset")
+        assert proc.returncode == 0, proc.stderr
+        assert "reset" in proc.stdout.lower()

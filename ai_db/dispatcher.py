@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ai_db.constants import ANALYZE_CTX_LINES
 from ai_db.errors import AiDbConfigError, UnknownToolError
 from ai_db.plugins import register_tool_plugins
 from ai_db.search import freshness
@@ -37,6 +38,18 @@ class ToolDefinition:
             # ignore unknown fields are unaffected.
             "category": self.category,
         }
+
+
+def _parse_span(raw: Any) -> tuple[int, int] | None:
+    """A ``span`` tool argument (``"12:40"`` or ``[12, 40]``) as a line range, or None."""
+    if isinstance(raw, str) and ":" in raw:
+        parts = raw.split(":")
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            return int(parts[0]), int(parts[1])
+        return None
+    if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+        return int(raw[0]), int(raw[1])
+    return None
 
 
 class ServiceDispatcher:
@@ -343,7 +356,7 @@ class ServiceDispatcher:
                     "q": {"type": "string", "description": "Question or concept filter"},
                     "focus": {"type": "string", "description": "Symbol name or substring filter"},
                     "span": {"type": "array", "items": {"type": "integer"}, "description": "Line range [start, end]"},
-                    "ctx_lines": {"type": "integer", "default": 10, "description": "Context lines around span"},
+                    "ctx_lines": {"type": "integer", "default": ANALYZE_CTX_LINES, "description": "Context lines around span"},
                     "since": {"type": "string", "description": "Diff mode: inspect changed line spans"},
                     "max_out": {"type": "integer", "description": "Token budget ceiling"},
                     "cursor": {"type": "string", "description": "Continuation cursor handle"},
@@ -834,17 +847,10 @@ class ServiceDispatcher:
         depth = args.get("depth", "structure")
         q = args.get("q") or args.get("question")
         focus = args.get("focus")
-        raw_span = args.get("span")
-        if isinstance(raw_span, str) and ":" in raw_span:
-            parts = raw_span.split(":")
-            span_tuple = (int(parts[0]), int(parts[1])) if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit() else None
-        elif isinstance(raw_span, (list, tuple)) and len(raw_span) >= 2:
-            span_tuple = (int(raw_span[0]), int(raw_span[1]))
-        else:
-            span_tuple = None
+        span_tuple = _parse_span(args.get("span"))
 
         since = args.get("since")
-        ctx_lines = int(args.get("ctx_lines") or args.get("ctx") or 10)
+        ctx_lines = int(args.get("ctx_lines") or args.get("ctx") or ANALYZE_CTX_LINES)
         max_out = args.get("max_out")
         cursor = args.get("cursor")
         no_cache = bool(args.get("no_cache", False))
@@ -890,14 +896,7 @@ class ServiceDispatcher:
         db = self._get_db(args)
         ref = args.get("ref", "")
         depth = args.get("depth", "full")
-        raw_span = args.get("span")
-        if isinstance(raw_span, str) and ":" in raw_span:
-            parts = raw_span.split(":")
-            span_tuple = (int(parts[0]), int(parts[1])) if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit() else None
-        elif isinstance(raw_span, (list, tuple)) and len(raw_span) >= 2:
-            span_tuple = (int(raw_span[0]), int(raw_span[1]))
-        else:
-            span_tuple = None
+        span_tuple = _parse_span(args.get("span"))
 
         exp, stale = freshness.resolve(db, lambda: db.expand_ref(ref, depth=depth, span=span_tuple))
         if not exp:
@@ -1150,49 +1149,11 @@ class ServiceDispatcher:
 
     def _handle_telemetry(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
-        reset = bool(args.get("reset", False))
-        tracker = getattr(db, "telemetry_tracker", None)
-
-        if tracker is not None:
-            if reset:
-                tracker.reset()
-                return {"status": "reset", "message": "Telemetry metrics reset."}
-            summary = tracker.get_summary()
-            backend = getattr(db, "backend", None)
-            if backend is not None and hasattr(backend, "get_query_log"):
-                from ai_db.telemetry.stages import stage_stats
-                summary["stages"] = stage_stats(backend.get_query_log(limit=1000))
-            return summary
-
-        backend_name = getattr(getattr(db, "backend", None), "backend_name", "sqlite")
-        return {
-            "token_savings": {
-                "cumulative_raw_tokens": 0,
-                "emitted_tokens": 0,
-                "net_tokens_saved": 0,
-                "reduction_pct": 0.0,
-                "estimated_cost_saved_usd": 0.0,
-            },
-            "latency": {
-                "backend": backend_name,
-                "total_queries": 0,
-                "avg_latency_ms": 0.0,
-                "p50_ms": 0.0,
-                "p95_ms": 0.0,
-                "p99_ms": 0.0,
-            },
-            "cache": {
-                "lookups": 0,
-                "hits": 0,
-                "misses": 0,
-                "hit_rate_pct": 0.0,
-            },
-            "weak_points": {
-                "syntax_errors": 0,
-                "complexity_hotspots": [],
-                "unindexed_files": 0,
-            },
-        }
+        tracker = db.telemetry_tracker
+        if bool(args.get("reset", False)):
+            tracker.reset()
+            return {"status": "reset", "message": "Telemetry metrics reset (query log cleared)."}
+        return tracker.get_summary()
 
     def _handle_query(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
@@ -1227,7 +1188,7 @@ class ServiceDispatcher:
         style = args.get("format") or default_fmt or "stub"
         if style == "json":
             return pack
-        from ai_db.analyzer.formatters import format_pack
+        from ai_db.analysis.formatters import format_pack
         rendered = format_pack(pack, style)
         if stale and isinstance(rendered, str):
             return freshness.annotate(rendered, stale)

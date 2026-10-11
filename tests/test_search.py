@@ -157,7 +157,9 @@ class TestSearchTier1FeatureCoverage:
 
         callers = vdb.query_callers("emit_log", project="app_proj")["results"]
         assert len(callers) >= 1
-        c = callers[0]
+        # the `from logger import emit_log` line is listed too (an import ref)
+        assert any(r["ref_type"] == "import" for r in callers)
+        c = next(r for r in callers if r["ref_type"] == "call")
         assert "app.py" in c["file"]
         assert "run_app" in c["caller"]
         assert c["ref_type"] == "call"

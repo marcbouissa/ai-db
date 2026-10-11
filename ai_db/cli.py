@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -7,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ai_db import __version__
 from ai_db.config import AppConfig, config_path, load_config, masked_dict
-from ai_db.constants import TODO_LINE_CHARS, TRACE_DEPTH, TRACE_MAX_NODES
+from ai_db.constants import ANALYZE_CTX_LINES, TODO_LINE_CHARS, TRACE_DEPTH, TRACE_MAX_NODES
 from ai_db.dispatcher import ServiceDispatcher
 from ai_db.errors import AiDbConfigError, AiDbDaemonError, AiDbError
 from ai_db.utils import detect_project_name
@@ -49,7 +50,7 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
         compare_pack_to_baseline,
         compare_refs_to_baseline,
         compare_to_baseline,
-        materialize_tracked,
+        git_worktree,
         run,
         run_callers,
         run_pack,
@@ -70,11 +71,12 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
                 db.close()
         else:
             root = os.path.abspath(args.root)
-            if not args.all_files:
-                root = materialize_tracked(root, os.path.join(tmp, "corpus"))
             from ai_db.facade import VectorDB
-            db = VectorDB(os.path.join(tmp, "eval.db"), config=cfg)
-            try:
+            with contextlib.ExitStack() as stack:
+                if not args.all_files:  # the committed tree, as a real git checkout
+                    root = stack.enter_context(git_worktree(root, os.path.join(tmp, "corpus")))
+                db = VectorDB(os.path.join(tmp, "eval.db"), config=cfg)
+                stack.callback(db.close)
                 if args.pack:
                     result = run_pack(args.golden, root, db, budget_tokens=args.budget)
                 elif args.symbols:
@@ -83,8 +85,6 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
                     result = run_callers(args.golden, root, db)
                 else:
                     result = run(args.golden, root, db, k=args.k)
-            finally:
-                db.close()
     summary = {k: v for k, v in result.items() if k != "per_query"}
     print(json.dumps(summary, indent=2))
     if args.save:
@@ -513,7 +513,8 @@ def _main(argv: list[str] | None = None) -> int:
     analyze_p.add_argument("targets", nargs="*", default=[], help="File(s) or glob pattern to analyze")
     analyze_p.add_argument("--depth", choices=["summary", "structure", "targeted", "full"], default="structure", help="Analysis depth (default: structure)")
     analyze_p.add_argument("--span", default=None, help="Range target START:END (e.g. 50:120)")
-    analyze_p.add_argument("--ctx", type=int, default=10, help="Context lines around span (default: 10)")
+    analyze_p.add_argument("--ctx", type=int, default=ANALYZE_CTX_LINES,
+                           help=f"Context lines around span (default: {ANALYZE_CTX_LINES})")
     analyze_p.add_argument("--focus", default=None, help="Symbol or token focus filter")
     analyze_p.add_argument("-q", "--question", default=None, help="Question-driven filter query")
     analyze_p.add_argument("--since", default=None, help="Diff mode: inspect changes since hash or timestamp")
@@ -670,7 +671,8 @@ def _main(argv: list[str] | None = None) -> int:
     eval_p.add_argument("--min-confidence", type=float, default=None,
                         help="min_confidence passed to route_skills (--skills only)")
     eval_p.add_argument("--all-files", action="store_true",
-                        help="Index every file under --root (default: only git-tracked files)")
+                        help="Index every file under --root as it is on disk (default: a git "
+                             "worktree of --root at HEAD, i.e. the committed files only)")
 
     args = parser.parse_args(argv)
     from ai_db.quiet import set_verbose
@@ -708,7 +710,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     # Transport and long-running server/daemon commands
     if args.command == "mcp":
-        import mcp_server
+        from ai_db.transports import mcp as mcp_server
         mcp_daemon_url = getattr(args, "daemon_url", None) or os.environ.get("AI_DB_DAEMON_URL")
         mcp_proj = getattr(args, "mcp_project", None) or getattr(args, "daemon_project", None)
         mcp_server.run_stdio(args.db, config=cfg, daemon_url=mcp_daemon_url, project=mcp_proj)
@@ -1135,7 +1137,7 @@ def _main(argv: list[str] | None = None) -> int:
             # One renderer, shared with the token accounting, so the printed
             # string and meta.tokens_out_formatted cannot describe different
             # things.
-            from ai_db.analyzer.formatters import annotate_formatted_tokens
+            from ai_db.analysis.formatters import annotate_formatted_tokens
             # Only pay for tiktoken when the count is part of what the user is
             # looking at: json embeds meta, the other formats are read directly.
             print(annotate_formatted_tokens(output_data, effective_fmt,
@@ -1303,18 +1305,16 @@ def _main(argv: list[str] | None = None) -> int:
         elif getattr(args, "format", "dense") == "json":
             print(json.dumps(res, indent=2))
         else:
-            print("=== Telemetry Dashboard ===")
-            tokens = res.get("tokens", res.get("token_savings", {}))
-            latency = res.get("latency", {})
-            cache = res.get("cache", {})
-            weak = res.get("weak_points", {})
-            print(f"Token Savings: {tokens.get('net_saved_tokens', tokens.get('net_tokens_saved', 0))} tokens saved ({tokens.get('savings_pct', tokens.get('reduction_pct', 0.0))}%)")
-            print(f"Query Latency: avg={latency.get('avg_ms', latency.get('avg_latency_ms', 0.0))}ms, p50={latency.get('p50_ms', 0.0)}ms, p95={latency.get('p95_ms', 0.0)}ms")
-            for stage, st in res.get("stages", {}).items():
-                print(f"  stage {stage:<10} n={st['count']:<5} p50={st['p50_ms']}ms p95={st['p95_ms']}ms")
-            print(f"Cache Performance: {cache.get('hits', 0)} hits / {cache.get('lookups', 0)} lookups ({cache.get('hit_rate_pct', 0.0)}%)")
-            if weak:
-                print(f"Weak Points: {weak.get('syntax_errors', 0)} syntax errors, {len(weak.get('complexity_hotspots', []))} hotspots")
+            latency, cache, window = res["latency"], res["cache"], res["window"]
+            print(f"=== Telemetry Dashboard (last {window['calls']} logged calls) ===")
+            print(f"Query Latency: avg={latency['avg_ms']}ms, p50={latency['p50_ms']}ms, "
+                  f"p95={latency['p95_ms']}ms")
+            for tool, st in latency["by_tool"].items():
+                print(f"  tool  {tool:<12} n={st['count']:<5} p50={st['p50_ms']}ms p95={st['p95_ms']}ms")
+            for stage, st in res["stages"].items():
+                print(f"  stage {stage:<12} n={st['count']:<5} p50={st['p50_ms']}ms p95={st['p95_ms']}ms")
+            print(f"Cache Performance: {cache['hits']} hits / {cache['lookups']} lookups "
+                  f"({cache['hit_rate_pct']}%)")
 
     dispatcher.close()
     return 0

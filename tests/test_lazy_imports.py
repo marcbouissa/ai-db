@@ -21,12 +21,12 @@ def test_leaf_modules_import_only_themselves():
 def test_cli_does_not_import_the_facade_stack():
     loaded = _loaded_after("import ai_db.cli")
     for heavy in ("ai_db.facade", "ai_db.storage.sqlite_backend", "ai_db.search.indexer",
-                  "ai_db.analyzer.engine", "ai_db.parser.ts_graph"):
+                  "ai_db.analysis.analyze", "ai_db.parser.ts_graph"):
         assert heavy not in loaded, heavy
 
 
 @pytest.mark.parametrize("package", ["ai_db", "ai_db.parser", "ai_db.search", "ai_db.storage",
-                                     "ai_db.analyzer", "ai_db.analysis"])
+                                     "ai_db.analysis"])
 def test_every_listed_export_resolves(package):
     import importlib
 

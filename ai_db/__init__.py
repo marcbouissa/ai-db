@@ -21,7 +21,7 @@ _EXPORTS: dict[str, str] = {
     "AiDbConfigError": "ai_db.errors",
     "AiDbError": "ai_db.errors",
     "AiDbQueryError": "ai_db.errors",
-    "AnalyzerEngine": "ai_db.analyzer.engine",
+    "AnalyzerEngine": "ai_db.analysis.analyze",
     "AppConfig": "ai_db.config",
     "chunk_file": "ai_db.parser.chunker",
     "compute_sha256": "ai_db.utils",
@@ -34,9 +34,9 @@ _EXPORTS: dict[str, str] = {
     "detect_project_name": "ai_db.utils",
     "extract_file_outline": "ai_db.parser.ast_visitor",
     "extract_graph": "ai_db.parser.ts_graph",
-    "format_as_sexp": "ai_db.analyzer.formatters",
-    "format_as_stub": "ai_db.analyzer.formatters",
-    "Formatters": "ai_db.analyzer.formatters",
+    "format_as_sexp": "ai_db.analysis.formatters",
+    "format_as_stub": "ai_db.analysis.formatters",
+    "Formatters": "ai_db.analysis.formatters",
     "get_allowed_projects": "ai_db.utils",
     "HARD_IGNORE_DIRS": "ai_db.constants",
     "INDEXABLE_EXTENSIONS": "ai_db.constants",
@@ -44,7 +44,7 @@ _EXPORTS: dict[str, str] = {
     "language_for": "ai_db.parser.languages",
     "load_config": "ai_db.config",
     "QueryEngine": "ai_db.search.query",
-    "ReferenceStore": "ai_db.analyzer.references",
+    "ReferenceStore": "ai_db.analysis.refs",
     "run_watch": "ai_db.facade",
     "should_index_path": "ai_db.utils",
     "SkillRouter": "ai_db.search.skills",
@@ -101,9 +101,9 @@ __all__ = [
 __getattr__, __dir__ = lazy_exports(__name__, globals(), _EXPORTS)
 
 if TYPE_CHECKING:
-    from ai_db.analyzer.engine import AnalyzerEngine
-    from ai_db.analyzer.formatters import Formatters, format_as_sexp, format_as_stub
-    from ai_db.analyzer.references import ReferenceStore
+    from ai_db.analysis.analyze import AnalyzerEngine
+    from ai_db.analysis.formatters import Formatters, format_as_sexp, format_as_stub
+    from ai_db.analysis.refs import ReferenceStore
     from ai_db.config import AppConfig, config_path, load_config
     from ai_db.constants import (
         DEFAULT_CONFIG_FILE,

@@ -14,17 +14,10 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from ai_db.constants import COMPOUND_MAX_DEFINITIONS
 from ai_db.search.query_builder import split_identifier
 from ai_db.search.ranking import last_component
 from ai_db.storage.models import ChunkRecord
-
-_BUILTINS = frozenset(dir(__builtins__)) | frozenset({
-    "append", "extend", "get", "items", "keys", "values", "join", "split", "strip", "format",
-    "startswith", "endswith", "replace", "lower", "upper", "update", "pop", "add", "execute",
-    "fetchall", "fetchone", "cursor", "commit", "encode", "decode", "read", "write", "close",
-})
-
-COMPOUND_MAX_DEFINITIONS = 2
 
 
 @dataclass

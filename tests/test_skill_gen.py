@@ -131,7 +131,7 @@ def test_draft_skill_gathers_skills_contexts_and_plugins(disp, monkeypatch):
 
 
 def test_mcp_allowlist_hides_skill_tools(disp, monkeypatch):
-    from mcp_server import StdioMCPServer
+    from ai_db.transports.mcp import StdioMCPServer
 
     monkeypatch.setenv("AI_DB_MCP_TOOLS", "draft_skill")
     srv = StdioMCPServer(dispatcher=disp)

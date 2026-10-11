@@ -5,10 +5,13 @@ import os
 import time
 from typing import Any
 
-from ai_db.analyzer.references import ReferenceStore
+from ai_db.analysis.diff import file_diff
+from ai_db.analysis.refs import ReferenceStore
+from ai_db.constants import ANALYSIS_REF_TTL_S, ANALYZE_CTX_LINES, ANALYZE_MAX_TARGETS
 from ai_db.errors import AiDbConfigError
-from ai_db.parser.languages import SUPPORTED_LANGUAGES, enabled_language_for
-from ai_db.parser.ts_graph import extract_graph
+from ai_db.parser.chunker import chunk_file
+from ai_db.parser.languages import SUPPORTED_LANGUAGES
+from ai_db.tokens import count_tokens
 from ai_db.utils import (
     client_cwd,
     compute_sha256,
@@ -16,6 +19,36 @@ from ai_db.utils import (
     resolve_client_path,
     tokenize,
 )
+
+# Chunk name prefix -> symbol kind (the chunker names definitions "def X", "class X", "type X").
+_CHUNK_KINDS = {"def": "function", "class": "class", "type": "type"}
+_SIG_SKIP = ("#", "//", "/*", "*", "@", "<!--")
+
+
+def file_symbols(filepath: str, content: str, languages: frozenset[str]) -> list[dict[str, Any]]:
+    """The file's definitions with their full spans, from the chunker (the same code path
+    the index uses, so names and spans match the indexed chunks; the content on disk, so
+    they are never stale). Text/markdown files yield their sections/windows."""
+    lines = content.splitlines()
+    by_name: dict[tuple[str, str], dict[str, Any]] = {}
+    for chunk in chunk_file(filepath, content, languages):
+        if chunk["chunk_type"] == "module":
+            continue  # imports/globals runs are not symbols
+        prefix, _, _ = chunk["name"].partition(" ")
+        kind = _CHUNK_KINDS.get(prefix, chunk["chunk_type"])
+        key = (chunk["qualified_name"], kind)
+        sym = by_name.get(key)
+        if sym is None:  # first part of a definition (oversized ones are split into parts)
+            by_name[key] = {"name": chunk["qualified_name"], "kind": kind,
+                            "span": [chunk["start_line"], chunk["end_line"]]}
+        else:
+            sym["span"][1] = max(sym["span"][1], chunk["end_line"])
+    symbols = sorted(by_name.values(), key=lambda s: s["span"][0])
+    for sym in symbols:
+        first, last = sym["span"]
+        sym["sig"] = next((ln.strip() for ln in lines[first - 1:last]
+                           if ln.strip() and not ln.strip().startswith(_SIG_SKIP)), sym["name"])[:200]
+    return symbols
 
 
 class AnalyzerEngine:
@@ -31,8 +64,8 @@ class AnalyzerEngine:
         self.languages: frozenset[str] = SUPPORTED_LANGUAGES
 
     def _evict_stale_refs(self):
-        """Evicts analysis refs older than 7 days to prevent unbounded table growth."""
-        self.backend.evict_stale_analysis_refs(older_than_seconds=86400 * 7)
+        """Evicts analysis refs older than ANALYSIS_REF_TTL_S to prevent unbounded table growth."""
+        self.backend.evict_stale_analysis_refs(older_than_seconds=ANALYSIS_REF_TTL_S)
 
     def expand_ref(self, ref_id: str, depth: str = "full", span: tuple[int, int] | None = None) -> dict[str, Any] | None:
         return self.ref_store.expand_ref(ref_id, depth, span)
@@ -48,7 +81,7 @@ class AnalyzerEngine:
                      focus: str | None = None,
                      q: str | None = None,
                      since: str | None = None,
-                     ctx_lines: int = 10,
+                     ctx_lines: int = ANALYZE_CTX_LINES,
                      bypass_cache: bool = False,
                      no_cache: bool = False) -> dict[str, Any]:
         """Analyzes a single file according to RFC tokenopt-analyzer v2."""
@@ -76,7 +109,7 @@ class AnalyzerEngine:
             }
 
         file_hash = compute_sha256(abs_path)
-        tokens_in = max(1, len(content) // 4)
+        tokens_in = max(1, count_tokens(content))
         all_lines = content.splitlines()
         total_lines = len(all_lines)
 
@@ -93,7 +126,8 @@ class AnalyzerEngine:
                 return dict(cached_res)
 
         # F8 Diff Mode check
-        diff_info = self.ref_store.diff_spans(abs_path, content, since) if since else None
+        diff_info = (file_diff(abs_path, since, self.backend, self.languages, content)
+                     if since else None)
 
         # F2 Range Target extraction
         if span:
@@ -110,7 +144,7 @@ class AnalyzerEngine:
                 "ref": ref_id,
                 "body": snippet_text
             }]
-            tokens_out = max(1, len(snippet_text) // 4)
+            tokens_out = max(1, count_tokens(snippet_text))
             res = {
                 "file": filepath,
                 "symbols": symbols,
@@ -121,50 +155,17 @@ class AnalyzerEngine:
             self._save_to_semantic_cache(cache_key, file_hash, res)
             return res
 
-        # Extract symbols using tree-sitter for supported languages
+        # The file's definitions (chunker spans), each stored as an expandable ref
         symbols_found: list[dict[str, Any]] = []
         notes = []
         q_tokens = set(tokenize(q or "")) if q else set()
 
-        # Get symbols from tree-sitter for supported languages
-        lang = enabled_language_for(abs_path, self.languages)
-        if lang is not None:
-            ts_symbols, _, _ = extract_graph(abs_path, content)
-            for sym in ts_symbols:
-                sym_name = sym["name"]
-                sym_type = sym["symbol_type"]
-                sym_line = sym["line"]
-                signature = sym.get("signature")
-                # Find end line from chunks
-                end_line = sym_line
-                for chunk in self.db.get_chunks_for_file(abs_path):
-                    if chunk.name == sym_name and chunk.start_line == sym_line:
-                        end_line = chunk.end_line
-                        break
-                body_block = "\n".join(all_lines[sym_line - 1 : end_line])
-                ref_id = self.ref_store.store_ref(abs_path, sym_name, sym_line, end_line, sym_type, body_block)
-                symbols_found.append({
-                    "name": sym_name,
-                    "kind": sym_type,
-                    "sig": signature or sym_name,
-                    "span": [sym_line, end_line],
-                    "ref": ref_id,
-                    "body": body_block
-                })
-        else:
-            # For unsupported languages (markdown, text), build symbols from chunks
-            chunks = self.db.get_chunks_for_file(abs_path)
-            for chunk in chunks:
-                if chunk.chunk_type in ("md", "section", "text", "lib_meta"):
-                    ref_id = self.ref_store.store_ref(abs_path, chunk.name, chunk.start_line, chunk.end_line, chunk.chunk_type, chunk.content)
-                    symbols_found.append({
-                        "name": chunk.name,
-                        "kind": chunk.chunk_type,
-                        "sig": chunk.qualified_name,
-                        "span": [chunk.start_line, chunk.end_line],
-                        "ref": ref_id,
-                        "body": chunk.content
-                    })
+        for sym in file_symbols(abs_path, content, self.languages):
+            first, last = sym["span"]
+            body_block = "\n".join(all_lines[first - 1:last])
+            sym["ref"] = self.ref_store.store_ref(abs_path, sym["name"], first, last, sym["kind"], body_block)
+            sym["body"] = body_block
+            symbols_found.append(sym)
 
         # F1 Depth Control & F3 Question-Driven Filtering
         filtered_symbols = []
@@ -189,40 +190,9 @@ class AnalyzerEngine:
                 "ref": sym["ref"]
             }
 
-            if depth == "summary":
-                # Signatures only, strictly no body
-                pass
-            elif depth == "structure":
-                # Structure: signature + submethods if any
-                if "methods" in sym:
-                    item["methods"] = [{
-                        "name": mt["name"],
-                        "kind": mt["kind"],
-                        "sig": mt["sig"],
-                        "span": mt["span"],
-                        "ref": mt["ref"]
-                    } for mt in sym["methods"]]
-            elif depth == "targeted":
-                # Bodies included only if matched filter/question
-                if is_match:
-                    item["body"] = sym.get("body", "")
-                if "methods" in sym:
-                    item["methods"] = []
-                    for mt in sym["methods"]:
-                        m_item: dict[str, Any] = {
-                            "name": mt["name"],
-                            "kind": mt["kind"],
-                            "sig": mt["sig"],
-                            "span": mt["span"],
-                            "ref": mt["ref"]
-                        }
-                        if q_tokens and any(tok in f"{mt['name']} {mt['sig']} {mt['body']}".lower() for tok in q_tokens if len(tok) > 2):
-                            m_item["body"] = mt["body"]
-                        item["methods"].append(m_item)
-            elif depth == "full":
+            # summary/structure: signature only; targeted: bodies of matching symbols only
+            if depth == "full" or (depth == "targeted" and is_match):
                 item["body"] = sym.get("body", "")
-                if "methods" in sym:
-                    item["methods"] = sym["methods"]
 
             if q_tokens or focus:
                 if is_match or (depth != "targeted" and depth != "summary"):
@@ -236,7 +206,7 @@ class AnalyzerEngine:
 
         # Compute token estimates
         rendered_json = json.dumps(filtered_symbols)
-        tokens_out = max(1, len(rendered_json) // 4)
+        tokens_out = max(1, count_tokens(rendered_json))
 
         result = {
             "file": filepath,
@@ -264,7 +234,7 @@ class AnalyzerEngine:
                       since: str | None = None,
                       max_out: int | None = None,
                       cursor: str | None = None,
-                      ctx_lines: int = 10) -> dict[str, Any]:
+                      ctx_lines: int = ANALYZE_CTX_LINES) -> dict[str, Any]:
         """F4 Batching + F5 Token Budgeting: Analyzes multiple targets up to n<=32 with cursor continuation."""
         expanded_targets = []
         for t in targets:
@@ -274,7 +244,7 @@ class AnalyzerEngine:
             else:
                 expanded_targets.append(resolve_client_path(t))
 
-        expanded_targets = list(dict.fromkeys(expanded_targets))[:32]  # Cap n<=32
+        expanded_targets = list(dict.fromkeys(expanded_targets))[:ANALYZE_MAX_TARGETS]
 
         # F13 Session State: Save targets and query
         self.set_session_state("last_analysis", {

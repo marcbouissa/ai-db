@@ -38,7 +38,7 @@ def _v1_config() -> dict:
 def test_migrate_v1_adds_v2_keys():
     out = migrate_v1(_v1_config())
     assert out["version"] == 2
-    assert out["retrieval"]["doc_weight"] == 0.5
+    assert "doc_weight" not in out["retrieval"]  # never read; dropped (K7)
     assert out["rerank"]["top_n"] == 10
     assert out["index"]["ignore"] == [".agents/**"]
     assert out["index"]["doc_weight"] == 0.5
@@ -51,7 +51,7 @@ def test_migrate_v1_preserves_user_values():
     cfg["rerank"]["top_n"] = 25
     cfg["index"] = {"ignore": ["build/**"]}
     out = migrate_v1(cfg)
-    assert out["retrieval"]["doc_weight"] == 0.9
+    assert "doc_weight" not in out["retrieval"]
     assert out["rerank"]["top_n"] == 25
     assert out["index"]["ignore"] == ["build/**"]
     assert out["access"]["cross_project"] == {"proj": ["a", "b"]}
@@ -96,7 +96,8 @@ def test_unknown_version_rejected_with_force_hint():
 
 def test_template_agrees_with_parse_defaults():
     t = build_template()
-    assert t["retrieval"].get("doc_weight", 0.5) == 0.5
+    assert "doc_weight" not in t["retrieval"]
+    assert t.get("index", {}).get("doc_weight", 0.5) == 0.5
     assert t["rerank"].get("top_n", 10) == 10
 
 

@@ -1,10 +1,25 @@
 ; C tree-sitter queries for symbols, cross-refs, and syntax errors
 
-; Function definitions
+; Function definitions (also returning pointers: `char *f()`, `int **g()`)
 (function_definition
   declarator: (function_declarator
     declarator: (identifier) @name
     parameters: (parameter_list) @params)
+  body: (compound_statement) @body) @def.function
+
+(function_definition
+  declarator: (pointer_declarator
+    declarator: (function_declarator
+      declarator: (identifier) @name
+      parameters: (parameter_list) @params))
+  body: (compound_statement) @body) @def.function
+
+(function_definition
+  declarator: (pointer_declarator
+    declarator: (pointer_declarator
+      declarator: (function_declarator
+        declarator: (identifier) @name
+        parameters: (parameter_list) @params)))
   body: (compound_statement) @body) @def.function
 
 ; Function declarations (without body) - not present in C tree-sitter, using function_definition only
@@ -24,23 +39,27 @@
   name: (type_identifier) @name
   body: (enumerator_list) @body) @def.type
 
-; Typedef definitions
+; Typedef definitions: `typedef int t;`, `typedef struct s *sp;`, `typedef int (*cb)(int);`
 (type_definition
-  declarator: (init_declarator
-    declarator: (identifier) @name)) @def.type
+  declarator: (type_identifier) @name) @def.type
 
-; Function calls
+(type_definition
+  declarator: (pointer_declarator
+    declarator: (type_identifier) @name)) @def.type
+
+(type_definition
+  declarator: (function_declarator
+    declarator: (parenthesized_declarator
+      (pointer_declarator
+        declarator: (type_identifier) @name)))) @def.type
+
+; Function and macro calls (`f()`, `MAX()`, `obj->fn()`)
 (call_expression
   function: [
     (identifier) @callee
     (field_expression
       field: (field_identifier) @callee)
-  ] @ref.call)
-
-; Macro calls
-(call_expression
-  function: (identifier) @callee
-  (#match? @callee "^[A-Z_][A-Z0-9_]*$")) @ref.call
+  ]) @ref.call
 
 ; Include statements
 (preproc_include

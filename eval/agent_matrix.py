@@ -70,14 +70,15 @@ def is_empty_pack(text: str) -> bool:
 
 
 def with_doc_weight(config_path: str, weight: float) -> str:
-    """A sibling config differing only in `retrieval.doc_weight`.
+    """A sibling config differing only in `index.doc_weight` (the weight the Ranker reads;
+    `retrieval.doc_weight` never had an effect and is no longer accepted).
 
     Written to a new file rather than mutating the shared one, so conditions
     cannot contaminate each other or the Matrix 3 configs.
     """
     with open(config_path, encoding="utf-8") as fh:
         cfg = json.load(fh)
-    cfg.setdefault("retrieval", {})["doc_weight"] = weight
+    cfg.setdefault("index", {})["doc_weight"] = weight
     tag = f"w{str(weight).replace('.', '_')}"
     out = f"{os.path.splitext(config_path)[0]}_{tag}.json"
     with open(out, "w", encoding="utf-8") as fh:

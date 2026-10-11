@@ -2,7 +2,11 @@
 
 A ranked item is a ``(filepath, name)`` tuple. An expected item is a
 ``(filepath, symbol_or_None)`` tuple. A ranked item matches an expected item when
-the filepaths are equal and, if a symbol is given, the ranked name contains it.
+the filepaths are equal and, if a symbol is given, the ranked name *is* that symbol:
+its last dotted component equals it (``run`` matches ``Cls.run``, never ``prune``),
+or, for a dotted expectation (``Cls.run``), the ranked qualified name is it or ends
+with ``.Cls.run``. Chunk labels (``def X``, ``class X``, ``X (part 1/2)``) are reduced
+to the qualified name first.
 """
 
 import math
@@ -19,7 +23,23 @@ def _matches(item: tuple[str, str], exp: tuple[str, str | None]) -> bool:
         return False
     if exp_symbol is None:
         return True
-    return exp_symbol in name
+    qualified = _qualified(name)
+    if "." in exp_symbol:
+        return qualified == exp_symbol or qualified.endswith("." + exp_symbol)
+    return qualified.rsplit(".", 1)[-1] == exp_symbol
+
+
+_LABEL_KINDS = ("def ", "class ", "type ")
+
+
+def _qualified(name: str) -> str:
+    """``def Cls.run (part 1/2)`` -> ``Cls.run``."""
+    for kind in _LABEL_KINDS:
+        if name.startswith(kind):
+            name = name[len(kind):]
+            break
+    part = name.find(" (part ")
+    return name[:part] if part >= 0 else name
 
 
 def relevance_vector(ranked: Ranked, expected: Expected) -> list[int]:

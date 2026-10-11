@@ -9,10 +9,11 @@ import os
 import time
 from typing import Any
 
-from ai_db.analyzer.engine import AnalyzerEngine
-from ai_db.analyzer.formatters import Formatters, format_as_sexp, format_as_stub
+from ai_db.analysis.analyze import AnalyzerEngine
+from ai_db.analysis.formatters import Formatters, format_as_sexp, format_as_stub
 from ai_db.config import AppConfig, load_config
 from ai_db.constants import (
+    ANALYZE_CTX_LINES,
     DEFAULT_DB_FILE,
     INDEX_LANGUAGES_STATE_KEY,
 )
@@ -52,7 +53,10 @@ class VectorDB:
         self.indexer = Indexer(db=self.backend)
         self.indexer.set_ignore_patterns(self.config.index.ignore)
         self.indexer.set_languages(self.config.index.languages)
-        self.query_engine = QueryEngine(db=self.backend)
+        # index.doc_weight applies with or without a reranker (it used to be dropped,
+        # 0.5 hardcoded, whenever rerank.provider was 'none').
+        self.query_engine = QueryEngine(db=self.backend, doc_weight=self.config.index.doc_weight,
+                                        rerank_top_n=self.config.rerank.top_n)
         self.skill_router = SkillRouter(db=self.backend, db_path=self.db_path)
         from ai_db.skill_gen import generated_skills_dir
         self.skill_router.generated_dir = generated_skills_dir(self.config)
@@ -229,6 +233,8 @@ class VectorDB:
                    cache_hit: bool, stages: dict[str, float], result: Any) -> None:
         if tool == "investigate":
             top = [[e["qualified_name"], e["score"]] for e in result["evidence"][:10]]
+        elif tool == "analyze":
+            top = [[s["name"], s["span"]] for s in result.get("symbols", [])[:10]]
         else:
             top = [[h["chunk_id"], h["score"]] for h in result[:10]]
         sig = self.retrieval_signature()
@@ -291,7 +297,6 @@ class VectorDB:
               project: str | None = None, allowed_projects: list[str] | None = None,
               **kwargs: Any) -> list[dict[str, Any]]:
         k = kwargs.get("top", top_k)
-        t0 = time.perf_counter()
         params = {"top_k": k, "relative_to": relative_to, "project": project,
                   "allowed_projects": allowed_projects, "languages": kwargs.get("languages"),
                   "chunk_types": kwargs.get("chunk_types"),
@@ -300,10 +305,7 @@ class VectorDB:
             search_text, top_k=k, relative_to=relative_to, project=project,
             allowed_projects=allowed_projects, languages=params["languages"],
             chunk_types=params["chunk_types"], modified_since=params["modified_since"]))
-        latency_ms = (time.perf_counter() - t0) * 1000.0
-        backend_name = "sqlite_wal" if self.backend.backend_name == "sqlite" else self.backend.backend_name
-        self.telemetry_tracker.record_query(backend=backend_name, latency_ms=latency_ms, results_count=len(results))
-        hits: list[dict[str, Any]] = results
+        hits: list[dict[str, Any]] = results  # logged (latency, cache hit) by _cached
         return hits
 
     def query_symbol(self, name: str, relative_to: str | None = None,
@@ -369,18 +371,15 @@ class VectorDB:
                      focus: str | None = None,
                      q: str | None = None,
                      since: str | None = None,
-                     ctx_lines: int = 10,
+                     ctx_lines: int = ANALYZE_CTX_LINES,
                      bypass_cache: bool = False,
                      no_cache: bool = False) -> dict[str, Any]:
+        t0 = time.perf_counter()
         result = self.analyzer_engine.analyze_file(filepath, depth=depth, span=span, focus=focus, q=q,
                                                    since=since, ctx_lines=ctx_lines,
                                                    bypass_cache=bypass_cache, no_cache=no_cache)
-        meta = result.get("meta", {})
-        is_hit = bool(meta.get("cached", False))
-        tokens_in = meta.get("tokens_in", 0)
-        tokens_out = meta.get("tokens_out", 0)
-        tokens_saved = max(0, tokens_in - tokens_out) if is_hit else 0
-        self.telemetry_tracker.record_cache_access(hit=is_hit, tokens_saved=tokens_saved)
+        self._log_query("analyze", filepath, depth, (time.perf_counter() - t0) * 1000,
+                        bool(result.get("meta", {}).get("cached", False)), {}, result)
         return result
 
     def analyze_batch(self, targets: list[str], depth: str = "structure",
@@ -389,7 +388,7 @@ class VectorDB:
                       since: str | None = None,
                       max_out: int | None = None,
                       cursor: str | None = None,
-                      ctx_lines: int = 10) -> dict[str, Any]:
+                      ctx_lines: int = ANALYZE_CTX_LINES) -> dict[str, Any]:
         return self.analyzer_engine.analyze_batch(targets, depth=depth, q=q, focus=focus, span=span,
                                                  since=since, max_out=max_out, cursor=cursor, ctx_lines=ctx_lines)
 
@@ -428,7 +427,8 @@ class VectorDB:
         abs_path = _os.path.abspath(_os.path.expanduser(filepath))
         with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
-        return self.analyzer_engine.ref_store.diff_spans(abs_path, content, since=since)
+        from ai_db.analysis.diff import file_diff
+        return file_diff(abs_path, since, self.backend, self.config.index.languages, content)
 
     # F10: Annotations / TODOs
     def query_annotations(self, kind: str | None = None,

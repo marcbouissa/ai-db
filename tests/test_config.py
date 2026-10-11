@@ -126,3 +126,31 @@ def test_cross_project_access_from_config(tmp_path):
     from ai_db.utils import get_allowed_projects
     assert "other" in get_allowed_projects("proj", None, db.query_engine.cross_project)
     db.close()
+
+
+def test_retrieval_doc_weight_is_rejected_and_migrated_away():
+    """K7: `retrieval.doc_weight` was parsed but never read; it is refused with a hint and
+    `ai-db init --migrate` drops it (ranking unchanged: `index.doc_weight` is the weight)."""
+    from ai_db.config_template import migrate
+
+    data = build_template()
+    data["retrieval"]["doc_weight"] = 0.9
+    with pytest.raises(AiDbConfigError, match="init --migrate"):
+        parse_config(data, check_env=False)
+    out = migrate(data)
+    assert "doc_weight" not in out["retrieval"]
+    parse_config(out, check_env=False)
+
+
+def test_index_doc_weight_applies_without_a_reranker(tmp_path):
+    """K7: the ranker's doc weight comes from config, not a hardcoded 0.5."""
+    from ai_db import VectorDB
+
+    data = build_template()
+    data["index"] = {**data.get("index", {}), "doc_weight": 0.25}
+    data["rerank"] = {"provider": "none"}
+    db = VectorDB(os.path.join(tmp_path, "x.db"), config=parse_config(data))
+    try:
+        assert db.query_engine.ranker.doc_weight == 0.25
+    finally:
+        db.close()

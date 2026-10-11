@@ -25,6 +25,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
+from ai_db.analysis.diff import changed_lines, repo_root
 from ai_db.analysis.pack import EntryPoint, Evidence, InvestigationPack
 from ai_db.analysis.resolve import Resolver, scope_of
 from ai_db.constants import (
@@ -36,20 +37,26 @@ from ai_db.constants import (
     GIT_TIMEOUT_S,
     IMPACT_DEPTH,
     INVESTIGATE_BODY_SHARE,
+    INVESTIGATE_HOP_DECAY,
     INVESTIGATE_MIN_BUDGET,
+    INVESTIGATE_PARENT_FACTOR,
+    INVESTIGATE_TEST_FACTOR,
     MAX_EXPANDED_PER_SEED,
     MAX_OMITTED,
     MAX_TESTS,
     MODULE_SEED_FACTOR,
+    RECENT_CHANGES_MAX_FILES,
+    RECENT_CHANGES_PER_FILE,
+    RESOLVE_CALLERS_LIMIT,
     SEED_K,
+    SNIPPET_CHARS,
+    STALE_RESYNC_MAX_FILES,
     TRACE_CONTEXT_LINES,
     TRACE_DEPTH,
     TRACE_MAX_NODES,
 )
-from ai_db.errors import AiDbConfigError
 from ai_db.parser.chunker import count_tokens
 from ai_db.search.ranking import last_component
-from ai_db.search.retriever import SNIPPET_CHARS
 from ai_db.storage.models import ChunkRecord, SearchResult
 from ai_db.utils import get_allowed_projects
 
@@ -74,83 +81,6 @@ def is_test_path(path: str) -> bool:
     base = parts[-1]
     return "tests" in parts[:-1] or "test" in parts[:-1] or base.startswith("test_") \
         or base.endswith(("_test.py", ".test.ts", ".test.js", ".spec.ts", ".spec.js", "_test.go"))
-
-
-def _git_changed_spans(since: str, root: str) -> dict[str, list[int]]:
-    """Return {absolute_filepath: [changed line numbers]} for `git diff <since>`.
-
-    `--unified=0` drops context lines, so the hunk headers carry the whole
-    signal. Raises AiDbConfigError when git cannot answer: a diff-mode
-    investigation with no diff would silently return an empty pack, which
-    reads as "nothing to review" rather than "I could not look".
-    """
-    try:
-        toplevel = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=GIT_TIMEOUT_S, cwd=root, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as err:
-        raise AiDbConfigError(f"mode 'diff' needs a git repository: {err}") from err
-    if toplevel.returncode != 0:
-        raise AiDbConfigError(f"mode 'diff' needs a git repository: {root} is not in one")
-
-    repo_root = toplevel.stdout.strip()
-    try:
-        diff = subprocess.run(
-            ["git", "diff", "--unified=0", "--no-color", since, "--"],
-            capture_output=True, text=True, timeout=GIT_TIMEOUT_S, cwd=repo_root, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as err:
-        raise AiDbConfigError(f"git diff against {since!r} failed: {err}") from err
-    if diff.returncode != 0:
-        raise AiDbConfigError(f"git diff against {since!r} failed: {diff.stderr.strip()}")
-
-    spans: dict[str, list[int]] = {}
-    current: str | None = None
-    hunk = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-    for line in diff.stdout.splitlines():
-        if line.startswith("+++ "):
-            # "+++ b/path" for a change, "+++ /dev/null" for a deletion
-            target = line[4:].strip()
-            if target == "/dev/null":
-                current = None
-            elif target.startswith("b/"):
-                current = os.path.join(repo_root, target[2:])
-            else:
-                current = os.path.join(repo_root, target)
-            continue
-        if current is None:
-            continue
-        m = hunk.match(line)
-        if m is None:
-            continue
-        start = int(m.group(1))
-        count = int(m.group(2) or 1)
-        spans.setdefault(current, []).extend(range(start, start + count))
-
-    # `git diff` never lists untracked files; a new file is a change that is
-    # entirely additions, so every line of it counts as changed.
-    try:
-        untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-            capture_output=True, text=True, timeout=GIT_TIMEOUT_S, cwd=repo_root, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as err:
-        raise AiDbConfigError(f"git ls-files failed: {err}") from err
-    if untracked.returncode != 0:
-        raise AiDbConfigError(f"git ls-files failed: {untracked.stderr.strip()}")
-    for rel in untracked.stdout.split("\0"):
-        if not rel:
-            continue
-        path = os.path.join(repo_root, rel)
-        try:
-            with open(path, encoding="utf-8") as fh:
-                count = sum(1 for _ in fh)
-        except (OSError, UnicodeDecodeError):
-            continue  # unreadable or binary: nothing line-based to report
-        if count:
-            spans[path] = list(range(1, count + 1))
-    return spans
 
 
 def _query_tokens(query: str) -> set[str]:
@@ -202,7 +132,6 @@ class Investigator:
     def __init__(self, vdb: Any):
         self.vdb = vdb
         self.db = vdb.backend
-        self._import_cache: dict[str, set[str]] = {}
         self._resolver = Resolver(self.db)
 
     # ------------------------------------------------------------------ api
@@ -230,11 +159,13 @@ class Investigator:
 
         if mode == "diff":
             # Seeds come from the diff, not from retrieval.
-            spans = _git_changed_spans(since or "", root or ".")
+            spans = changed_lines(since or "", root or ".")
+            unindexed = self._index_new_files(spans, root or ".", project)
             seeds = self._diff_seeds(spans, query, allowed)
             changes = [{"filepath": path,
                         "lines": _line_ranges(lines),
-                        "changed_lines": len(lines)}
+                        "changed_lines": len(lines),
+                        **({"unindexed": True} if path in unindexed else {})}
                        for path, lines in sorted(spans.items())]
         else:
             seeds = self.vdb.query_engine.search(query, filters, SEED_K[mode])
@@ -300,6 +231,17 @@ class Investigator:
 
         self._pack(pack, items, edges, relative_to)
         return pack
+
+    def _index_new_files(self, spans: dict[str, list[int]], root: str,
+                         project: str | None) -> set[str]:
+        """Index changed files the index has never seen (a new, untracked file), so the
+        diff pack has evidence for them; ignored files stay out (``sync_paths`` applies
+        ``.aidbignore``). Above ``STALE_RESYNC_MAX_FILES`` nothing is synced inline.
+        Returns the changed files that are still not indexed."""
+        new = [p for p in spans if os.path.isfile(p) and self.db.get_file(p) is None]
+        if new and len(new) <= STALE_RESYNC_MAX_FILES:
+            self.vdb.sync_paths(repo_root(root), new, project=project)
+        return {p for p in new if self.db.get_file(p) is None}
 
     def _pick_entry_seed(self, seed_items: list[_Item]) -> _Item | None:
         """Pick the most entry-like seed for flow tracing.
@@ -430,7 +372,7 @@ class Investigator:
         for s in seeds:
             parent = parents.get(s.chunk.parent_id) if s.chunk.parent_id is not None else None
             if parent is not None and parent.chunk_type == "class_header":
-                self._add(items, parent, "parent", s.score * 0.5, f"class of {s.chunk.qualified_name}")
+                self._add(items, parent, "parent", s.score * INVESTIGATE_PARENT_FACTOR, f"class of {s.chunk.qualified_name}")
 
     def _add_callees(self, seeds: list[_Item], allowed: list[str], items: dict[int, _Item],
                      edges: list[list[str]], unresolved: set[str]) -> None:
@@ -438,14 +380,11 @@ class Investigator:
         frontier = [(s.chunk, s.score) for s in seeds]
         for hop in (1, 2):
             per_src: list[tuple[ChunkRecord, float, list[str]]] = []
-            all_names: set[str] = set()
             for chunk, score in frontier:
                 refs = self.db.get_refs_from(chunk.filepath, scope_of(chunk.qualified_name))
                 # call order (first occurrence) is the reading order of the body
                 names = list(dict.fromkeys(r.callee_name for r in refs if r.callee_name not in _BUILTINS))
                 per_src.append((chunk, score, names))
-                all_names |= set(names)
-            self.db.find_chunks_by_symbol(sorted(all_names), allowed)  # populate resolver cache
             next_frontier = []
             for chunk, score, names in per_src:
                 result = self._resolver.resolve_callees(set(names), chunk, allowed)
@@ -453,7 +392,7 @@ class Investigator:
                     unresolved |= result.unresolved
                 targets = [c for n in names if n in result.resolved for c in result.resolved[n]]
                 for callee in targets[:MAX_EXPANDED_PER_SEED]:
-                    self._add(items, callee, "callee", score * (0.6 ** hop),
+                    self._add(items, callee, "callee", score * (INVESTIGATE_HOP_DECAY ** hop),
                               f"called by {chunk.qualified_name}")
                     edges.append([chunk.qualified_name, callee.qualified_name])
                     if hop == 1 and chunk.token_count <= DELEGATE_MAX_TOKENS:
@@ -470,7 +409,7 @@ class Investigator:
             next_frontier = []
             for target, score in frontier:
                 name = last_component(target.qualified_name)
-                callers = self._resolver.resolve_callers(name, target, allowed, limit=100)
+                callers = self._resolver.resolve_callers(name, target, allowed, limit=RESOLVE_CALLERS_LIMIT)
                 added = 0
                 for caller in callers:
                     if added >= MAX_EXPANDED_PER_SEED:
@@ -481,7 +420,7 @@ class Investigator:
                     seen.add(caller.id)
                     added += 1
                     role = "test" if is_test_path(caller.filepath) else "caller"
-                    self._add(items, caller, role, score * (0.6 ** depth),
+                    self._add(items, caller, role, score * (INVESTIGATE_HOP_DECAY ** depth),
                               f"calls {target.qualified_name} (depth {depth})")
                     next_frontier.append((caller, score))
             frontier = next_frontier
@@ -495,14 +434,15 @@ class Investigator:
             if is_test_path(s.chunk.filepath):
                 continue
             name = last_component(s.chunk.qualified_name)
-            test_callers = self._resolver.find_test_callers(name, s.chunk, allowed, limit=100)
+            test_callers = self._resolver.find_test_callers(name, s.chunk, allowed,
+                                                            limit=RESOLVE_CALLERS_LIMIT)
             for chunk in test_callers:
                 if len(tests) >= MAX_TESTS:
                     return
                 if chunk.id is None or chunk.id in listed:
                     continue
                 listed.add(chunk.id)
-                self._add(items, chunk, "test", s.score * 0.4, f"tests {s.chunk.qualified_name}")
+                self._add(items, chunk, "test", s.score * INVESTIGATE_TEST_FACTOR, f"tests {s.chunk.qualified_name}")
                 tests.append({"test": chunk.qualified_name,
                               "filepath": self._display(chunk.filepath, relative_to),
                               "lines": f"L{chunk.start_line}-{chunk.end_line}",
@@ -510,20 +450,21 @@ class Investigator:
 
     # ------------------------------------------------------------- git
 
-    def _recent_changes(self, files: list[str], per_file: int = 5) -> list[dict[str, Any]]:
+    def _recent_changes(self, files: list[str],
+                        per_file: int = RECENT_CHANGES_PER_FILE) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
-        for path in list(dict.fromkeys(files))[:8]:
+        for path in list(dict.fromkeys(files))[:RECENT_CHANGES_MAX_FILES]:
             directory = os.path.dirname(path) or "."
             if not os.path.isdir(directory):
                 continue
             inside = subprocess.run(["git", "-C", directory, "rev-parse", "--is-inside-work-tree"],
-                                    capture_output=True, text=True, timeout=5, check=False)
+                                    capture_output=True, text=True, timeout=GIT_TIMEOUT_S, check=False)
             if inside.returncode != 0 or inside.stdout.strip() != "true":
                 continue  # not version controlled: nothing to report for this file
             log = subprocess.run(
                 ["git", "-C", directory, "log", f"-n{per_file}", "--date=short",
                  "--format=%h%x1f%s%x1f%ad", "--", os.path.basename(path)],
-                capture_output=True, text=True, timeout=10, check=True)
+                capture_output=True, text=True, timeout=GIT_TIMEOUT_S, check=True)
             commits = []
             for line in log.stdout.splitlines():
                 h, subject, date = line.split("\x1f")

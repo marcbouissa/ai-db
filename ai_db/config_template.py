@@ -96,12 +96,20 @@ def migrate_legacy(old: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def drop_retrieval_doc_weight(data: dict[str, Any]) -> None:
+    """Remove ``retrieval.doc_weight`` in place: it was parsed and validated but never read
+    (the Ranker always used ``index.doc_weight``), so dropping it changes no ranking."""
+    retrieval = data.get("retrieval")
+    if isinstance(retrieval, dict):
+        retrieval.pop("doc_weight", None)
+
+
 def migrate_v1(data: dict[str, Any]) -> dict[str, Any]:
     """Convert a v1 config to v2 by adding the keys v2 introduced.
 
-    v2 added ``retrieval.doc_weight``, ``rerank.top_n``, ``index.doc_weight``,
-    ``index.ignore`` and the ``trace`` section. Existing values are preserved;
-    new keys take their template defaults.
+    v2 added ``rerank.top_n``, ``index.doc_weight``, ``index.ignore`` and the ``trace``
+    section. Existing values are preserved; new keys take their template defaults. A
+    ``retrieval.doc_weight`` (never read; see :func:`drop_retrieval_doc_weight`) is dropped.
     """
     version = data.get("version")
     if version != 1:
@@ -110,9 +118,7 @@ def migrate_v1(data: dict[str, Any]) -> dict[str, Any]:
     out = copy.deepcopy(data)
     out["version"] = CONFIG_VERSION
 
-    # retrieval.doc_weight
-    retrieval = out.setdefault("retrieval", {})
-    retrieval.setdefault("doc_weight", DEFAULT_DOC_WEIGHT)
+    drop_retrieval_doc_weight(out)
 
     # rerank.top_n (v1 had no top_n; template default applies)
     rerank = out.setdefault("rerank", {})
@@ -144,9 +150,11 @@ def migrate(data: dict[str, Any]) -> dict[str, Any]:
     if version == 1:
         return migrate_v1(data)
     if version == CONFIG_VERSION:
-        # already current: validate and hand it back
-        parse_config(data, check_env=False)
-        return copy.deepcopy(data)
+        # already current: drop the dead key, validate and hand it back
+        out = copy.deepcopy(data)
+        drop_retrieval_doc_weight(out)
+        parse_config(out, check_env=False)
+        return out
     raise ValueError(
         f"cannot migrate from version {version!r}; this ai-db supports "
         f"versions {None!r} (unversioned), 1 and {CONFIG_VERSION}"

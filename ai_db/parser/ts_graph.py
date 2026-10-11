@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ai_db.parser.languages import declared_name, language_for
+from ai_db.parser.languages import language_for
+from ai_db.parser.naming import bound_variable, definition_name, qualified_name
 
 if TYPE_CHECKING:
     # Annotation-only: `from __future__ import annotations` makes every `Node`
@@ -62,7 +63,8 @@ def _python_in_class_body(func: Node) -> bool:
             and parent.parent is not None and parent.parent.type == "class_definition")
 
 
-_CLASS_NODES = ("class_definition", "class_declaration", "class_specifier", "struct_item",
+_CLASS_NODES = ("class_definition", "class_declaration", "abstract_class_declaration",
+                "class_specifier", "struct_item",
                 "struct_specifier", "interface_declaration", "enum_declaration", "impl_item",
                 "struct_declaration", "record_declaration", "clazz")
 _FUNCTION_NODES = ("function_definition", "function_declaration", "function_item",
@@ -76,6 +78,8 @@ _QUALIFYING_NODES = _CLASS_NODES + ("type_declaration", "namespace_definition",
 _CALLER_NODES = ("function_definition", "function_declaration", "function_item",
                  "method_declaration", "async_item", "constructor_declaration",
                  "destructor_declaration", "local_function_statement",
+                 # JS/TS class methods and generators
+                 "method_definition", "generator_function_declaration",
                  # Pkl: methods, and properties (a property's value is an expression,
                  # so calls in it belong to the property).
                  "classMethod", "classProperty")
@@ -94,22 +98,26 @@ def _scope_of(node: Node) -> tuple[int, bool]:
     return depth, local
 
 
-def _get_qualified_name(base_name: str, node: Node, source: bytes, lang: str, symbols_by_line: dict[int, str]) -> str:
-    """Build a qualified name for a symbol node by prepending containing class names."""
-    # Find the containing class/struct/interface
+def _bound_top_function(node: Node) -> bool:
+    """A JS/TS function value bound to a module-level (or exported) variable: the chunker
+    makes it a chunk named after the variable, so it is a caller scope too."""
+    var = bound_variable(node)
+    decl = var.parent if var is not None else None
+    return decl is not None and decl.parent is not None and decl.parent.type in ("program", "export_statement")
+
+
+def _caller_scope(node: Node, source: bytes, lang: str) -> tuple[str, int] | None:
+    """(``module.<qualified name>``, def line) of the definition a call belongs to, or None
+    for module-level code. Unnamed functions (lambdas, callbacks) belong to their enclosing
+    definition. Names come from ``ai_db.parser.naming``, like the chunks' names."""
     parent = node.parent
-    parts = []
-    while parent:
-        if parent.type in _QUALIFYING_NODES:
-            name_node = declared_name(parent)
-            if name_node:
-                parts.append(source[name_node.start_byte:name_node.end_byte].decode("utf-8", errors="replace"))
+    while parent is not None:
+        if parent.type in _CALLER_NODES or _bound_top_function(parent):
+            name = definition_name(parent, source, lang)
+            if name:
+                return "module." + qualified_name(parent, source, lang, own=name), parent.start_point[0] + 1
         parent = parent.parent
-    parts.reverse()
-    if parts:
-        return "module." + ".".join(parts) + "." + base_name
-    # Module-level symbols get "module." prefix
-    return "module." + base_name
+    return None
 
 
 def _first_line(source: bytes, node: Node) -> str:
@@ -252,7 +260,6 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
     seen_symbols: set[tuple[str, str, str, int]] = set()
 
     # First pass: collect all symbols with their line numbers
-    symbols_by_line: dict[int, str] = {}
     for pattern_idx, captures in cursor.matches(tree.root_node):
         # Get the captured name nodes for this pattern
         name_nodes = captures.get("name", [])
@@ -260,16 +267,11 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
             if capture_name.startswith("def."):
                 for i, node in enumerate(nodes):
                     line = node.start_point[0] + 1
-                    # Use captured name node if available, otherwise fall back to field lookup
-                    if i < len(name_nodes):
-                        def_name_node = name_nodes[i]
-                        name = source[def_name_node.start_byte:def_name_node.end_byte].decode("utf-8", errors="replace")
-                    else:
-                        fallback_name_node: Node | None = declared_name(node)
-                        if fallback_name_node:
-                            name = source[fallback_name_node.start_byte:fallback_name_node.end_byte].decode("utf-8", errors="replace")
-                        else:
-                            name = ""
+                    # Every @def pattern captures the definition's @name
+                    if i >= len(name_nodes):
+                        raise ValueError(f"{lang}.scm: a @{capture_name} pattern has no @name capture")
+                    def_name_node = name_nodes[i]
+                    name = source[def_name_node.start_byte:def_name_node.end_byte].decode("utf-8", errors="replace")
                     sym_type = capture_name[4:]  # remove "def."
                     if lang == "python" and sym_type == "function" and _python_in_class_body(node):
                         continue  # emitted by the method pattern; one symbol per def
@@ -289,7 +291,6 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                         key = (name, sym_type, filepath, line)
                         if key not in seen_symbols:
                             seen_symbols.add(key)
-                            symbols_by_line[line] = name
                             symbols.append({
                                 "name": name,
                                 "symbol_type": sym_type,
@@ -321,59 +322,8 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                     line = node.start_point[0] + 1
                     ref_type = capture_name[4:]  # remove "ref."
                     if ref_type == "call":
-                        # Find the caller (enclosing function/method)
-                        caller_name = "module"
-                        caller_line = line
-                        parent = node.parent
-                        while parent:
-                            if parent.type in _CALLER_NODES:
-                                caller_name_node: Node | None = declared_name(parent)
-                                if caller_name_node:
-                                    caller_name = source[caller_name_node.start_byte:caller_name_node.end_byte].decode("utf-8", errors="replace")
-                                caller_line = parent.start_point[0] + 1
-                                # Qualify with class if inside one
-                                caller_name = _get_qualified_name(caller_name, parent, source, lang, symbols_by_line)
-                                break
-# Handle case where call is inside a block that's a method body
-                            # (block's parent is function_definition, not class_definition)
-                            if parent.type == "block":
-                                # Check if this block is the body of a function_definition
-                                # by checking if parent.parent is a function_definition with this block as body
-                                func_def = None
-                                if parent.parent and parent.parent.type in _CALLER_NODES:
-                                    # Check if this function's body is our block
-                                    body = parent.parent.child_by_field_name("body")
-                                    if body and body == parent:
-                                        func_def = parent.parent
-                                
-                                # If not found, check previous sibling (for nested functions)
-                                if not func_def:
-                                    prev_sibling = parent.prev_sibling
-                                    while prev_sibling:
-                                        if prev_sibling.type in _CALLER_NODES:
-                                            func_def = prev_sibling
-                                            break
-                                        prev_sibling = prev_sibling.prev_sibling
-                                
-                                # If not found, check parent's children (for class body case)
-                                if not func_def and parent.parent:
-                                    for child in parent.parent.children:
-                                        if child.type in _CALLER_NODES:
-                                            # Check if this function's body is our block
-                                            body = child.child_by_field_name("body")
-                                            if body and body == parent:
-                                                func_def = child
-                                                break
-                                
-                                if func_def:
-                                    func_name_node: Node | None = declared_name(func_def)
-                                    if func_name_node:
-                                        caller_name = source[func_name_node.start_byte:func_name_node.end_byte].decode("utf-8", errors="replace")
-                                    caller_line = func_def.start_point[0] + 1
-                                    # Qualify with class if inside one
-                                    caller_name = _get_qualified_name(caller_name, func_def, source, lang, symbols_by_line)
-                                    break
-                            parent = parent.parent
+                        scope = _caller_scope(node, source, lang)
+                        caller_name, caller_line = scope if scope is not None else ("module", line)
                         # The callee capture's text; the whole call expression only when the
                         # pattern has none (decoding it first was quadratic in nesting).
                         named = callee_nodes[i] if callee_nodes and i < len(callee_nodes) else node
@@ -454,13 +404,10 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                         # Walk up to find the class/struct/interface declaration
                         while class_node and class_node.type not in _QUALIFYING_NODES:
                             class_node = class_node.parent
-                        if class_node:
-                            class_name_node: Node | None = declared_name(class_node)
-                            if class_name_node:
-                                caller_name = source[class_name_node.start_byte:class_name_node.end_byte].decode("utf-8", errors="replace")
-                        # Qualify the caller (derived class) name with its containing classes
-                        if caller_name != "module" and class_node is not None:
-                            caller_name = _get_qualified_name(caller_name, class_node, source, lang, symbols_by_line)
+                        class_name = definition_name(class_node, source, lang) if class_node else None
+                        if class_node is not None and class_name:
+                            # The derived class, qualified by its containers
+                            caller_name = "module." + qualified_name(class_node, source, lang, own=class_name)
                         # Add inherit ref for each base class/interface
                         for base_name in base_names:
                             if caller_name and base_name:

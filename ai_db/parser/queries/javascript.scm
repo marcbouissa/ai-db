@@ -6,6 +6,14 @@
   parameters: (formal_parameters) @params
   body: (statement_block) @body) @def.function
 
+; Functions bound to a variable: `const f = () => {}`, `let g = function () {}`
+(variable_declarator
+  name: (identifier) @name
+  value: [
+    (arrow_function)
+    (function_expression)
+  ]) @def.function
+
 ; Method definitions in classes
 (method_definition
   name: (property_identifier) @name
@@ -22,10 +30,6 @@
 (export_statement
   (function_declaration
     name: (identifier) @name) @def.function
-)
-
-(export_statement
-  (class_declaration) @def.class
 )
 
 (export_statement

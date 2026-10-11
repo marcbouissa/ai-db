@@ -29,24 +29,29 @@
           body: (block) @body) @def.method)
     ]))
 
-; Import statements
+; Import statements (`import a.b`, `import a.b as c`): one ref per imported module
 (import_statement
-  (dotted_name) @module) @ref.import
+  name: (dotted_name) @module) @ref.import
+
+(import_statement
+  name: (aliased_import
+    name: (dotted_name) @module)) @ref.import
+
+; `from a.b import c [as d]` and relative `from .x import y` / `from . import y`:
+; one ref to the module it imports from
+(import_from_statement
+  module_name: (dotted_name) @module) @ref.import
 
 (import_from_statement
-  (dotted_name) @module
-  (dotted_name) @name) @ref.import
+  module_name: (relative_import) @module) @ref.import
 
-; Relative imports
+; ... and one per imported name (`callers X` lists the files importing X; the resolver
+; links a file to the definitions it imports)
 (import_from_statement
-  (relative_import
-    (import_prefix)
-    (dotted_name) @module)
-  (dotted_name) @name) @ref.import
-
-(import_from_statement
-  (relative_import
-    (import_prefix)) @ref.import)
+  name: [
+    (dotted_name) @module
+    (aliased_import name: (dotted_name) @module)
+  ]) @ref.import
 
 ; Call expressions - capture the call and the called function name
 (call
@@ -57,20 +62,34 @@
   ]
 ) @ref.call
 
-; Inheritance - class bases
+; Inheritance - class bases (`Base`, and the last component of `abc.ABC`, like calls)
 (class_definition
-  (argument_list
-    (identifier) @base) @ref.inherit)
+  superclasses: (argument_list
+    [
+      (identifier) @base
+      (attribute attribute: (identifier) @base)
+    ]) @ref.inherit)
 
-; Assignment to capture type aliases
+; Types: annotated assignments with a value at module/class scope (`X: TypeAlias = ...`,
+; dataclass fields `deps: list[str] = field(...)`), `type X = ...`, and
+; `T = TypeVar(...)` / `NewType` / `NamedTuple` / `TypedDict`. An unannotated
+; `app = Flask()` or `x = field()` is not a type; extract_graph drops function-local ones.
 (assignment
   left: (identifier) @name
-  right: [
-    (call
-      function: (identifier) @type_ctor)
-    (subscript
-      value: (identifier) @type_ctor)
-  ] @def.type)
+  type: (type)
+  right: (_)) @def.type
+
+(type_alias_statement
+  left: (type (identifier) @name)) @def.type
+
+(assignment
+  left: (identifier) @name
+  right: (call
+    function: [
+      (identifier) @_ctor
+      (attribute attribute: (identifier) @_ctor)
+    ])
+  (#any-of? @_ctor "TypeVar" "NewType" "NamedTuple" "TypedDict" "ParamSpec" "TypeVarTuple")) @def.type
 
 ; Syntax errors - ERROR and MISSING nodes
 (ERROR) @syntax.error

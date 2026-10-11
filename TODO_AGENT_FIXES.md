@@ -68,6 +68,7 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   `: "${OPENROUTER_API_KEY_NAIVE:?set it}"` and add `benchmark.sh` to `.gitignore` (not only
   `.git/info/exclude`). **The agent must not print, copy or move the keys.**
 - **Check:** `grep -c 'sk-or-' benchmark.sh` prints `0`.
+- **Skipped 2026-10-11:** user action (rotate the keys); the agent must not touch them.
 
 ### D2. Syncing one project can prune another project's files
 - [x] **Observed:** `SQLiteBackend.get_files_by_prefix` runs
@@ -153,15 +154,19 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 ### E5. Small storage bugs (one commit)
 - [x] `delete_skill(filepath, project, name=None)` deletes from `skills` but not `fts_skills` or
   `skill_vectors` → `search_skills` returns deleted names. Delete from all three.
-- [ ] **(deferred to K7)** `cosine_distance` returns "worst" on a dimension mismatch instead of raising (§0.1).
+- [x] **(deferred to K7)** `cosine_distance` returns "worst" on a dimension mismatch instead of raising (§0.1).
   Raise `AiDbQueryError` with both dimensions. Deferred: `tests/test_phase11.py` pins the
   current behaviour and its only callers are the skill/context vector paths K7 may delete.
+  **Done 2026-10-11 (verified):** landed with K7; `cosine_distance` raises `AiDbStorageError`
+  on mixed dimensions.
 - [x] `get_weak_points` joins `files.id = symbols.file_id`; neither column exists, so it always
   crashes. Nothing calls it. Delete it and the `backend.py` stub that returns empty results;
   the working implementation was `ai_db/storage/state.py:get_telemetry_weak_points` (now `SqliteBackend.get_weak_points`, K3).
-- [ ] **(partly done; rest deferred to K7)** `search_skills_hybrid` keys RRF by `name` only, but `skills` PK is `(name, project)`.
+- [x] **(partly done; rest deferred to K7)** `search_skills_hybrid` keys RRF by `name` only, but `skills` PK is `(name, project)`.
   Key by `(name, project)` (needs `search_skills`/`search_skills_vector` to return the project;
   only worth it if K7 keeps the vector path). `rrf_k` now defaults to `RRF_K` (done).
+  **Done 2026-10-11 (verified):** K7 deleted `search_*_hybrid`; recall providers return
+  `(name, project)` keys.
 - **Check:** one test per bullet.
 
 ---
@@ -230,7 +235,7 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 ## P1: Call graph, trace, analysis
 
 ### G1. Call graph is empty outside Python
-- [ ] **Observed:** in `ai_db/parser/ts_graph.py` the caller walk recognises only
+- [x] **Observed:** in `ai_db/parser/ts_graph.py` the caller walk recognises only
   `function_definition`, `function_declaration`, `function_item`, `method_declaration`,
   `async_item`. JS/TS methods, arrow functions and Java constructors get caller `module`;
   C/C++ `function_definition` has no `name` field → `module.module`; Go methods become
@@ -245,6 +250,11 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - **Check:** `tests/test_ts_graph.py`: per language, a method calling a function yields a ref
   whose caller equals the method chunk's `qualified_name`; `trace` on the polyglot fixture
   returns ≥1 callee for each language.
+- **Done 2026-10-11:** `ai_db/parser/naming.py` (`SCOPE_CONTAINERS`, `definition_name`,
+  `qualified_name`) names both chunks and caller scopes; JS/TS methods and bound arrow
+  functions are callers, C/C++ names come from the declarator chain, Go methods are
+  `Recv.m`, Rust impl methods are `Type.m` (trait/generics stripped; was `Trait for Type`).
+  Python refs on the repo are byte-identical. Tests in `tests/test_ts_graph.py`.
 
 ### G12. Run-through 2026-10-08: fixes and performance (done)
 - [x] `trace`: dotted entries (`Class.method`) resolve; `file:line` takes the innermost
@@ -290,9 +300,11 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   rows.
 
 ### G3. Readiness message inverted
-- [ ] **Observed:** `trace.py` `_generate_readiness`: an ancestor with `await_kind == "await"`
+- [x] **Observed:** `trace.py` `_generate_readiness`: an ancestor with `await_kind == "await"`
   prints "(not awaited)".
 - **Fix:** invert the condition. **Check:** test asserting both branches.
+- **Done 2026-10-11:** an awaited ancestor now reads "(awaited, file:line)"; both branches
+  tested in `tests/test_trace.py`.
 
 ### G4. Trace entry by qualified name fails
 - [x] **Observed:** `_find_entry` passes `"A.m"` to `find_chunks_by_symbol`, which matches
@@ -303,68 +315,102 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - **Check:** `ai-db trace ServiceDispatcher.execute` on this repo returns a tree.
 
 ### G5. Per-language tree-sitter query bugs (`ai_db/parser/queries/*.scm`)
-- [ ] Python: add `aliased_import` / `dotted_name as` patterns; restrict `@def.type` to
+- [x] Python: add `aliased_import` / `dotted_name as` patterns; restrict `@def.type` to
   annotated or `TypeAlias` assignments at module/class scope (not `app = Flask()`, not
   `x = field()`); capture `attribute` bases (`abc.ABC`).
-- [ ] C: typedef pattern must match `type_definition` declarators directly; handle
+- [x] C: typedef pattern must match `type_definition` declarators directly; handle
   `pointer_declarator` for function names.
-- [ ] C++: in-class `field_identifier` methods, destructors, `template_declaration` (and the
+- [x] C++: in-class `field_identifier` methods, destructors, `template_declaration` (and the
   chunker must not put templates into `imports/globals`).
-- [ ] JS: `lexical_declaration` → `variable_declarator` with `arrow_function` value.
-- [ ] TS: `abstract_class_declaration`.
-- [ ] Go: struct emitted as both `struct` and `type` (dedupe); `selector_expression` alone is
+- [x] JS: `lexical_declaration` → `variable_declarator` with `arrow_function` value.
+- [x] TS: `abstract_class_declaration`.
+- [x] Go: struct emitted as both `struct` and `type` (dedupe); `selector_expression` alone is
   a field read, only capture it as a call under `call_expression.function`.
-- [ ] Rust: `impl Trait for Type` → caller scope is `Type`; record `Trait` as an implemented
+- [x] Rust: `impl Trait for Type` → caller scope is `Type`; record `Trait` as an implemented
   interface, not a base; generic impls.
-- [ ] Java: enum `implements` child order; `extends Base<T>` (`generic_type`);
+- [x] Java: enum `implements` child order; `extends Base<T>` (`generic_type`);
   `package_declaration` is not an import.
-- [ ] Chunker comment detection: also `line_comment`, `block_comment` (Rust/Java).
+- [x] Chunker comment detection: also `line_comment`, `block_comment` (Rust/Java).
 - **Check:** extend `tests/test_ts_graph.py` with one case per bullet. Polyglot eval
   `pack_recall` must not drop (`ai-db eval --suite polyglot` vs baseline).
+- **Done 2026-10-11:** `test_g5_*` in `tests/test_ts_graph.py`; polyglot `pack_recall` 1.0
+  (= baseline). Also: Python `from x import a` now emits one import ref per imported name
+  (the old pattern skipped single-name imports and duplicated others: 657 refs gained on
+  this repo, 0 lost), C macro calls are no longer counted twice, a Java enum's methods are
+  chunked (`Color.n`), Java supertypes match one per list entry (a quantified list captured
+  only the first). Lexical (0.8 vs 0.825) and pack (0.875 vs 0.9) evals were already below
+  baseline at `386cc81`, before this item.
 
 ### G6. `analyze_file` bodies are one line
-- [ ] **Observed:** `ai_db/analyzer/engine.py` end-line lookup compares `chunk.name == sym_name`,
+- [x] **Observed:** `ai_db/analyzer/engine.py` end-line lookup compares `chunk.name == sym_name`,
   but chunk names are `"def A.m"` / `"class A"` → every span `[l, l]`; `depth=full` returns the
   signature only. Text files return no symbols (checks `"text"/"section"`, chunker emits
   `"txt"`).
 - **Fix:** match on `qualified_name` (or `symbol_name`) and use the chunker's language ids.
 - **Check:** test: `depth=full` on a 5-line function returns all 5 lines.
+- **Done 2026-10-11:** `analyze_file` takes its symbols from `file_symbols()` (the chunker,
+  the index's own code path, run on the content on disk so spans are never stale):
+  qualified names (`Store.save`), whole-definition spans (split parts merged), text/markdown
+  sections included; the `extract_graph` + name-matching path is gone. `tests/test_analyze.py`.
 
 ### G7. Diff spans are wrong
-- [ ] `ai_db/analyzer/references.py` `_diff_spans(since="db")` rebuilds old text from
+- [x] `ai_db/analyzer/references.py` `_diff_spans(since="db")` rebuilds old text from
   bloat-stripped chunk contents → unchanged files report added spans. Store/compare the file
   `sha256` first (unchanged → no spans); for changed files diff against git or the stored raw
   text, not chunks.
-- [ ] A file new since `since` raises `AiDbConfigError` from `git show`; treat it as fully added.
-- [ ] `investigate._git_changed_spans` ignores pure-deletion hunks (`+N,0`); seed the
+- [x] A file new since `since` raises `AiDbConfigError` from `git show`; treat it as fully added.
+- [x] `investigate._git_changed_spans` ignores pure-deletion hunks (`+N,0`); seed the
   enclosing chunk at line N.
 - **Fix also:** there must be **one** diff module (see K1); do G7 inside it if K1 lands first.
 - **Check:** tests for unchanged file (no spans), new file (all added), deletion-only hunk
   (seed present).
+- **Done 2026-10-11:** inside K1's `ai_db/analysis/diff.py` (one engine: `git diff
+  --unified=0` hunks; `changed_lines` for investigate, `file_diff` for analyze/diff).
+  Bullet 1 had landed with G12 (hash first, then chunk hashes; now `index_diff`); a file
+  untracked or absent at `since` is entirely added (no `git show`); a `+N,0` hunk seeds
+  line N. `tests/test_diff.py`.
 
 ### G8. Untracked new files are listed but not indexed
-- [ ] **Observed (hands-on):** create `new.py` in a git repo; `ai-db symbol gamma` → not found;
+- [x] **Observed (hands-on):** create `new.py` in a git repo; `ai-db symbol gamma` → not found;
   `inv --mode diff` lists `new.py L1` under changes but has no evidence for it. Also prints
   `investigate diff: ''`.
 - **Fix:** before answering in diff mode, `sync_paths` the untracked, non-ignored files
   (bounded by `STALE_RESYNC_MAX_FILES`). Print `investigate diff: since HEAD` instead of `''`.
 - **Check:** test in a temp git repo.
+- **Done 2026-10-11:** `Investigator._index_new_files` syncs changed files the index has
+  never seen (≤ `STALE_RESYNC_MAX_FILES`) before seeding; ignored ones stay out and are
+  flagged `unindexed` in `changes`. The header part had landed with G12 ("changes since
+  HEAD"). Test in `tests/test_diff.py`.
 
 ### G9. Ref ids collide
-- [ ] **Observed:** analysis ref ids are `sha1[:8]` (32 bits) with `INSERT OR REPLACE`; ~10k
+- [x] **Observed:** analysis ref ids are `sha1[:8]` (32 bits) with `INSERT OR REPLACE`; ~10k
   refs in the 7-day window → ~1% collision; `expand` then returns another body.
 - **Fix:** 12 hex chars (48 bits) and `INSERT` that raises on conflict with a different body.
   Constant `REF_ID_HEX_LEN`.
 - **Check:** test: forced collision raises instead of overwriting.
+- **Done 2026-10-11:** `REF_ID_HEX_LEN = 12`; `store_analysis_ref` re-storing the same
+  ref only refreshes its timestamp, a different file/span/body under the same id raises
+  `AiDbStorageError`. Test in `tests/test_analyze.py`.
 
 ### G10. Eval inflates recall
-- [ ] **Observed:** `ai_db/eval/metrics.py:_matches` uses `exp_symbol in name` (`run` matches
+- [x] **Observed:** `ai_db/eval/metrics.py:_matches` uses `exp_symbol in name` (`run` matches
   `prune`). Diff golden items use `A..B` ranges against a working-tree index. Without
   `--all-files`, `materialize_tracked` copies to a non-git dir so diff mode raises.
 - **Fix:** match the final dotted component exactly (or the full qualified name when the
   expectation is dotted); materialize as a git worktree (`git worktree add --detach`).
   Re-record baselines in the same commit and state old → new numbers in the message.
 - **Check:** metrics unit test (`run` ≠ `prune`); `ai-db eval` runs green.
+- **Done 2026-10-11:** exact matching (chunk labels `def X (part i/n)` reduced first);
+  `harness.git_worktree()` (detached, removed on exit) replaces `materialize_tracked`;
+  `A..B` diff items are indexed from a worktree at B (own project) and diffed against A.
+  Stale golden entries fixed (`VectorDB.embed_missing` lives in `ai_db/facade.py`;
+  `materialize_tracked` → `git_worktree`; `eval/scenarios.json` follows; the documented
+  known-unreachable `http_server.py` entry is kept). Baselines: lexical recall@10
+  0.825 → 0.775 (two class expectations,
+  `ExternalLinter` and `AidbIgnore`, were only "hit" by their methods), pack 0.9 → 0.9,
+  polyglot 1.0 → 1.0, diff 1.0 → 1.0. Note: the lexical/pack corpus is this repo, so
+  unrelated commits move these numbers by a query or two (one BM25 near-tie,
+  `_main` vs `Indexer.sync`, flips with the corpus).
 
 ### G11. Receiver resolution is O(calls × scope)
 - [x] `ai_db/parser/receiver_types.py:resolve_receiver_class` re-walks the class/module per
@@ -437,6 +483,30 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 
 ---
 
+### H8. Daemon follow-ups (requested 2026-10-11)
+- [x] Per-user API keys on shared machines: `AI_DB_USER_KEYS="user=key,..."`, each user's
+  projects in config `daemon.users.<user>.projects` (`"*"` = all); unchanged when unset,
+  fail-closed when set. **Done 2026-10-11:** a user key opens only its listed projects'
+  routes (never management routes); a key without a `daemon.users` entry opens nothing;
+  project/admin keys work as before; the access log names the caller (`user:alice`),
+  never the key. Tests: `tests/test_daemon_features.py`.
+- [x] Read-only status page `GET /status/html` (admin or loopback only): projects, model
+  load state, queue/progress, uptime. **Done 2026-10-11:** loopback clients need no key,
+  anyone else the admin key (also on an open daemon bound to a public interface); shows per
+  project load state, counts, configured embedding/rerank model and whether it is in
+  memory, the running call and how many wait for the project lock, calls/errors/latency,
+  open progress streams, auth mode (no keys); every value HTML-escaped; refreshes every
+  `DAEMON_STATUS_REFRESH_S`. Tests: `tests/test_daemon_features.py`.
+- [x] Optional auto-watch: with `daemon.watch_sync_paths: true` the daemon watches
+  `auto_sync_paths` (reusing `ai_db/watcher.py`) and syncs changed files into their
+  projects. **Done 2026-10-11:** each existing `auto_sync_paths` directory syncs into the
+  project named after it (the auto-discover rule; with `auto_discover: false` it must be a
+  registered project); a catch-up sync at start, then `watcher.awatch_roots` batches
+  (`DAEMON_WATCH_DEBOUNCE_MS`, grouped by `watcher.group_by_root`, which `ai-db watch` now
+  uses too) go through `ProjectPool.sync_paths` under the project's lock; restarted on
+  config reload, stopped on shutdown; roots, batches, files synced and recent errors on the
+  status page. Tests (fake event source): `tests/test_daemon_features.py`.
+
 ## P1: Scene / video
 
 > **Moved:** the scene/video code now lives in `packages/ai-db-scene/ai_db_scene/` (K10).
@@ -448,11 +518,13 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - [ ] `ai_db/scene/storage/sqlite_vec.py` never sets `PRAGMA foreign_keys=ON`, so
   `ON DELETE CASCADE` never fires (also on `INSERT OR REPLACE`). Enable it on connect.
   **Check:** test counts `scene_objects` and `prompt_contexts` rows after delete → 0.
+- **Skipped 2026-10-11:** the code lives in `packages/ai-db-scene/` (K10), which the core-fixes pass may not modify (another agent owns the plugin). Nothing in `ai_db/` to change.
 
 ### I2. Scene prompt search crashes on normal input
 - [ ] `search_scenes_by_prompt` passes raw text to FTS5 `MATCH`; `desk-chair`, `desk:chair`,
   `AND`, `chair OR` raise `OperationalError`. Reuse the core FTS sanitizer (find it with
   `grep -n "def .*fts\|MATCH" ai_db/storage/sqlite_backend.py`). **Check:** parametrized test.
+- **Skipped 2026-10-11:** the code lives in `packages/ai-db-scene/` (K10), which the core-fixes pass may not modify (another agent owns the plugin). Nothing in `ai_db/` to change: the core sanitizer is already public (`ai_db.search.query_builder.expand_terms` + `build_fts`), so the fix is plugin-only.
 
 ### I3. MCP startup imports torch (~1.1 s)
 - [x] `ai_db/video/processors/base.py` loads entry points at import time;
@@ -471,6 +543,7 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - [ ] `scene_tools.get_scene_memory` caches the memory and attaches the Blender capture only if
   Blender answered on the first call. Resolve the client inside `snapshot_scene`. **Check:**
   test: memory created while Blender down, later snapshot works when a fake client is up.
+- **Skipped 2026-10-11:** the code lives in `packages/ai-db-scene/` (K10), which the core-fixes pass may not modify (another agent owns the plugin). Nothing in `ai_db/` to change.
 
 ### I6. Scene storage drift
 - [ ] Default path `~/.ai-db/scene_memory.db` ignores XDG/`AI_DB_PATH`; derive from core's
@@ -479,13 +552,14 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - [ ] `prompt_embeddings` vec0 table (384-dim, banned model name) is never written; the
   `has_vectors ... pass` branch is dead; `fts_query` unused. Delete all three.
 - [ ] `BlenderClient._roundtrip`: monotonic overall deadline + max buffer size (constants).
+- **Skipped 2026-10-11:** the code lives in `packages/ai-db-scene/` (K10), which the core-fixes pass may not modify (another agent owns the plugin). Nothing in `ai_db/` to change (all three bullets).
 
 ---
 
 ## P2: Architecture decay
 
 ### K1. Merge `ai_db/analyzer/` into `ai_db/analysis/`
-- [ ] Two diff engines (`references._diff_spans`, `investigate._git_changed_spans`), three
+- [x] Two diff engines (`references._diff_spans`, `investigate._git_changed_spans`), three
   "symbols of a file" paths (indexed `symbols`, `analyze_file` re-parse, `ast_visitor`), two
   token counters (`len//4` vs tiktoken). `investigate` calls the private
   `analyzer_engine._store_analysis_ref`; `analyzer/formatters.py` renders investigate packs.
@@ -497,16 +571,42 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   `_add_callees`, the `"methods"` branches, the unused `_BUILTINS` in `resolve.py`,
   `ast_visitor._regex_outline`, `ts_graph`'s `fallback_name_node` path, `getattr` defaults in
   `QueryEngine`, `hasattr` session-state paths.
+- **Done 2026-10-11:** (1) `analysis/diff.py` (with G7); (2) `analysis/refs.py`
+  (`ReferenceStore.store_ref`/`expand_ref`); (3) `analyze_file` uses the chunker
+  (`analysis/analyze.py:file_symbols`, G6), not indexed chunks: the indexed ones go stale
+  when the file changes and the chunker is the index's own code path, so names/spans agree
+  either way; (4) `count_tokens` (`ai_db/tokens.py`) replaces every `len//4`; (5)
+  `analysis/formatters.py`; (6) `ai_db/analyzer/` deleted (`AnalyzerEngine` is
+  `analysis/analyze.py`, exported from `ai_db.analysis`). Removed: `_import_cache`, the
+  populate call, the `"methods"` branches, `resolve._BUILTINS`, `_regex_outline` (files
+  without a grammar outline their markdown sections or nothing), the `fallback_name_node`
+  path (a `@def` pattern without `@name` now raises; the TS/JS export patterns that relied
+  on it were redundant and are gone). The `hasattr` session paths were gone with K3; the
+  `QueryEngine` `getattr` defaults are K7 bullet 3. Golden/scenario paths follow the moves.
 
 ### K2. Split `SQLiteBackend` (2306-line god class)
-- [ ] Repositories sharing one connection + `transaction()`: `chunks` (+FTS), `vectors`,
+- [x] Repositories sharing one connection + `transaction()`: `chunks` (+FTS), `vectors`,
   `graph` (symbols/refs/centrality), `memory` (contexts/skills), `cache` (query cache/log),
   `state`. `SQLiteBackend` composes them. Do it **after** E1 (single transaction path).
-- [ ] Make `backend.py` a real contract: abstract methods only; delete the
+- [x] Make `backend.py` a real contract: abstract methods only; delete the
   `NotImplementedError` "defaults" and aliases (`search_chunks_bm25`, `upsert_symbols`,
   `search_symbols`) after updating callers.
-- [ ] Table counts exist three times (`backend.py`, `sqlite_backend.py`, `state.py`): keep one.
-- [ ] Delete unused `module_summaries` table and the empty "Analysis References" header.
+- [x] Table counts exist three times (`backend.py`, `sqlite_backend.py`, `state.py`): keep one.
+- [x] Delete unused `module_summaries` table and the empty "Analysis References" header.
+- **Done 2026-10-11:** `ai_db/storage/sqlite_repos/` holds one mixin per concern
+  (`ChunkRepository` with files/FTS/diagnostics/annotations, `VectorRepository`,
+  `GraphRepository`, `MemoryRepository` with recall vectors, `CacheRepository` with query
+  log, analysis refs and semantic cache, `StateRepository`) on a shared
+  `SQLiteRepository` base (`_WRITE_LOCK`, `@_writes`, codecs); `SQLiteBackend` (835 lines,
+  was 2329) keeps connection, schema, transactions, status/optimize and composes them, so
+  every caller and `@_writes` path is unchanged. All 75 `StorageBackend` methods are
+  abstract; the aliases and the status-derived `get_table_counts` default are gone and
+  `status` uses `get_table_counts`. `module_summaries` is dropped (`SCHEMA_VERSION` 13: the
+  next sync re-indexes, which also applies the G1/G5 parser changes).
+  **Eval follow-up 2026-10-11:** the golden sets named the old homes of moved/deleted
+  symbols (K1/K2/K4/K5); they and `eval/scenarios.json` now follow the code, and the
+  baselines were re-recorded: lexical recall@10 0.775 → 0.75 (`record_token_compression`
+  no longer exists, so that query has no real target), pack 0.9 → 0.925.
 
 ### K3. Slim `ai_db/__init__.py`
 - [x] Move `VectorDB` to `ai_db/facade.py`; `__init__` exports lazily (`__getattr__`), so
@@ -529,28 +629,48 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   tracker from `db.conn`. No production code outside `sqlite_backend.py` touches `.conn`.
 
 ### K4. Transport layout
-- [ ] Move root `mcp_server.py` to `ai_db/transports/mcp.py` (keep a 3-line root shim only if
+- [x] Move root `mcp_server.py` to `ai_db/transports/mcp.py` (keep a 3-line root shim only if
   an external config references it; `ai-db mcp` is the documented entry). `cli.py` must not
   import a root module.
-- [ ] Deduplicate span parsing in `dispatcher.py` (`_handle_expand` and the next handler).
+- [x] Deduplicate span parsing in `dispatcher.py` (`_handle_expand` and the next handler).
+- **Done 2026-10-11:** `ai_db/transports/mcp.py` (with `main()`); the root `mcp_server.py`
+  is a shim, kept because README documents `python mcp_server.py` and MCP client configs
+  pointing at it; `ai-db mcp` imports the package module. `_parse_span()` serves `analyze`
+  and `expand`. Test: `tests/test_transports.py::test_root_shim_runs_the_packaged_server`.
 
 ### K5. Telemetry
-- [ ] `TelemetryTracker.record_query` rewrites a JSON blob of ≤1000 samples and commits on every
+- [x] `TelemetryTracker.record_query` rewrites a JSON blob of ≤1000 samples and commits on every
   query; `avg_ms` is over the window but `count` is lifetime; multi-process last-writer-wins.
   Derive telemetry from the existing `query_log` table and delete the blob.
-- [ ] `_handle_telemetry` returns a fabricated all-zero summary as fallback; raise instead.
+- [x] `_handle_telemetry` returns a fabricated all-zero summary as fallback; raise instead.
 - [ ] `video_extract_keyframes` returns `{"error": ...}` as success; raise.
+- **Done 2026-10-11 (bullets 1-2):** `TelemetryTracker` is a read-only view over
+  `query_log` (newest `QUERY_LOG_KEEP`, now a constant): latency overall and per tool,
+  cache hit rate, stages, storage, all over one window; `analyze` calls are logged too (the
+  semantic cache); `--reset` clears the log (`clear_query_log`); `optimize` deletes the old
+  blob. The never-called token-compression counters are gone. `_handle_telemetry` has no
+  fallback (`VectorDB` always has a tracker). Tests rewritten (`tests/test_telemetry.py`).
+- **Skipped 2026-10-11 (bullet 3):** `video_extract_keyframes` lives in
+  `packages/ai-db-scene/` (K10), which this pass may not modify.
 
 ### K6. Constants sweep
 - [x] Language maps unified in `ai_db/parser/languages.py`; grammars are now selectable per
   language (`index.languages`, `ai-db grammars`, tests in `tests/test_languages.py`).
-- [ ] Move to `ai_db/constants.py`: BM25 weights, `QUERY_LOG_KEEP`, vec0 over-fetch factor
+- [x] Move to `ai_db/constants.py`: BM25 weights, `QUERY_LOG_KEEP`, vec0 over-fetch factor
   (`k*4`), 7-day eviction (duplicated in storage and `analyzer/engine.py`), FTS 4000-char
   truncation, `ZLIB_LEVEL`, investigate decay factors 0.6/0.5/0.4, `limit=100`, `per_file=5`,
   `[:8]`, analyzer 32 targets / ctx 10 lines, linter timeout 15, `META_MAX_CHARS`,
   `SNIPPET_CHARS`, `COMPOUND_MAX_DEFINITIONS`. Use the existing `GIT_TIMEOUT_S` instead of
   literal 5/10. Unify `ts_graph.SUPPORTED_LANGUAGES`/`language_for` with
   `constants.EXT_TO_LANG`/`chunker.language_for`.
+  **Done 2026-10-11:** `BM25_WEIGHTS`, `QUERY_LOG_KEEP` (K5), `VEC0_OVERFETCH`,
+  `ANALYSIS_REF_TTL_S`, `CONTEXT_FTS_MAX_CHARS` (skills reuse `SKILL_CONTENT_MAX_CHARS`),
+  `ZLIB_LEVEL`, `INVESTIGATE_HOP_DECAY`/`_PARENT_FACTOR`/`_TEST_FACTOR`,
+  `RESOLVE_CALLERS_LIMIT`, `RECENT_CHANGES_PER_FILE`/`_MAX_FILES`,
+  `ANALYZE_MAX_TARGETS`/`ANALYZE_CTX_LINES` (CLI, MCP schema, facade, engine),
+  `LINTER_TIMEOUT_S` (K7), `META_MAX_CHARS`, `SNIPPET_CHARS`; the duplicate
+  `COMPOUND_MAX_DEFINITIONS` in `resolve.py` is gone; `_recent_changes` uses
+  `GIT_TIMEOUT_S`. The language-map part landed with the first bullet.
 
 ### K7. Dead or half-wired features (DECISION per bullet; default = delete)
 - [x] **Skill/context vectors: done (2026-10-07), user decision "an extension, but built in".**
@@ -561,28 +681,63 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   `search_*_hybrid` deleted, `cosine_distance` raises on mixed dimensions (E5 bullet).
   Tests: `tests/test_recall.py`. Still to do: tune `SKILL_W_RECALL` / `SKILL_RECALL_MIN_SIM`
   with the skills eval in hybrid mode (real model).
-- [ ] `retrieval.doc_weight` is parsed and validated (`config.py`) but never read; the Ranker
+  **Skipped 2026-10-11:** tuning needs a real embedding model and the locally installed skills (the eval DBs here run with `embedding: none`); left for a run with the model.
+- [x] `retrieval.doc_weight` is parsed and validated (`config.py`) but never read; the Ranker
   uses `index.doc_weight`. Remove the `retrieval` copy (and migrate configs that set it).
-- [ ] `QueryEngine.__init__` re-derives `doc_weight`/`rerank_top_n` with `getattr` defaults
+  **Done 2026-10-11:** a config that still sets it is refused with "Run: ai-db init
+  --migrate"; `migrate` (v1 and v2) drops it (no ranking change: it was never read).
+  `eval/agent_matrix.with_doc_weight` wrote this dead key, so its doc-weight conditions were
+  identical runs; it now writes `index.doc_weight`. **Note for the user:** a live config
+  with `retrieval.doc_weight` (configs migrated from v1 have it) needs `ai-db init --migrate`.
+- [x] `QueryEngine.__init__` re-derives `doc_weight`/`rerank_top_n` with `getattr` defaults
   0.5/30 that `VectorDB` then overrides; `Ranker.__init__` repeats the same literal defaults.
   One source: `DEFAULT_DOC_WEIGHT`/`DEFAULT_RERANK_TOP_N`.
-- [ ] Skill/context vectors: embedded on every save (errors swallowed), never read outside
+  **Done 2026-10-11:** both constants in `ai_db/constants.py` (re-exported by `config`);
+  `QueryEngine`/`Ranker` take them as parameter defaults. Bug found on the way: `VectorDB`
+  only overrode the ranker when a reranker was configured, so with `rerank.provider: none`
+  `index.doc_weight` was ignored (0.5 hardcoded, because `QueryEngine` got the backend, which
+  has no `config`); `VectorDB` now passes both values to `QueryEngine`. Tests in
+  `tests/test_config.py`.
+- [x] Skill/context vectors: embedded on every save (errors swallowed), never read outside
   tests. Wire into `route_skills`/`query_contexts` with an eval showing gain, or delete
   `search_*_hybrid`, `search_*_vector`, `skill_vectors`, the embed calls.
+  **Done 2026-10-11 (verified):** superseded by the first K7 bullet (wired as a built-in
+  recall extension).
 - [ ] `ai_db.chunkers` entry points (markdown/usd/segmentation in `pyproject.toml`) are never
   loaded: `ai_db/ext/markdown.py`, `usd.py`, `segmentation.py` are dead and untested.
-- [ ] Custom linter validators from config never load (`get_linter()` without config);
+  **Skipped 2026-10-11:** needs a decision across both packages. The plugin still imports
+  `ai_db.ext.base` (its segmentation chunker) and `ai_db.ext.markdown` (its
+  `chunkers/example_usage.py`) and registers usd/segmentation under the same unused group,
+  so deleting the core half breaks `packages/ai-db-scene/`, which this pass may not edit.
+  Either wire the group into `chunk_file` or delete both halves together.
+- [x] Custom linter validators from config never load (`get_linter()` without config);
   `.js/.ts` validator entries are dead.
-- [ ] `/templates` daemon endpoint hardcodes banned model names: delete.
+  **Done 2026-10-11:** default applied (delete): the config-validators parameter (the config
+  schema never had the key) and the `.js`/`.ts` entries are gone; timeout is
+  `LINTER_TIMEOUT_S`.
+- [x] `/templates` daemon endpoint hardcodes banned model names: delete.
+  **Done 2026-10-11 (verified):** removed with the H rewrite (`grep templates
+  ai_db/daemon/server.py` is empty).
 - [ ] Root `vectordb.py` (nothing imports it): delete.
+  **Skipped 2026-10-11:** it was deliberately restored in `0dc9923` as a declared root
+  `py-module` (`pyproject.toml`, TODO_NEXT 10.5, `python vectordb.py` contract, listed as a
+  root facade in `TODO_NEXT.md`); deleting it reverses that decision, so the user decides.
 
 ### K8. Docs drift
-- [ ] `ARCHITECTURE.md`: HTTP "removed" claim (§4) vs the daemon (per H decision);
+- [x] `ARCHITECTURE.md`: HTTP "removed" claim (§4) vs the daemon (per H decision);
   nonexistent `ai_db/transports/` (until K4); `vectordb` console script not in
   `pyproject.toml`; daemon, scene and video subsystems undocumented. Same "HTTP removed" claim
   in `TODO_NEXT.md` orientation.
 - **Check:** every path mentioned in `ARCHITECTURE.md` exists
   (`grep -o 'ai_db/[a-z_/]*\.py' ARCHITECTURE.md | xargs ls`).
+- **Done 2026-10-11:** §4 already framed the daemon as the HTTP transport that replaced
+  `ai-db serve`; now the diagram has the daemon and `ai_db/transports/mcp.py`, §3.3 the
+  write path and the `sqlite_repos/` split, §4.2 the daemon's auth (user keys), status page
+  and auto-watch, §6 the query-log telemetry, §7 the real tree (facade, transports,
+  daemon, analysis after K1, naming/languages, `sqlite_repos`) plus §7.1 for the
+  scene/video plugin. The `vectordb` console script is in `pyproject.toml` (the claim was
+  stale). `TODO_NEXT.md` orientation updated; README "Daemon Mode" documents the new
+  daemon features. Check passes (every `ai_db/...py` path exists).
 
 ### K9. Repo hygiene (binaries done)
 - [x] ~12.5 MB of renders/`.blend` tracked under `eval/showcase/oval_office_v2_out/`; ~19 MB
@@ -593,8 +748,14 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   **Done:** user decision "never commit binaries". `.gitignore` covers `*.blend*`, `*.exr`,
   `*.glb`, `*.fbx`, `*.usdc`, `*.usdz`, `packages/*/showcase/*_out/` and the sheet PNGs; the 8
   tracked binaries are untracked (still on disk). ~12 MB stays in history (not rewritten).
-- [ ] Delete the stray `C:\data\project_db.sqlite` in the repo root and find the code that
+- [x] Delete the stray `C:\data\project_db.sqlite` in the repo root and find the code that
   built a Windows path on Linux (`grep -rn 'C:' ai_db tests`); root `__pycache__/`.
+  **Done 2026-10-11:** the source was `tests/test_storage.py::test_factory_windows_style_paths`
+  (on POSIX the path is a relative file name, created in the cwd); it now runs in
+  `tmp_path`. The file is gitignored (`*.sqlite`) and untracked; this worktree's copy was
+  removed, the main checkout's copy (if any) is the user's to delete. Root `__pycache__/`
+  came from tests importing the root `mcp_server.py`; they import
+  `ai_db.transports.mcp` now (K4).
 
 ### K10. Extract scene/video into a plugin package (done 2026-10-07)
 - [x] Coupling is one-way: scene/video uses only `logger`, `errors`, a few constants,
@@ -608,6 +769,8 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   Core runs and its tests pass with the plugin uninstalled (24 tools; 65 with it). CI
   installs and type-checks both. Remaining K10 debt: K7 decides what happens to the
   `ai_db.chunkers` USD/segmentation chunkers that moved with it.
+  **Skipped 2026-10-11 (debt):** still open with the K7 `ai_db.chunkers` bullet, which needs
+  a decision spanning core and the plugin (see the skip note there).
 
 ### K11. Showcase scripts bypass the pipeline
 - [ ] `eval/showcase/oval_office_v2.py` is hand-authored by the lead model (hardcoded
@@ -617,6 +780,7 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   small-model-generated spec through `get_scene_spec_schema → solve_layout → apply_layout`;
   keep the hand-authored file only as a labelled reference baseline. Fix the stale v1
   docstring ("solver handles rectangular rooms only").
+- **Skipped 2026-10-11:** the code lives in `packages/ai-db-scene/` (K10), which the core-fixes pass may not modify (another agent owns the plugin). Nothing in `ai_db/` to change: the showcase scripts moved to `packages/ai-db-scene/showcase/`.
 
 ---
 
