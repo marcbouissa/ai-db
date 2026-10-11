@@ -18,9 +18,9 @@ from ai_db_scene.constants import (
 
 _DARK = "color:#141414"
 _STONE = "color:#b7b1a6"
-_GREEN = "color:#3f6b33"
-_GREEN2 = "color:#4f7d3c"
-_BARK = "color:#5a4030"
+_GREEN = "foliage:#3f6b33"
+_GREEN2 = "foliage:#4f7d3c"
+_BARK = "wood:dark"
 _YELLOW = "color:#e0a000"
 _WHITE = "color:#f2f2f2"
 
@@ -35,6 +35,25 @@ def _cyl(pid: str, size: list[float], at: list[float] | str, material: str, **kw
 
 def _sphere(pid: str, size: list[float], at: list[float] | str, material: str, **kw: Any) -> dict[str, Any]:
     return {"id": pid, "shape": "sphere", "size": size, "at": at, "material": material, **kw}
+
+
+def _lobes(pid: str, z0: float, height: float, spread: float, n: int, mat: str, mat2: str) -> list[dict[str, Any]]:
+    """A foliage mass of ``n`` overlapping spheres between z0 and z0 + height: a large core and
+    smaller lobes around it at fixed, uneven offsets (deterministic), all touching the core."""
+    core = 0.62 * height
+    parts = [_sphere(f"{pid}_core", [2 * spread * 0.8, 2 * spread * 0.8, core], [0, 0, z0], mat)]  # rests on z0
+    ring = [(0.0, 1.0, 0.55), (1.3, 0.8, 0.62), (2.4, 0.95, 0.5), (3.5, 0.75, 0.66), (4.4, 0.9, 0.58),
+            (5.4, 0.7, 0.6), (0.7, 0.6, 0.78), (3.0, 0.55, 0.8)]
+    import math
+
+    for k, (ang, r, zf) in enumerate(ring[:max(0, n - 1)]):
+        size = round(spread * (0.75 if k % 2 else 0.9), 4)
+        x, y = round(math.cos(ang) * spread * 0.45 * r, 4), round(math.sin(ang) * spread * 0.45 * r, 4)
+        top = z0 + height - size * (0.9 if k >= 6 else 1.0)
+        z = round(min(z0 + zf * height - size / 2, top), 4)
+        parts.append(_sphere(f"{pid}_{k}", [size, size, round(size * 0.85, 4)], [x, y, max(z0, z)],
+                             mat2 if k % 3 == 1 else mat))
+    return parts
 
 
 def _screen() -> list[dict[str, Any]]:
@@ -66,17 +85,15 @@ _RECIPES: dict[str, Any] = {
         _cyl("foot", [0.5, 0.5, 0.05], [0, 0, 0], _DARK),
         _cyl("pole", [0.2, 0.2, 0.88], [0, 0, 0.05], _DARK),
         _box("head", [1.0, 0.6, 0.07], [0, -0.2, 0.93], _DARK)],
+    # Foliage as clusters of overlapping lobes: one ball per crown is the clearest "placeholder"
+    # look; uneven lobes give a broken silhouette that reads as leaves at a distance.
     "potted_plant": lambda: [
-        _cyl("pot", [0.55, 0.55, 0.3], [0, 0, 0], "color:#a0522d"),
-        _sphere("leaves", [1.0, 1.0, 0.55], [0, 0, 0.3], _GREEN),
-        _sphere("leaves_top", [0.6, 0.6, 0.3], [0.05, -0.05, 0.7], _GREEN2)],
+        _cyl("pot", [0.55, 0.55, 0.3], [0, 0, 0], "concrete:#a0522d"),
+        *_lobes("leaves", 0.3, 0.7, 0.42, 7, _GREEN, _GREEN2)],
     "tree": lambda: [
-        _cyl("trunk", [0.12, 0.12, 0.45], [0, 0, 0], _BARK),
-        _sphere("crown", [1.0, 1.0, 0.5], [0, 0, 0.4], _GREEN),
-        _sphere("crown_top", [0.65, 0.65, 0.3], [0.05, 0, 0.7], _GREEN2)],
-    "bush": lambda: [
-        _sphere("body", [1.0, 0.9, 0.8], [0, 0, 0], _GREEN),
-        _sphere("lobe", [0.6, 0.6, 0.6], [0.25, -0.1, 0.35], _GREEN2)],
+        _cyl("trunk", [0.12, 0.12, 0.5], [0, 0, 0], _BARK),
+        *_lobes("crown", 0.42, 0.58, 0.5, 9, _GREEN, _GREEN2)],
+    "bush": lambda: _lobes("body", 0.0, 1.0, 0.5, 7, _GREEN, _GREEN2),
     "whiteboard": lambda: [
         _box("frame", [1.0, 1.0, 1.0], [0, 0, 0], "metal:steel"),
         _box("board", [0.96, 0.2, 0.92], [0, -0.45, 0.04], _WHITE)],

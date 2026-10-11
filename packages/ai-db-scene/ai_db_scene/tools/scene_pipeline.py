@@ -15,6 +15,7 @@ from typing import Any
 from ai_db.errors import AiDbConfigError, AiDbError
 from ai_db_scene.blender_client import BlenderClient, BlenderError
 from ai_db_scene.constants import (
+    FOLIAGE_CATEGORIES,
     LAYOUT_DOOR_HEIGHT_M,
     SCENE_CAMERA_HEIGHT_M,
     SCENE_CAMERA_INSET,
@@ -29,6 +30,11 @@ from ai_db_scene.constants import (
     SCENE_FILL_SIZE_FRACTION,
     SCENE_FILL_W_PER_M2,
     SCENE_FILL_W_RANGE,
+    SCENE_FOLIAGE_DENSITY,
+    SCENE_FOLIAGE_LEAF_M,
+    SCENE_FOLIAGE_MAX_LEAVES,
+    SCENE_GROUND_DROP_M,
+    SCENE_GROUND_EXTENT_M,
     SCENE_LAMP_W,
     SCENE_PLANK_FLOOR,
     SCENE_PLANK_GRAIN_SCALE,
@@ -166,7 +172,11 @@ def _room_commands(spec: SceneSpec, placements: list[Placement] | None = None) -
             params["size"] = [w, d]
         return [{"type": "room_shell", "params": params}]
     shp = spec.setting.shape
-    return [{
+    # outdoors the ground runs on to the horizon: a slab ending at the bounds floats in the void
+    beyond = [{"type": "create_primitive", "params": {
+        "primitive": "cube", "name": "ground_beyond", "location": [0.0, 0.0, -t / 2 - SCENE_GROUND_DROP_M],
+        "scale": [SCENE_GROUND_EXTENT_M, SCENE_GROUND_EXTENT_M, t / 2]}}] if kind == "outdoor" else []
+    return beyond + [{
         "type": "create_primitive",
         "params": {"primitive": "cube", "name": "floor", "location": [0.0, 0.0, -t / 2], "scale": [w / 2, d / 2, t / 2]},
     }] if shp == "rect" else [{"type": "room_shell", "params": {
@@ -472,6 +482,103 @@ result = {{"tagged": len(json.loads({payload!r}))}}
 """
 
 
+#: leaves on foliage: geometry nodes scatter small cupped leaf cards (random turn and size) over
+#: every foliage-material mesh under the given roots; the lobes stay as the darker inner mass.
+_FOLIAGE = """
+import bpy, json, math
+cfg = json.loads({payload!r})
+
+def sock(sockets, name, kind=None):
+    return next(s for s in sockets if s.name == name and s.enabled and (kind is None or s.type == kind))
+
+def leaf_object():
+    ob = bpy.data.objects.get("ai_db_leaf")
+    if ob is not None:
+        return ob
+    # a pointed-oval leaf, 1 unit long, slightly cupped, in the XY plane; scaled per instance
+    verts = [(0.0, -0.5, 0.0), (0.16, -0.25, 0.03), (0.2, 0.05, 0.04), (0.12, 0.3, 0.02), (0.0, 0.5, 0.0),
+             (-0.12, 0.3, 0.02), (-0.2, 0.05, 0.04), (-0.16, -0.25, 0.03), (0.0, 0.0, 0.0)]
+    faces = [(8, i, (i + 1) % 8) for i in range(8)]
+    me = bpy.data.meshes.new("ai_db_leaf")
+    me.from_pydata(verts, [], faces)
+    for p in me.polygons:
+        p.use_smooth = True
+    ob = bpy.data.objects.new("ai_db_leaf", me)
+    coll = bpy.data.collections.get("ai_db_hidden") or bpy.data.collections.new("ai_db_hidden")
+    if coll.name not in bpy.context.scene.collection.children:
+        bpy.context.scene.collection.children.link(coll)
+    coll.objects.link(ob)
+    coll.hide_render = True
+    coll.hide_viewport = True
+    return ob
+
+def group():
+    ng = bpy.data.node_groups.get("ai_db_foliage")
+    if ng is not None:
+        return ng
+    ng = bpy.data.node_groups.new("ai_db_foliage", "GeometryNodeTree")
+    ng.interface.new_socket(name="Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+    s = ng.interface.new_socket(name="Density", in_out="INPUT", socket_type="NodeSocketFloat"); s.default_value = 500.0
+    s = ng.interface.new_socket(name="Leaf Size", in_out="INPUT", socket_type="NodeSocketVector")
+    ng.interface.new_socket(name="Seed", in_out="INPUT", socket_type="NodeSocketInt")
+    ng.interface.new_socket(name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    N, L = ng.nodes, ng.links
+    gi, go = N.new("NodeGroupInput"), N.new("NodeGroupOutput")
+    dist = N.new("GeometryNodeDistributePointsOnFaces")
+    L.new(sock(gi.outputs, "Geometry"), sock(dist.inputs, "Mesh"))
+    L.new(sock(gi.outputs, "Density"), sock(dist.inputs, "Density"))
+    L.new(sock(gi.outputs, "Seed"), sock(dist.inputs, "Seed"))
+    info = N.new("GeometryNodeObjectInfo")
+    sock(info.inputs, "Object").default_value = leaf_object()
+    rot = N.new("FunctionNodeRandomValue"); rot.data_type = "FLOAT_VECTOR"
+    sock(rot.inputs, "Max", "VECTOR").default_value = (math.tau, math.tau, math.tau)
+    sc = N.new("FunctionNodeRandomValue"); sc.data_type = "FLOAT"
+    sock(sc.inputs, "Min", "VALUE").default_value = 0.6
+    sock(sc.inputs, "Max", "VALUE").default_value = 1.35
+    mul = N.new("ShaderNodeVectorMath"); mul.operation = "SCALE"
+    L.new(sock(gi.outputs, "Leaf Size"), mul.inputs[0])
+    L.new(sock(sc.outputs, "Value", "VALUE"), sock(mul.inputs, "Scale"))
+    inst = N.new("GeometryNodeInstanceOnPoints")
+    L.new(sock(dist.outputs, "Points"), sock(inst.inputs, "Points"))
+    L.new(sock(info.outputs, "Geometry"), sock(inst.inputs, "Instance"))
+    L.new(sock(rot.outputs, "Value", "VECTOR"), sock(inst.inputs, "Rotation"))
+    L.new(sock(mul.outputs, "Vector"), sock(inst.inputs, "Scale"))
+    join = N.new("GeometryNodeJoinGeometry")
+    L.new(sock(gi.outputs, "Geometry"), sock(join.inputs, "Geometry"))
+    L.new(sock(inst.outputs, "Instances"), sock(join.inputs, "Geometry"))
+    L.new(sock(join.outputs, "Geometry"), sock(go.inputs, "Geometry"))
+    return ng
+
+ng = group()
+done = []
+meshes = []
+for root in cfg["roots"]:
+    r = bpy.data.objects.get(root)
+    for o in ([r, *r.children_recursive] if r is not None else []):
+        if o.type == "MESH" and any(m is not None and "foliage" in m.name for m in o.data.materials):
+            meshes.append(o.name)
+for k, name in enumerate(meshes):
+    ob = bpy.data.objects[name]
+    sx, sy, sz = ob.matrix_world.to_scale()
+    area = sum(p.area for p in ob.data.polygons) * ((sx * sy * sz) ** (2.0 / 3.0))
+    density_world = min(cfg["density"], cfg["max_leaves"] / max(area, 1e-6))
+    mine = ng.copy()  # per object: Blender 5 keeps no per-modifier input values
+    mine.name = f"ai_db_foliage_{{name}}"
+    items = {{s.name: s for s in mine.interface.items_tree if getattr(s, "in_out", "") == "INPUT"}}
+    items["Density"].default_value = density_world * ((sx * sy * sz) ** (2.0 / 3.0))  # per local unit area
+    leaf = cfg["leaf_m"]
+    items["Leaf Size"].default_value = (leaf / sx, leaf / sy, leaf / sz)
+    items["Seed"].default_value = k
+    mod = ob.modifiers.get("ai_db_foliage") or ob.modifiers.new("ai_db_foliage", "NODES")
+    mod.node_group = mine
+    if ob.active_material is not None:
+        leaf_ob = bpy.data.objects["ai_db_leaf"]
+        if not leaf_ob.data.materials:
+            leaf_ob.data.materials.append(ob.active_material)
+    done.append({{"name": name, "leaves": int(density_world * area)}})
+result = {{"foliage": done}}
+"""
+
 _ROOM_MATERIAL = """
 import bpy
 mat = bpy.data.materials.get("ai_db_room") or bpy.data.materials.new("ai_db_room")
@@ -734,6 +841,8 @@ def build_layout_commands(
         indoor_style = st.style if st.kind == "indoor" else None  # outdoor ground stays ground
         floor = st.floor_material or style_material(indoor_style, "floor") or FLOOR_MATERIALS.get(st.kind, "plaster")
         surfaces = [("floor" if st.kind != "indoor" and st.shape == "rect" else "Room_Floor", floor)]
+        if st.kind == "outdoor":
+            surfaces.append(("ground_beyond", floor))
         if st.kind == "indoor":
             surfaces.append(("Room_Walls", st.wall_material or style_material(st.style, "wall") or WALL_MATERIAL))
         for obj, mat in surfaces:
@@ -752,6 +861,11 @@ def build_layout_commands(
     if wear:
         cmds.append(_wear_command(wear))
     cmds += lighting_commands(spec, placements, off)
+    plants = [pl.id for pl in placements if pl.category in FOLIAGE_CATEGORIES]
+    if plants and SCENE_FOLIAGE_DENSITY > 0 and geometry == "generated":
+        cmds.append({"type": "run_code", "params": {"code": _FOLIAGE.format(payload=json.dumps({
+            "roots": plants, "density": SCENE_FOLIAGE_DENSITY, "max_leaves": SCENE_FOLIAGE_MAX_LEAVES,
+            "leaf_m": SCENE_FOLIAGE_LEAF_M}))}})
     cmds.append(camera_command(spec, placements, off))
     shift_cmd = camera_shift_command(spec, placements, off)
     if shift_cmd:

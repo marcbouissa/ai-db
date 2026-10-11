@@ -83,6 +83,12 @@ SCENE_CEILING = True        # indoor rooms get a ceiling slab (an open top shows
 SCENE_PLANK_FLOOR = True    # a wood floor in a rect room is real planks, not one textured sheet
 SCENE_PLANK_TOP_M = 0.001   # plank tops this far above z=0, so they hide the floor slab cleanly
 SCENE_PLANK_GRAIN_SCALE = 2.5  # wood figure scale on planks: the default reads as room-sized swirls
+SCENE_GROUND_EXTENT_M = 150.0  # outdoor ground plane half-size around the scene (to the horizon)
+SCENE_GROUND_DROP_M = 0.003  # ... just under the scene's own ground, so it never shows through
+SCENE_FOLIAGE_DENSITY = 900.0  # leaves per m2 of crown surface (trees, bushes, hedges, plants); 0 = off
+SCENE_FOLIAGE_MAX_LEAVES = 40000  # per mesh: big crowns get sparser leaves, not more
+SCENE_FOLIAGE_LEAF_M = 0.09  # leaf length
+FOLIAGE_CATEGORIES = ("tree", "bush", "hedge", "potted_plant")
 SCENE_RUG_PILE_DENSITY = 1500.0  # carpet tufts per m2 on rugs; 0 turns the pile off
 
 # --- Blender (addon socket server) ---
