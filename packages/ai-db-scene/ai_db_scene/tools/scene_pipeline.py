@@ -34,6 +34,7 @@ from ai_db_scene.materials import (
     FLOOR_MATERIALS,
     STYLE_PALETTES,
     WALL_MATERIAL,
+    legacy_fallback,
     material_for,
     pbr_preset,
     style_material,
@@ -1157,6 +1158,7 @@ def _handle_apply_layout(args: dict[str, Any]) -> Any:
         results = BlenderClient().batch(cmds)
     except BlenderError as e:
         return {"status": "error", "message": str(e), "error_type": e.error_type or type(e).__name__, "hint": e.hint}
+    results = _retry_legacy_materials(cmds, results)
     failed = [{"index": i, "type": cmds[i]["type"], "message": r.get("message")}
               for i, r in enumerate(results) if not r.get("ok", r.get("status") == "success")]
     return {"status": "partial" if failed else "success", "created": names, "commands": len(cmds), "failed": failed}
@@ -1425,6 +1427,28 @@ _CRITIQUE_FIX: dict[str, str] = {
     "exposure": ("a black render: the camera may sit in a wall or behind furniture (move it, or add lamps); "
                  "blown out: fewer lights or an outdoor kind without sky"),
 }
+
+
+def _retry_legacy_materials(cmds: list[dict[str, Any]], results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """An addon loaded before the concrete/stone/foliage/plastic/paint/rubber kinds rejects them:
+    re-apply those objects' materials as their flat colour instead of leaving them untextured."""
+    retry = []
+    for i, (c, r) in enumerate(zip(cmds, results)):
+        if c["type"] == "apply_material" and not r.get("ok", r.get("status") == "success") \
+                and "unknown material kind" in str(r.get("message")):
+            fb = legacy_fallback(str(c["params"].get("material", "")))
+            if fb:
+                retry.append((i, {**c, "params": {**c["params"], "material": fb}}))
+    if not retry:
+        return results
+    try:
+        again = BlenderClient().batch([c for _, c in retry])
+    except BlenderError:
+        return results
+    out = list(results)
+    for (i, _), r in zip(retry, again):
+        out[i] = r
+    return out
 
 
 def critique(left: list[dict[str, Any]], repairs: list[str], failed: list[dict[str, Any]] | None,

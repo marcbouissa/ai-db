@@ -20,6 +20,9 @@ MATERIAL_KINDS: dict[str, tuple[str, ...]] = {
     "fabric": ("weave", "linen", "denim", "canvas", "velvet", "leather"),
     "glass": ("clear", "frosted", "tinted"),
     "metal": ("steel", "copper", "chrome", "rust", "brushed"),
+    # matte/painted surfaces with colour, roughness and bump variation (addon >= this version;
+    # an older addon gets legacy_fallback's flat colour)
+    "concrete": ("",), "stone": ("",), "foliage": ("",), "plastic": ("",), "paint": ("",), "rubber": ("",),
     "color": ("",),
 }
 
@@ -47,24 +50,24 @@ CATEGORY_MATERIALS: dict[str, str] = {
     "pallet": "wood:pine", "door": "wood:oak", "window": "glass:clear", "stairs": "wood:oak",
     "refrigerator": "metal:brushed", "stove": "metal:steel", "sink": "ceramic", "toilet": "ceramic",
     "bathtub": "ceramic", "shower_stall": "glass:frosted", "mirror": "glass:clear",
-    "tv": "color:#111111", "monitor": "color:#111111", "laptop": "metal:brushed", "printer": "color:#d8d8d8",
+    "tv": "plastic:#111111", "monitor": "plastic:#111111", "laptop": "metal:brushed", "printer": "plastic:#d8d8d8",
     "filing_cabinet": "metal:steel", "pallet_rack": "metal:steel", "conveyor": "metal:steel",
-    "forklift": "color:#e0a000", "car": "color:#7a1f1f", "safety_barrier": "color:#e0a000",
+    "forklift": "paint:#e0a000", "car": "paint:#7a1f1f", "safety_barrier": "paint:#e0a000",
     "trash_can": "metal:steel", "street_lamp": "metal:steel", "fence_section": "wood:pine",
     "floor_lamp": "brass", "table_lamp": "brass", "pendant_lamp": "brass", "ceiling_light": "color:#f2f2f2",
     "wall_sconce": "brass", "fireplace": "marble:carrara", "column": "marble:carrara",
-    "potted_plant": "ceramic", "vase": "ceramic", "tree": "color:#3d6b2f", "bush": "color:#4a7a35",
-    "rock": "color:#7d7a72", "barrel": "wood:dark", "book_stack": "color:#7a3b2e",
-    "picture_frame": "wood:dark", "wall_clock": "wood:dark", "whiteboard": "color:#f4f4f4",
-    "wall_partition": "plaster", "niche": "plaster", "fountain": "color:#b7b1a6",
+    "potted_plant": "ceramic", "vase": "ceramic", "tree": "foliage", "bush": "foliage:#4a7a35",
+    "rock": "stone", "barrel": "wood:dark", "book_stack": "color:#7a3b2e",
+    "picture_frame": "wood:dark", "wall_clock": "wood:dark", "whiteboard": "plastic:#f4f4f4",
+    "wall_partition": "plaster", "niche": "plaster", "fountain": "stone:#b7b1a6",
     # outdoor / industrial
-    "playground_slide": "color:#c8372d", "swing_set": "metal:steel", "gazebo": "wood:pine",
-    "planter": "color:#9a9890", "hedge": "color:#3f6b33", "signpost": "color:#1f5a3a", "bollard": "metal:steel",
-    "parking_bay": "color:#3a3a3c", "loading_dock": "color:#9a9890", "shipping_container": "metal:rust",
-    "traffic_cone": "color:#ff6a13", "lamp_post_double": "metal:steel",
+    "playground_slide": "plastic:#c8372d", "swing_set": "metal:steel", "gazebo": "wood:pine",
+    "planter": "concrete", "hedge": "foliage:#3f6b33", "signpost": "paint:#1f5a3a", "bollard": "metal:steel",
+    "parking_bay": "concrete:#3a3a3c", "loading_dock": "concrete", "shipping_container": "metal:rust",
+    "traffic_cone": "plastic:#ff6a13", "lamp_post_double": "metal:steel",
 }
 DEFAULT_MATERIAL = "plaster"
-FLOOR_MATERIALS = {"indoor": "wood:oak", "outdoor": "color:#6f7d5a", "tabletop": "wood:walnut"}
+FLOOR_MATERIALS = {"indoor": "wood:oak", "outdoor": "foliage:#4f6b3a", "tabletop": "wood:walnut"}
 WALL_MATERIAL = "plaster"
 
 #: ``setting.style`` -> palette: ``floor``/``wall`` for indoor rooms, ``categories`` per-category
@@ -168,6 +171,20 @@ def material_error(value: object) -> str | None:
     if len(rest) > 1 or (rest and not _HEX.match(rest[0])):
         return f"after kind[:variant] only one ':#rrggbb' tint is allowed, got {value!r}"
     return None
+
+
+#: flat colour for each newer kind when the connected addon predates it
+_LEGACY = {"concrete": "#9a9890", "stone": "#7d7a72", "foliage": "#3d6b2f", "plastic": "#b0b0b0",
+           "paint": "#7a1f1f", "rubber": "#111111"}
+
+
+def legacy_fallback(material: str) -> str | None:
+    """``color:#...`` for a material of a kind an older addon rejects (keeps its tint), else None."""
+    parts = material.split(":")
+    if parts[0] not in _LEGACY:
+        return None
+    tint = next((p for p in parts[1:] if _HEX.match(p)), _LEGACY[parts[0]])
+    return f"color:{tint}"
 
 
 def material_for(category: str, chosen: str | None = None) -> str:

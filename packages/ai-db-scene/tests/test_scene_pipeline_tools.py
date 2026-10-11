@@ -685,3 +685,24 @@ def test_live_oval_office_openings_are_cut(private_blender, mem):
         "    hit, *_ = walls.ray_cast(inv @ start, (inv.to_3x3() @ d).normalized(), distance=1.2)\n"
         "    out.append(hit)\nresult = out")
     assert blocked == [False] * 5, blocked
+
+
+def test_new_material_kinds_fall_back_on_an_older_addon(monkeypatch):
+    from ai_db_scene.materials import legacy_fallback, material_error
+
+    assert material_error("paint:#e0a000") is None and material_error("foliage") is None
+    assert legacy_fallback("paint:#e0a000:proj=box") == "color:#e0a000"
+    assert legacy_fallback("stone:proj=box") == "color:#7d7a72" and legacy_fallback("wood:oak") is None
+    sent = []
+
+    class Old:
+        def batch(self, cmds, timeout=None):
+            sent.append(cmds)
+            return [{"ok": True} for _ in cmds]
+
+    monkeypatch.setattr(sp, "BlenderClient", Old)
+    cmds = [{"type": "apply_material", "params": {"name": "car", "material": "paint:#7a1f1f:proj=box"}},
+            {"type": "apply_material", "params": {"name": "t", "material": "wood:oak:proj=box"}}]
+    res = [{"ok": False, "message": "unknown material kind 'paint' (have [...])"}, {"ok": True}]
+    assert sp._retry_legacy_materials(cmds, res) == [{"ok": True}, {"ok": True}]
+    assert sent == [[{"type": "apply_material", "params": {"name": "car", "material": "color:#7a1f1f"}}]]
