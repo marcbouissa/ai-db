@@ -1,15 +1,19 @@
 """File outline extraction using tree-sitter queries."""
 from __future__ import annotations
 
-from ai_db.parser.ts_graph import extract_graph, language_for
+from collections.abc import Collection
+
+from ai_db.parser.languages import SUPPORTED_LANGUAGES, enabled_language_for
+from ai_db.parser.ts_graph import extract_graph
 
 
-def extract_file_outline(filepath: str, content: str) -> list[tuple[int, str]]:
+def extract_file_outline(filepath: str, content: str,
+                         languages: Collection[str] = SUPPORTED_LANGUAGES) -> list[tuple[int, str]]:
     """
     Extracts file outline lines (line number and label) for fast inspection.
     Uses tree-sitter queries for supported languages.
     """
-    lang = language_for(filepath)
+    lang = enabled_language_for(filepath, languages)
     if lang is None:
         # Fallback for unsupported languages
         return _regex_outline(content)
@@ -25,7 +29,7 @@ def extract_file_outline(filepath: str, content: str) -> list[tuple[int, str]]:
             sig = s["signature"]
             if sig.startswith("async "):
                 label = f"async {label}"
-            elif not label.startswith(("class ", "interface ", "struct ", "enum ", "type ")):
+            elif not label.startswith(("class ", "interface ", "struct ", "enum ", "type ", "property ")):
                 label = f"def {s['name']}"
         label = "  " * int(s.get("class_depth", 0)) + label
         if (s["line"], label) not in seen:

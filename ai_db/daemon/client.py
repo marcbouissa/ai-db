@@ -1,52 +1,95 @@
 """HTTP client for ai-db daemon, matching ServiceDispatcher interface."""
 
 import asyncio
+import contextlib
 import json
 import os
 import uuid
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import httpx
 
+from ai_db.constants import DAEMON_CLIENT_TIMEOUT_S
 from ai_db.daemon._json import as_dict, as_list
+from ai_db.errors import AiDbDaemonError
+
 try:
-    import websockets
+    from websockets.asyncio.client import connect as ws_connect
+    from websockets.exceptions import WebSocketException
     WEBSOCKETS_AVAILABLE = True
 except ImportError:
     WEBSOCKETS_AVAILABLE = False
 
+# How long to wait for the progress stream to deliver "done" after the call returned.
+_PROGRESS_DRAIN_S = 5.0
+
 
 class DaemonClient:
-    """Drop-in replacement for ServiceDispatcher that routes to HTTP daemon."""
+    """Drop-in replacement for ServiceDispatcher that routes to HTTP daemon.
+
+    Every public method is synchronous (``asyncio.run``), so each call opens and closes
+    its own ``httpx.AsyncClient``: an async client cannot outlive its event loop.
+    """
 
     def __init__(
         self,
         base_url: str,
         default_project: str | None = None,
-        timeout: float = 30.0,
+        timeout: float = DAEMON_CLIENT_TIMEOUT_S,
         api_key: str | None = None,
+        admin_key: str | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.default_project = default_project
         self.timeout = timeout
         self.api_key = api_key
-        self._client: httpx.AsyncClient | None = None
+        # Management routes (/projects, /metrics, /daemon/*) need the admin key.
+        self.admin_key = admin_key or api_key
         self._tools_cache: list[dict[str, Any]] | None = None
         self._tools_cache_project: str | None = None
 
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        headers = {}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return httpx.AsyncClient(timeout=self.timeout, headers=headers)
+    def _headers(self, admin: bool = False) -> dict[str, str]:
+        key = self.admin_key if admin else self.api_key
+        return {"Authorization": f"Bearer {key}"} if key else {}
+
+    @contextlib.asynccontextmanager
+    async def _http(self, admin: bool = False) -> AsyncIterator[httpx.AsyncClient]:
+        async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers(admin)) as client:
+            yield client
+
+    async def _request(self, method: str, path: str, admin: bool = False, **kw: Any) -> Any:
+        try:
+            async with self._http(admin) as client:
+                resp = await client.request(method, f"{self.base_url}{path}", **kw)
+        except httpx.HTTPError as e:
+            raise AiDbDaemonError(f"daemon at {self.base_url} unreachable: {e}") from e
+        if resp.is_error:
+            try:
+                detail = resp.json().get("detail", resp.text)
+            except ValueError:
+                detail = resp.text
+            raise AiDbDaemonError(f"daemon {method} {path} -> {resp.status_code}: {detail}")
+        return resp.json()
 
     def _resolve_project(self, project: str | None) -> str:
         proj = project or self.default_project
         if not proj:
-            # Auto-detect from CWD
             from ai_db.utils import detect_project_name
             proj = detect_project_name(os.getcwd())
         return proj
+
+    @staticmethod
+    def _tool_result(data: dict[str, Any]) -> Any:
+        text = data["content"][0]["text"]
+        if data.get("isError"):
+            raise AiDbDaemonError(text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return text
+
+    # --- tools -----------------------------------------------------------------
 
     def execute(
         self,
@@ -61,352 +104,145 @@ class DaemonClient:
         self,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
-        progress: Any = None,
+        progress: Callable[[int, int, str], None] | None = None,
     ) -> Any:
-        client = await self._ensure_client()
+        args = dict(arguments or {})  # never mutate the caller's dict
+        project = self._resolve_project(args.pop("project", None))
+        # The daemon runs elsewhere (cwd "/"): relative paths resolve against ours.
+        args.setdefault("cwd", os.getcwd())
+        payload: dict[str, Any] = {"name": tool_name, "arguments": args}
 
-        # Resolve project
-        project = None
-        if arguments:
-            project = arguments.pop("project", None)
-        project = self._resolve_project(project)
-
-        # Prepare request
-        payload = {
-            "name": tool_name,
-            "arguments": arguments or {},
-        }
-
-        # Add progress token if progress callback provided
+        listener: asyncio.Task[None] | None = None
         if progress is not None:
             token = str(uuid.uuid4())
             payload["_meta"] = {"progressToken": token}
+            listen = self._listen_progress_ws if WEBSOCKETS_AVAILABLE else self._listen_progress
+            listener = asyncio.create_task(listen(project, token, progress))
 
-            # Start WebSocket connection for progress in background (preferred)
-            if WEBSOCKETS_AVAILABLE:
-                ws_task = asyncio.create_task(self._listen_progress_ws(project, token, progress))
-            else:
-                # Fallback to SSE
-                ws_task = asyncio.create_task(self._listen_progress(project, token, progress))
-        else:
-            ws_task = None
-
-        # Execute
-        url = f"{self.base_url}/projects/{project}/tools/call"
-        async with await self._ensure_client() as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-
-            # Wait for progress task to complete if we started one
-            if progress is not None and ws_task is not None:
+        try:
+            data = await self._request("POST", f"/projects/{project}/tools/call", json=payload)
+        finally:
+            if listener is not None:
                 try:
-                    await asyncio.wait_for(ws_task, timeout=5.0)
+                    await asyncio.wait_for(listener, timeout=_PROGRESS_DRAIN_S)
                 except asyncio.TimeoutError:
-                    ws_task.cancel()
-                    try:
-                        await ws_task
-                    except asyncio.CancelledError:
-                        pass
+                    pass  # wait_for already cancelled the listener
+        return self._tool_result(as_dict(data))
 
-        if data.get("isError"):
-            raise RuntimeError(data["content"][0]["text"])
+    @staticmethod
+    def _forward(event: dict[str, Any], progress_cb: Callable[[int, int, str], None]) -> bool:
+        """Forward one progress event; True when the stream is finished."""
+        if event.get("type") == "progress":
+            progress_cb(event.get("progress", 0), event.get("total", 0), event.get("message", ""))
+        return event.get("type") == "done"
 
-        # Parse text content back to structured data
-        text = data["content"][0]["text"]
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return text
-
-    async def _listen_progress(self, project: str, token: str, progress_cb):
-        """Listen to SSE progress stream and forward to callback."""
-        client = await self._ensure_client()
+    async def _listen_progress(self, project: str, token: str,
+                               progress_cb: Callable[[int, int, str], None]) -> None:
+        """Server-Sent Events progress stream (used when websockets is not installed)."""
         url = f"{self.base_url}/projects/{project}/tools/call/progress"
-        params = {"token": token}
-
         try:
-            async with client.stream("GET", url, params=params, timeout=None) as resp:
+            async with httpx.AsyncClient(timeout=None, headers=self._headers()) as client, \
+                    client.stream("GET", url, params={"token": token}) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
-                    if line.startswith("data: "):
-                        data_str = line[6:]  # Remove "data: "
-                        try:
-                            event = json.loads(data_str)
-                            if event.get("type") == "progress":
-                                progress_cb(
-                                    event.get("progress", 0),
-                                    event.get("total", 0),
-                                    event.get("message", "")
-                                )
-                            elif event.get("type") == "connected":
-                                pass  # Connection established
-                            elif event.get("type") == "keepalive":
-                                pass  # Keepalive
-                        except json.JSONDecodeError:
-                            pass
-        except httpx.HTTPStatusError:
-            pass  # Progress endpoint not available or error
-        except Exception:
-            pass  # Ignore SSE errors
+                    if line.startswith("data: ") and self._forward(json.loads(line[6:]), progress_cb):
+                        return
+        except (httpx.HTTPError, json.JSONDecodeError):
+            pass  # progress is advisory: a missing/broken stream must not fail the tool call
 
-    async def _listen_progress_ws(self, project: str, token: str, progress_cb):
-        """Listen to WebSocket progress stream and forward to callback."""
-        if not WEBSOCKETS_AVAILABLE:
-            return
-
-        url = f"{self.base_url.replace('http', 'ws')}/projects/{project}/tools/call/progress/ws"
-        params = f"?token={token}"
-
+    async def _listen_progress_ws(self, project: str, token: str,
+                                  progress_cb: Callable[[int, int, str], None]) -> None:
+        """WebSocket progress stream."""
+        url = (f"{self.base_url.replace('http', 'ws', 1)}/projects/{project}"
+               f"/tools/call/progress/ws?token={token}")
         try:
-            async with websockets.connect(url + params, ping_interval=20, ping_timeout=10, close_timeout=5) as ws:
-                # Wait for initial connected message
-                try:
-                    await asyncio.wait_for(ws.recv(), timeout=2.0)
-                except asyncio.TimeoutError:
-                    return  # No connected message, exit
-
+            async with ws_connect(url, additional_headers=self._headers(), ping_interval=20,
+                                  ping_timeout=10, close_timeout=5) as ws:
                 async for message in ws:
-                    try:
-                        event = json.loads(message)
-                        if event.get("type") == "progress":
-                            progress_cb(
-                                event.get("progress", 0),
-                                event.get("total", 0),
-                                event.get("message", "")
-                            )
-                        elif event.get("type") == "keepalive":
-                            pass
-                    except json.JSONDecodeError:
-                        pass
-        except websockets.exceptions.ConnectionClosed:
-            pass
-        except Exception:
-            pass
+                    if self._forward(json.loads(message), progress_cb):
+                        return
+        except (WebSocketException, OSError, json.JSONDecodeError):
+            pass  # progress is advisory: a missing/broken stream must not fail the tool call
 
     def list_tools(self) -> list[dict[str, Any]]:
-        """Sync wrapper."""
         return asyncio.run(self._list_tools_async())
 
     async def _list_tools_async(self) -> list[dict[str, Any]]:
-        client = await self._ensure_client()
         project = self._resolve_project(None)
-
-        # Use cache if available
-        if self._tools_cache is not None and self._tools_cache_project == project:
-            return self._tools_cache
-
-        url = f"{self.base_url}/projects/{project}/tools/list"
-        async with await self._ensure_client() as client:
-            resp = await client.post(url)
-            resp.raise_for_status()
-            data = resp.json()
-
-        self._tools_cache = data["tools"]
-        self._tools_cache_project = project
+        if self._tools_cache is None or self._tools_cache_project != project:
+            data = as_dict(await self._request("POST", f"/projects/{project}/tools/list"))
+            self._tools_cache = as_list(data["tools"], "tools")
+            self._tools_cache_project = project
         return self._tools_cache
 
     def get_tool(self, name: str) -> dict[str, Any] | None:
-        tools = self.list_tools()
-        for t in tools:
-            if t["name"] == name:
-                return t
-        return None
+        return next((t for t in self.list_tools() if t["name"] == name), None)
 
-    def register_tool(self, *args, **kwargs) -> None:
-        """Not supported for daemon client."""
+    def register_tool(self, *args: Any, **kwargs: Any) -> None:
         raise NotImplementedError("Cannot register tools on daemon client")
 
-    def execute_batch(
-        self,
-        calls: list[dict[str, Any]],
-        project: str | None = None,
-    ) -> list[Any]:
+    def execute_batch(self, calls: list[dict[str, Any]], project: str | None = None) -> list[Any]:
         """Execute multiple tool calls in a single request."""
         return asyncio.run(self._execute_batch_async(calls, project))
 
-    async def _execute_batch_async(
-        self,
-        calls: list[dict[str, Any]],
-        project: str | None = None,
-    ) -> list[Any]:
-        client = await self._ensure_client()
+    async def _execute_batch_async(self, calls: list[dict[str, Any]],
+                                   project: str | None = None) -> list[Any]:
         project = self._resolve_project(project)
-
-        # Convert to batch request format
-        batch_payload = {"calls": calls}
-
-        url = f"{self.base_url}/projects/{project}/tools/call/batch"
-        resp = await client.post(url, json=batch_payload)
-        resp.raise_for_status()
-        data = resp.json()
-
-        results = []
-        for result in data["results"]:
-            if result.get("isError"):
-                raise RuntimeError(result["content"][0]["text"])
-            text = result["content"][0]["text"]
-            try:
-                results.append(json.loads(text))
-            except json.JSONDecodeError:
-                results.append(text)
-        return results
+        cwd = os.getcwd()
+        payload = {"calls": [{**c, "arguments": {"cwd": cwd, **c.get("arguments", {})}}
+                             for c in calls]}
+        data = as_dict(await self._request("POST", f"/projects/{project}/tools/call/batch",
+                                           json=payload))
+        return [self._tool_result(r) for r in data["results"]]
 
     def close(self) -> None:
-        """Close the HTTP client."""
-        if self._client:
-            # Don't wait for aclose in sync context - just mark as closed
-            # The async client will be garbage collected
-            self._client = None
+        """Nothing to close: each call owns (and closes) its HTTP client."""
 
-    async def aclose(self) -> None:
-        """Async close."""
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+    # --- status and management -------------------------------------------------
 
-    # Health/status methods
     def health(self) -> dict[str, Any]:
-        return asyncio.run(self._health_async())
-
-    async def _health_async(self) -> dict[str, Any]:
-        client = await self._ensure_client()
-        resp = await client.get(f"{self.base_url}/health")
-        resp.raise_for_status()
-        return as_dict(resp.json())
+        return as_dict(asyncio.run(self._request("GET", "/health")))
 
     def status(self) -> dict[str, Any]:
-        return asyncio.run(self._status_async())
-
-    async def _status_async(self) -> dict[str, Any]:
-        client = await self._ensure_client()
         project = self._resolve_project(None)
-        resp = await client.get(f"{self.base_url}/projects/{project}/status")
-        resp.raise_for_status()
-        return as_dict(resp.json())
+        return as_dict(asyncio.run(self._request("GET", f"/projects/{project}/status")))
 
     def list_projects(self) -> list[dict[str, Any]]:
-        return asyncio.run(self._list_projects_async())
+        return as_list(asyncio.run(self._request("GET", "/projects", admin=True)))
 
-    async def _list_projects_async(self) -> list[dict[str, Any]]:
-        client = await self._ensure_client()
-        resp = await client.get(f"{self.base_url}/projects")
-        resp.raise_for_status()
-        return as_list(resp.json())
-
-    def register_project(
-        self,
-        name: str,
-        db_path: str,
-        config_path: str | None = None,
-        auto_start: bool = True,
-    ) -> dict[str, Any]:
-        return asyncio.run(self._register_project_async(name, db_path, config_path, auto_start))
-
-    async def _register_project_async(
-        self,
-        name: str,
-        db_path: str,
-        config_path: str | None,
-        auto_start: bool,
-    ) -> dict[str, Any]:
-        client = await self._ensure_client()
-        payload = {
-            "name": name,
-            "db_path": db_path,
-            "config_path": config_path,
-            "auto_start": auto_start,
-        }
-        resp = await client.post(f"{self.base_url}/projects", json=payload)
-        resp.raise_for_status()
-        return as_dict(resp.json())
+    def register_project(self, name: str, db_path: str, config_path: str | None = None,
+                         auto_start: bool = True) -> dict[str, Any]:
+        payload = {"name": name, "db_path": db_path, "config_path": config_path,
+                   "auto_start": auto_start}
+        return as_dict(asyncio.run(self._request("POST", "/projects", admin=True, json=payload)))
 
     def unregister_project(self, name: str) -> dict[str, Any]:
-        return asyncio.run(self._unregister_project_async(name))
+        return as_dict(asyncio.run(self._request("DELETE", f"/projects/{name}", admin=True)))
 
-    def cross_project_query(
-        self,
-        query: str,
-        projects: list[str] | None = None,
-        top: int = 5,
-    ) -> list[dict[str, Any]]:
+    def cross_project_query(self, query: str, projects: list[str] | None = None,
+                            top: int = 5) -> list[dict[str, Any]]:
         """Execute query across multiple projects."""
-        return asyncio.run(self._cross_project_query_async(query, projects, top))
-
-    async def _cross_project_query_async(
-        self,
-        query: str,
-        projects: list[str] | None,
-        top: int,
-    ) -> list[dict[str, Any]]:
-        client = await self._ensure_client()
-        payload: dict[str, Any] = {
-            "name": "query",
-            "arguments": {
-                "query": query,
-                "top": top,
-            },
-        }
+        arguments: dict[str, Any] = {"query": query, "top": top}
         if projects:
-            payload["arguments"]["projects"] = projects
-        
-        resp = await client.post(f"{self.base_url}/query/cross-project", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-
-        if data.get("isError"):
-            raise RuntimeError(data["content"][0]["text"])
-
-        text = data["content"][0]["text"]
-        try:
-            return as_list(json.loads(text))
-        except json.JSONDecodeError:
-            return as_list(text)
+            arguments["projects"] = projects
+        data = asyncio.run(self._request("POST", "/query/cross-project", admin=True,
+                                         json={"name": "query", "arguments": arguments}))
+        return as_list(self._tool_result(as_dict(data)))
 
     def metrics(self) -> dict[str, Any]:
-        """Get daemon metrics."""
-        return asyncio.run(self._metrics_async())
-
-    async def _metrics_async(self) -> dict[str, Any]:
-        client = await self._ensure_client()
-        resp = await client.get(f"{self.base_url}/metrics")
-        resp.raise_for_status()
-        return as_dict(resp.json())
-
-    def templates(self) -> list[dict[str, Any]]:
-        """List available project templates."""
-        return asyncio.run(self._templates_async())
-
-    async def _templates_async(self) -> list[dict[str, Any]]:
-        client = await self._ensure_client()
-        resp = await client.get(f"{self.base_url}/templates")
-        resp.raise_for_status()
-        return as_list(resp.json())
-
-    async def _unregister_project_async(self, name: str) -> dict[str, Any]:
-        client = await self._ensure_client()
-        resp = await client.delete(f"{self.base_url}/projects/{name}")
-        resp.raise_for_status()
-        return as_dict(resp.json())
+        return as_dict(asyncio.run(self._request("GET", "/metrics", admin=True)))
 
     def reload_config(self) -> dict[str, Any]:
-        return asyncio.run(self._reload_config_async())
-
-    async def _reload_config_async(self) -> dict[str, Any]:
-        client = await self._ensure_client()
-        resp = await client.post(f"{self.base_url}/daemon/reload")
-        resp.raise_for_status()
-        # Clear tools cache after reload
+        result = as_dict(asyncio.run(self._request("POST", "/daemon/reload", admin=True)))
         self._tools_cache = None
         self._tools_cache_project = None
-        return as_dict(resp.json())
+        return result
 
 
-# Convenience function to create client from config/environment
 def create_daemon_client(
     daemon_url: str | None = None,
     project: str | None = None,
-    timeout: float = 30.0,
+    timeout: float = DAEMON_CLIENT_TIMEOUT_S,
     api_key: str | None = None,
 ) -> DaemonClient:
     """Create a DaemonClient from URL or environment."""
@@ -414,4 +250,5 @@ def create_daemon_client(
     if not url:
         raise ValueError("No daemon URL provided. Use --daemon-url or set AI_DB_DAEMON_URL")
     key = api_key or os.environ.get("AI_DB_API_KEY")
-    return DaemonClient(url, default_project=project, timeout=timeout, api_key=key)
+    return DaemonClient(url, default_project=project, timeout=timeout, api_key=key,
+                        admin_key=os.environ.get("AI_DB_ADMIN_KEY"))

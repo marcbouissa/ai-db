@@ -331,8 +331,8 @@ class StorageBackend(ABC):
         vector: list[float],
         allowed_projects: list[str] | None = None,
         limit: int = 20,
-    ) -> list[tuple[str, float]]:
-        """Search skills via vector similarity, returning list of (skill_name, distance)."""
+    ) -> list[tuple[str, str, float]]:
+        """Skills by vector similarity: ``(name, project, cosine distance)``, closest first."""
 
     @abstractmethod
     def search_contexts_vector(
@@ -344,26 +344,16 @@ class StorageBackend(ABC):
         """Search contexts via vector similarity."""
 
     @abstractmethod
-    def search_skills_hybrid(
-        self,
-        query: str,
-        vector: list[float],
-        allowed_projects: list[str] | None = None,
-        limit: int = 20,
-        rrf_k: int = 60,
-    ) -> list[tuple[str, float]]:
-        """Search skills via hybrid BM25 + vector (RRF fusion)."""
+    def skills_without_vectors(self) -> list[SkillRecord]:
+        """Skills that have no stored embedding yet (for backfill)."""
 
     @abstractmethod
-    def search_contexts_hybrid(
-        self,
-        query: str,
-        vector: list[float],
-        allowed_projects: list[str] | None = None,
-        top_k: int = 10,
-        rrf_k: int = 60,
-    ) -> list[dict[str, Any]]:
-        """Search contexts via hybrid BM25 + vector (RRF fusion)."""
+    def contexts_without_vectors(self) -> list[tuple[int, str, str]]:
+        """``(context_id, title, summary)`` of contexts with no stored embedding yet."""
+
+    @abstractmethod
+    def clear_recall_vectors(self) -> None:
+        """Drop every skill and context embedding (the embedding model changed)."""
     # =========================================================================
 
     @abstractmethod
@@ -431,16 +421,8 @@ class StorageBackend(ABC):
         }
 
     def get_weak_points(self) -> dict[str, Any]:
-        """Return codebase diagnostics (syntax error density, complexity hotspots, unindexed/stale files)."""
-        return {
-            "syntax_error_density_pct": 0.0,
-            "complexity_hotspots": [],
-            "unindexed_or_stale_files": [],
-        }
-
-    # =========================================================================
-    # Compatibility & Convenience Aliases (Non-Abstract Defaults)
-    # =========================================================================
+        """Telemetry weak points: syntax-error density, symbol-heavy files, stale files."""
+        raise NotImplementedError(f"{type(self).__name__} must implement get_weak_points")
 
     def search_chunks_bm25(self, query: str, limit: int = 10) -> list[SearchResult]:
         """Convenience alias for search_chunks supporting single-string queries."""

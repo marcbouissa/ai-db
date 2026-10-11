@@ -2,17 +2,19 @@ import os
 import time
 from typing import Any
 
-from ai_db.logger import _logger
+from ai_db.constants import CONTEXT_RECALL_CANDIDATES, RRF_K
+from ai_db.ext.recall import RecallProvider
 from ai_db.storage.models import ContextRecord
 from ai_db.utils import get_allowed_projects
 
 
 class ContextMemory:
-    def __init__(self, db: Any = None, conn: Any = None, embedder: Any = None):
+    def __init__(self, db: Any = None, conn: Any = None,
+                 recall: list[RecallProvider] | None = None):
         self.db = db if db is not None else conn
         self.cross_project: dict[str, list[str]] = {}
-        # Set by VectorDB in hybrid mode; None (lexical) means no vectors.
-        self.embedder = embedder
+        # Recall extensions (recall.providers), set by VectorDB; empty = BM25 only.
+        self.recall: list[RecallProvider] = list(recall or [])
 
     def save_context(
         self, session_id: str, summary: str, project: str | None = None,
@@ -38,7 +40,8 @@ class ContextMemory:
             full_notes=notes_str
         )
         context_id = self.db.save_context(record)
-        self._embed_context(record, context_id)
+        for provider in self.recall:
+            provider.index_context(context_id, title_str, summary)
 
         return {
             "session_id": session_id,
@@ -49,23 +52,6 @@ class ContextMemory:
             "open_tasks": open_tasks or [],
             "timestamp": now
         }
-
-    def _embed_context(self, record: ContextRecord, context_id: int) -> None:
-        """Store the context embedding (hybrid mode only).
-
-        Text is ``title + summary`` per spec. Failures are swallowed on purpose:
-        a missing vector must never stop a context from being saved, and the
-        lexical path stays fully functional without one.
-        """
-        if self.embedder is None or not context_id:
-            return
-        try:
-            text = f"{record.title or ''}\n{record.summary}".strip()
-            if not text:
-                return
-            self.db.upsert_context_vector(context_id, self.embedder.embed_documents([text])[0])
-        except Exception as exc:  # noqa: BLE001 - vectorisation is best-effort
-            _logger.debug("context embedding skipped for %s: %s", record.session_id, exc)
 
     def get_context(
         self, session_id: str | None = None, project: str | None = None,
@@ -142,13 +128,35 @@ class ContextMemory:
         self, query_text: str, project: str | None = None,
         allowed_projects: list[str] | None = None, top_k: int = 3
     ) -> list[dict[str, Any]]:
-        """Searches across saved session contexts using BM25."""
+        """Search saved session contexts: BM25, fused (RRF) with every recall provider."""
         if not query_text or not query_text.strip():
             return []
 
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
-        hits: list[dict[str, Any]] = self.db.search_contexts(query_text, allowed_projects=allowed, top_k=top_k)
-        return hits
+        if not self.recall:
+            hits: list[dict[str, Any]] = self.db.search_contexts(
+                query_text, allowed_projects=allowed, top_k=top_k)
+            return hits
+
+        ranked: list[tuple[str, list[dict[str, Any]]]] = [
+            ("bm25", self.db.search_contexts(query_text, allowed_projects=allowed,
+                                             top_k=CONTEXT_RECALL_CANDIDATES))]
+        for provider in self.recall:
+            ranked.append((provider.name, [
+                {"session_id": h.session_id, "project": h.project, "title": h.title,
+                 "summary": h.summary, "timestamp": h.timestamp}
+                for h in provider.rank_contexts(query_text, allowed, CONTEXT_RECALL_CANDIDATES)]))
+        fused: dict[tuple[str, str], dict[str, Any]] = {}
+        for source, hits in ranked:
+            for rank, hit in enumerate(hits, 1):
+                key = (hit["session_id"], hit["project"])
+                row = fused.setdefault(key, {**hit, "score": 0.0, "match": []})
+                row["score"] += 1.0 / (RRF_K + rank)
+                row["match"].append(source)
+        results = sorted(fused.values(), key=lambda r: r["score"], reverse=True)[:top_k]
+        for r in results:
+            r["score"] = round(r["score"], 4)
+        return results
 
     def delete_context(
         self, session_id: str, project: str | None = None

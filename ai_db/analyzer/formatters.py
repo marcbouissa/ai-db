@@ -3,6 +3,7 @@ import os
 from typing import Any
 
 from ai_db.errors import AiDbConfigError
+from ai_db.utils import client_cwd
 
 #: Output styles for an ``investigate`` pack. ``json`` stays the default because
 #: every existing caller parses it; the rest are opt-in.
@@ -174,7 +175,7 @@ def _pack_rel(filepath: str) -> str:
     if not filepath:
         return ""
     try:
-        cwd = os.getcwd()
+        cwd = client_cwd()
     except OSError:
         return os.path.basename(filepath)
     if filepath.startswith(cwd + os.sep):

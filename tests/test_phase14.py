@@ -285,11 +285,18 @@ def test_cache_key_covers_the_whole_retrieval_stack(tmp_path, lexical_config, mo
     db = VectorDB(str(tmp_path / "sig.db"))
     base = db.retrieval_signature()
     assert set(base) == {"mode", "embedding_model", "rerank_model",
-                         "vector_index", "cross_project", "embedder_device"}
+                         "vector_index", "cross_project", "embedder_device",
+                         "doc_weight", "rerank_top_n"}
 
     db.config.storage.options["vector_index"] = "vec0"
     assert db.retrieval_signature() != base
     db.config.storage.options["vector_index"] = "exact"
+
+    # Ranker weights reorder results with the same models: they must split the cache too.
+    reweighted = dataclasses.replace(db.config, index=dataclasses.replace(db.config.index, doc_weight=0.9))
+    db.config, original = reweighted, db.config
+    assert db.retrieval_signature() != base
+    db.config = original
     db.close()
 
     # A different access policy is a different config file, so compare the

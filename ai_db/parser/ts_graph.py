@@ -5,34 +5,17 @@ Supports all languages with .scm query files.
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from ai_db.parser.languages import declared_name, language_for
 
 if TYPE_CHECKING:
     # Annotation-only: `from __future__ import annotations` makes every `Node`
     # in a signature a string, so this costs nothing at runtime.
     from tree_sitter import Node
 
-SUPPORTED_LANGUAGES = {
-    ".py": "python",
-    ".pyi": "python",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-    ".ts": "typescript",
-    ".tsx": "tsx",
-    ".go": "go",
-    ".rs": "rust",
-    ".c": "c",
-    ".h": "c",
-    ".cpp": "cpp",
-    ".hpp": "cpp",
-    ".cc": "cpp",
-    ".java": "java",
-}
 
 
 @dataclass
@@ -62,12 +45,6 @@ class SyntaxErrorInfo:
     message: str
 
 
-def language_for(filepath: str) -> str | None:
-    """Return the tree-sitter language name for a file path, or None if unsupported."""
-    ext = os.path.splitext(filepath)[1].lower()
-    return SUPPORTED_LANGUAGES.get(ext)
-
-
 def _read_query(lang: str) -> str:
     """Read the .scm query file for a language."""
     query_path = Path(__file__).parent / "queries" / f"{lang}.scm"
@@ -86,10 +63,22 @@ def _python_in_class_body(func: Node) -> bool:
 
 
 _CLASS_NODES = ("class_definition", "class_declaration", "class_specifier", "struct_item",
-                "struct_specifier", "interface_declaration", "enum_declaration", "impl_item")
+                "struct_specifier", "interface_declaration", "enum_declaration", "impl_item",
+                "struct_declaration", "record_declaration", "clazz")
 _FUNCTION_NODES = ("function_definition", "function_declaration", "function_item",
                    "method_declaration", "constructor_declaration", "arrow_function",
-                   "function_expression", "lambda")
+                   "function_expression", "lambda", "destructor_declaration",
+                   "local_function_statement")
+# Nodes whose name qualifies the symbols inside them (classes, impls, namespaces).
+_QUALIFYING_NODES = _CLASS_NODES + ("type_declaration", "namespace_definition",
+                                    "namespace_declaration")
+# Nodes a call is attributed to (the enclosing "caller").
+_CALLER_NODES = ("function_definition", "function_declaration", "function_item",
+                 "method_declaration", "async_item", "constructor_declaration",
+                 "destructor_declaration", "local_function_statement",
+                 # Pkl: methods, and properties (a property's value is an expression,
+                 # so calls in it belong to the property).
+                 "classMethod", "classProperty")
 
 
 def _scope_of(node: Node) -> tuple[int, bool]:
@@ -111,11 +100,8 @@ def _get_qualified_name(base_name: str, node: Node, source: bytes, lang: str, sy
     parent = node.parent
     parts = []
     while parent:
-        if parent.type in ("class_definition", "class_declaration", "class_specifier",
-                           "struct_item", "struct_specifier", "interface_declaration",
-                           "interface_declaration", "type_declaration", "enum_declaration",
-                           "impl_item", "namespace_definition"):
-            name_node = parent.child_by_field_name("name")
+        if parent.type in _QUALIFYING_NODES:
+            name_node = declared_name(parent)
             if name_node:
                 parts.append(source[name_node.start_byte:name_node.end_byte].decode("utf-8", errors="replace"))
         parent = parent.parent
@@ -126,14 +112,22 @@ def _get_qualified_name(base_name: str, node: Node, source: bytes, lang: str, sy
     return "module." + base_name
 
 
-# Helper functions for call analysis
-_call_seq_counter: dict[str, int] = {}
+def _first_line(source: bytes, node: Node) -> str:
+    """The node's first source line, at most 200 characters, decoding only that line."""
+    end = source.find(b"\n", node.start_byte, node.end_byte)
+    end = node.end_byte if end < 0 else end
+    return source[node.start_byte:min(end, node.start_byte + 800)].decode("utf-8", errors="replace")[:200]
 
-def _get_call_seq(caller_name: str, line: int) -> int:
-    """Get sequence number for a call within a caller."""
+
+# Helper functions for call analysis
+def _get_call_seq(counter: dict[str, int], caller_name: str, line: int) -> int:
+    """Sequence number of a call within its caller and line (1, 2, ... in match order).
+
+    ``counter`` is per ``extract_graph`` call: it used to be module-global and never
+    reset, so parsing the same file twice gave different numbers."""
     key = f"{caller_name}:{line}"
-    _call_seq_counter[key] = _call_seq_counter.get(key, 0) + 1
-    return _call_seq_counter[key]
+    counter[key] = counter.get(key, 0) + 1
+    return counter[key]
 
 SPAWN_FUNCS = frozenset({
     "create_task", "ensure_future", "run_in_executor", "run_until_complete",
@@ -271,7 +265,7 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                         def_name_node = name_nodes[i]
                         name = source[def_name_node.start_byte:def_name_node.end_byte].decode("utf-8", errors="replace")
                     else:
-                        fallback_name_node: Node | None = node.child_by_field_name("name")
+                        fallback_name_node: Node | None = declared_name(node)
                         if fallback_name_node:
                             name = source[fallback_name_node.start_byte:fallback_name_node.end_byte].decode("utf-8", errors="replace")
                         else:
@@ -283,17 +277,13 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                     if lang == "python" and sym_type == "type" and is_local:
                         continue  # function-local annotated/typed assignment, not a type alias
                     signature = None
-                    if node.type in ("function_definition", "function_declaration", "function_item",
-                                     "method_declaration", "constructor_declaration", "async_item"):
+                    if node.type in _CALLER_NODES:
                         # Get first line of function as signature
                         decl_node = node.child_by_field_name("declarator") or node
-                        sig_text = source[decl_node.start_byte:decl_node.end_byte].decode("utf-8", errors="replace")
-                        signature = sig_text.split("\n")[0][:200]
-                    elif node.type in ("class_definition", "class_declaration", "class_specifier",
-                                       "interface_declaration", "struct_item", "struct_specifier",
-                                       "enum_specifier", "enum_declaration", "type_declaration"):
+                        signature = _first_line(source, decl_node)
+                    elif node.type in _CLASS_NODES + ("enum_specifier", "type_declaration"):
                         # Get first line of class/struct/interface/enum declaration as signature
-                        signature = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace").split("\n")[0][:200]
+                        signature = _first_line(source, node)
                     if name:
                         # Deduplicate symbols by (name, symbol_type, filepath, line)
                         key = (name, sym_type, filepath, line)
@@ -311,6 +301,9 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                             })
 
     # Second pass: collect cross-references
+    from ai_db.parser.receiver_types import ReceiverResolver
+    receivers = ReceiverResolver(source)  # per-scope tables, built once per file
+    call_seq: dict[str, int] = {}
     for pattern_idx, captures in cursor.matches(tree.root_node):
         # Collect base class names for inherit refs (extends and implements)
         base_names = []
@@ -333,9 +326,8 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                         caller_line = line
                         parent = node.parent
                         while parent:
-                            if parent.type in ("function_definition", "function_declaration", "function_item",
-                                               "method_declaration", "function_definition", "async_item"):
-                                caller_name_node: Node | None = parent.child_by_field_name("name")
+                            if parent.type in _CALLER_NODES:
+                                caller_name_node: Node | None = declared_name(parent)
                                 if caller_name_node:
                                     caller_name = source[caller_name_node.start_byte:caller_name_node.end_byte].decode("utf-8", errors="replace")
                                 caller_line = parent.start_point[0] + 1
@@ -348,8 +340,7 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                                 # Check if this block is the body of a function_definition
                                 # by checking if parent.parent is a function_definition with this block as body
                                 func_def = None
-                                if parent.parent and parent.parent.type in ("function_definition", "function_declaration", "function_item",
-                                                                          "method_declaration", "function_definition", "async_item"):
+                                if parent.parent and parent.parent.type in _CALLER_NODES:
                                     # Check if this function's body is our block
                                     body = parent.parent.child_by_field_name("body")
                                     if body and body == parent:
@@ -359,8 +350,7 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                                 if not func_def:
                                     prev_sibling = parent.prev_sibling
                                     while prev_sibling:
-                                        if prev_sibling.type in ("function_definition", "function_declaration", "function_item",
-                                                                 "method_declaration", "function_definition", "async_item"):
+                                        if prev_sibling.type in _CALLER_NODES:
                                             func_def = prev_sibling
                                             break
                                         prev_sibling = prev_sibling.prev_sibling
@@ -368,8 +358,7 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                                 # If not found, check parent's children (for class body case)
                                 if not func_def and parent.parent:
                                     for child in parent.parent.children:
-                                        if child.type in ("function_definition", "function_declaration", "function_item",
-                                                          "method_declaration", "function_definition", "async_item"):
+                                        if child.type in _CALLER_NODES:
                                             # Check if this function's body is our block
                                             body = child.child_by_field_name("body")
                                             if body and body == parent:
@@ -377,7 +366,7 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                                                 break
                                 
                                 if func_def:
-                                    func_name_node: Node | None = func_def.child_by_field_name("name")
+                                    func_name_node: Node | None = declared_name(func_def)
                                     if func_name_node:
                                         caller_name = source[func_name_node.start_byte:func_name_node.end_byte].decode("utf-8", errors="replace")
                                     caller_line = func_def.start_point[0] + 1
@@ -385,16 +374,15 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                                     caller_name = _get_qualified_name(caller_name, func_def, source, lang, symbols_by_line)
                                     break
                             parent = parent.parent
-                        callee_name = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
-                        # Use callee capture for cleaner name if available
-                        if callee_nodes and i < len(callee_nodes):
-                            callee_node = callee_nodes[i]
-                            callee_name = source[callee_node.start_byte:callee_node.end_byte].decode("utf-8", errors="replace")
+                        # The callee capture's text; the whole call expression only when the
+                        # pattern has none (decoding it first was quadratic in nesting).
+                        named = callee_nodes[i] if callee_nodes and i < len(callee_nodes) else node
+                        callee_name = source[named.start_byte:named.end_byte].decode("utf-8", errors="replace")
                         
                         # Determine await_kind
                         await_kind = "sync"
                         await_node = node.parent
-                        if await_node and await_node.type == "await":
+                        if await_node and await_node.type in ("await", "await_expression"):
                             await_kind = "await"
                         elif _is_spawn_call(callee_name):
                             await_kind = "spawn"
@@ -413,8 +401,7 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                         qualifier = receiver.rsplit(".", 1)[0] if receiver and "." in receiver else None
                         callee_resolved = None
                         if lang == "python" and qualifier:
-                            from ai_db.parser.receiver_types import resolve_receiver_class
-                            recv_cls = resolve_receiver_class(node, qualifier, source)
+                            recv_cls = receivers.resolve(node, qualifier)
                             if recv_cls:
                                 callee_resolved = f"{recv_cls}.{callee_name}"
 
@@ -423,7 +410,7 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                         site = callee_nodes[i] if callee_nodes and i < len(callee_nodes) else node
                         
                         # Determine sequence number
-                        seq = _get_call_seq(caller_name, line)
+                        seq = _get_call_seq(call_seq, caller_name, line)
                         
                         if caller_name and callee_name:
                             refs.append({
@@ -465,12 +452,10 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
                         caller_name = "module"
                         class_node: Node | None = node
                         # Walk up to find the class/struct/interface declaration
-                        while class_node and class_node.type not in ("class_definition", "class_declaration", "class_specifier",
-                                                                   "struct_item", "struct_specifier", "interface_declaration",
-                                                                   "type_declaration", "enum_declaration", "impl_item"):
+                        while class_node and class_node.type not in _QUALIFYING_NODES:
                             class_node = class_node.parent
                         if class_node:
-                            class_name_node: Node | None = class_node.child_by_field_name("name")
+                            class_name_node: Node | None = declared_name(class_node)
                             if class_name_node:
                                 caller_name = source[class_name_node.start_byte:class_name_node.end_byte].decode("utf-8", errors="replace")
                         # Qualify the caller (derived class) name with its containing classes

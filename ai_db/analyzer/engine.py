@@ -6,8 +6,16 @@ import time
 from typing import Any
 
 from ai_db.analyzer.references import ReferenceStore
-from ai_db.parser.ts_graph import extract_graph, language_for
-from ai_db.utils import compute_sha256, tokenize
+from ai_db.errors import AiDbConfigError
+from ai_db.parser.languages import SUPPORTED_LANGUAGES, enabled_language_for
+from ai_db.parser.ts_graph import extract_graph
+from ai_db.utils import (
+    client_cwd,
+    compute_sha256,
+    get_allowed_projects,
+    resolve_client_path,
+    tokenize,
+)
 
 
 class AnalyzerEngine:
@@ -19,32 +27,21 @@ class AnalyzerEngine:
         self.query_engine = query_engine
         self.ref_store = ReferenceStore(db=self.backend)
         self._evict_stale_refs()
+        # index.languages: grammars analyze_file may parse with (set by VectorDB).
+        self.languages: frozenset[str] = SUPPORTED_LANGUAGES
 
     def _evict_stale_refs(self):
         """Evicts analysis refs older than 7 days to prevent unbounded table growth."""
         self.backend.evict_stale_analysis_refs(older_than_seconds=86400 * 7)
 
-    def _store_analysis_ref(self, filepath: str, name: str, start_line: int, end_line: int, kind: str, body_text: str) -> str:
-        return self.ref_store._store_analysis_ref(filepath, name, start_line, end_line, kind, body_text)
-
     def expand_ref(self, ref_id: str, depth: str = "full", span: tuple[int, int] | None = None) -> dict[str, Any] | None:
         return self.ref_store.expand_ref(ref_id, depth, span)
 
-    def _diff_spans(self, filepath: str, current_content: str, since: str | None) -> dict[str, Any]:
-        return self.ref_store._diff_spans(filepath, current_content, since)
-
     def get_session_state(self, key: str) -> Any | None:
-        if hasattr(self.backend, "get_state"):
-            return self.backend.get_state(key)
-        if hasattr(self.db, "get_session_state"):
-            return self.db.get_session_state(key)
-        return None
+        return self.backend.get_state(key)
 
-    def set_session_state(self, key: str, value: Any):
-        if hasattr(self.backend, "set_state"):
-            return self.backend.set_state(key, value)
-        if hasattr(self.db, "set_session_state"):
-            return self.db.set_session_state(key, value)
+    def set_session_state(self, key: str, value: Any) -> None:
+        self.backend.set_state(key, value)
 
     def analyze_file(self, filepath: str, depth: str = "structure",
                      span: tuple[int, int] | None = None,
@@ -56,7 +53,7 @@ class AnalyzerEngine:
                      no_cache: bool = False) -> dict[str, Any]:
         """Analyzes a single file according to RFC tokenopt-analyzer v2."""
         bypass_cache = bypass_cache or no_cache
-        abs_path = os.path.abspath(os.path.expanduser(filepath))
+        abs_path = resolve_client_path(filepath)
         if not os.path.exists(abs_path):
             return {
                 "file": filepath,
@@ -96,7 +93,7 @@ class AnalyzerEngine:
                 return dict(cached_res)
 
         # F8 Diff Mode check
-        diff_info = self._diff_spans(abs_path, content, since) if since else None
+        diff_info = self.ref_store.diff_spans(abs_path, content, since) if since else None
 
         # F2 Range Target extraction
         if span:
@@ -105,7 +102,7 @@ class AnalyzerEngine:
             end_bounded = min(total_lines, end_req + ctx_lines)
             snippet_lines = all_lines[start_bounded - 1 : end_bounded]
             snippet_text = "\n".join(snippet_lines)
-            ref_id = self._store_analysis_ref(abs_path, f"span:{start_bounded}-{end_bounded}", start_bounded, end_bounded, "range", snippet_text)
+            ref_id = self.ref_store.store_ref(abs_path, f"span:{start_bounded}-{end_bounded}", start_bounded, end_bounded, "range", snippet_text)
             symbols = [{
                 "name": f"L{start_bounded}-{end_bounded}",
                 "kind": "range",
@@ -130,7 +127,7 @@ class AnalyzerEngine:
         q_tokens = set(tokenize(q or "")) if q else set()
 
         # Get symbols from tree-sitter for supported languages
-        lang = language_for(abs_path)
+        lang = enabled_language_for(abs_path, self.languages)
         if lang is not None:
             ts_symbols, _, _ = extract_graph(abs_path, content)
             for sym in ts_symbols:
@@ -145,7 +142,7 @@ class AnalyzerEngine:
                         end_line = chunk.end_line
                         break
                 body_block = "\n".join(all_lines[sym_line - 1 : end_line])
-                ref_id = self._store_analysis_ref(abs_path, sym_name, sym_line, end_line, sym_type, body_block)
+                ref_id = self.ref_store.store_ref(abs_path, sym_name, sym_line, end_line, sym_type, body_block)
                 symbols_found.append({
                     "name": sym_name,
                     "kind": sym_type,
@@ -159,7 +156,7 @@ class AnalyzerEngine:
             chunks = self.db.get_chunks_for_file(abs_path)
             for chunk in chunks:
                 if chunk.chunk_type in ("md", "section", "text", "lib_meta"):
-                    ref_id = self._store_analysis_ref(abs_path, chunk.name, chunk.start_line, chunk.end_line, chunk.chunk_type, chunk.content)
+                    ref_id = self.ref_store.store_ref(abs_path, chunk.name, chunk.start_line, chunk.end_line, chunk.chunk_type, chunk.content)
                     symbols_found.append({
                         "name": chunk.name,
                         "kind": chunk.chunk_type,
@@ -272,10 +269,10 @@ class AnalyzerEngine:
         expanded_targets = []
         for t in targets:
             if any(char in t for char in ["*", "?", "["]):
-                matched = glob.glob(os.path.expanduser(t), recursive=True)
+                matched = glob.glob(resolve_client_path(t), recursive=True)
                 expanded_targets.extend([m for m in matched if os.path.isfile(m)])
             else:
-                expanded_targets.append(t)
+                expanded_targets.append(resolve_client_path(t))
 
         expanded_targets = list(dict.fromkeys(expanded_targets))[:32]  # Cap n<=32
 
@@ -330,29 +327,34 @@ class AnalyzerEngine:
         }
 
     def locate_targets(self, q: str, scope: str = ".", k: int = 5,
-                       path_prefix: str | None = None) -> list[dict[str, Any]]:
-        """F10 Relevance Rank: Finds top-k matching files/snippets without dumping entire directory scans."""
+                       path_prefix: str | None = None, project: str | None = None,
+                       allowed_projects: list[str] | None = None) -> list[dict[str, Any]]:
+        """F10 Relevance Rank: Finds top-k matching files/snippets without dumping entire directory scans.
+
+        Always limited to files under ``scope``. With ``project`` it is also limited to that
+        project plus what ``access.cross_project`` grants it, so a scope that spans several
+        projects' directories cannot read past the access policy.
+        """
         if not tokenize(q):
             return []
+        if self.query_engine is None:
+            raise AiDbConfigError("locate_targets needs a query engine (construct via VectorDB)")
 
-        scope_abs = os.path.abspath(os.path.expanduser(scope))
-        filters: dict[str, Any] = {"allowed_projects": None, "path_prefix": scope_abs}
+        scope_abs = resolve_client_path(scope)
+        allowed = (get_allowed_projects(project, allowed_projects, self.query_engine.cross_project)
+                   if project else None)
+        filters: dict[str, Any] = {"allowed_projects": allowed, "path_prefix": scope_abs}
         if path_prefix:
-            filters["path_prefix"] = os.path.abspath(os.path.expanduser(path_prefix))
+            filters["path_prefix"] = resolve_client_path(path_prefix)
 
-        if self.query_engine is not None:
-            search_results = self.query_engine.search(q, filters, k)
-        else:
-            # Standalone use (tests, tools): no configured retriever/ranker available.
-            search_results = self.backend.search_chunks(
-                tokenize(q), top_k=k, **filters)
+        search_results = self.query_engine.search(q, filters, k)
 
         hits = []
         for r in search_results:
             snippet = getattr(r, "snippet", "") or ""
             score = round(float(getattr(r, "score", 1.0)), 3)
             hits.append({
-                "file": os.path.relpath(r.filepath, os.getcwd()),
+                "file": os.path.relpath(r.filepath, client_cwd()),
                 "name": r.name,
                 "span": [r.start_line, r.end_line],
                 "score": score,

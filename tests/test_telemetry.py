@@ -65,7 +65,7 @@ class TestTelemetryTier1FeatureCoverage:
     def test_telemetry_tracker_record_query(self, telemetry_db):
         """TelemetryTracker records query latency and computes count, min, max, and avg."""
         _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].conn)
+        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
         tracker.record_query(backend="sqlite_wal", latency_ms=10.0, results_count=5)
         tracker.record_query(backend="sqlite_wal", latency_ms=20.0, results_count=3)
         tracker.record_query(backend="sqlite_wal", latency_ms=30.0, results_count=8)
@@ -80,7 +80,7 @@ class TestTelemetryTier1FeatureCoverage:
     def test_telemetry_latency_percentiles(self, telemetry_db):
         """Calculates p50, p95, and p99 percentiles from 100 recorded latency samples."""
         _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].conn)
+        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
         for val in range(1, 101):
             tracker.record_query(backend="sqlite_wal", latency_ms=float(val), results_count=1)
 
@@ -93,7 +93,7 @@ class TestTelemetryTier1FeatureCoverage:
     def test_telemetry_multi_backend_latency(self, telemetry_db):
         """Maintains independent latency distributions across multiple storage backends."""
         _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].conn)
+        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
         tracker.record_query(backend="sqlite_wal", latency_ms=5.0, results_count=2)
         tracker.record_query(backend="mysql_adapter", latency_ms=25.0, results_count=2)
 
@@ -106,7 +106,7 @@ class TestTelemetryTier1FeatureCoverage:
     def test_telemetry_token_compression_savings(self, telemetry_db):
         """Calculates net tokens saved and compression ratio across Stub, S-Exp, and JSON."""
         _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].conn)
+        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
         # 10,000 raw tokens compressed to 2,000 stub tokens
         tracker.record_token_compression(raw_tokens=10000, stub_tokens=2000, sexp_tokens=3500, json_tokens=6000)
 
@@ -120,7 +120,7 @@ class TestTelemetryTier1FeatureCoverage:
     def test_telemetry_cost_savings_calculation(self, telemetry_db):
         """Calculates estimated financial savings based on $3.00 / 1M tokens saved."""
         _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].conn)
+        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
         # 1,000,000 saved tokens = $3.00
         tracker.record_token_compression(raw_tokens=2000000, stub_tokens=1000000, sexp_tokens=1200000, json_tokens=1500000)
 
@@ -131,7 +131,7 @@ class TestTelemetryTier1FeatureCoverage:
     def test_telemetry_cache_access_metrics(self, telemetry_db):
         """Computes cache hit rate percentage from recorded hits and misses."""
         _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].conn)
+        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
         for _ in range(8):
             tracker.record_cache_access(hit=True, tokens_saved=250)
         for _ in range(2):
@@ -148,7 +148,7 @@ class TestTelemetryTier1FeatureCoverage:
     def test_telemetry_disk_and_memory_trends(self, telemetry_db):
         """Tracks SQLite file size, table row counts, and storage trends."""
         _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].conn, db_path=telemetry_db["db_file"])
+        tracker = TelemetryTracker(telemetry_db["vdb"].backend, db_path=telemetry_db["db_file"])
         summary = tracker.get_summary()
         storage = summary.get("storage", {})
         assert storage.get("db_size_kb", 0) > 0
@@ -167,7 +167,7 @@ class TestTelemetryTier1FeatureCoverage:
         (src / "broken.py").write_text("def c():\n    return 1 +\n")
         vdb.sync(str(src), project="weak_points", verbose=False)
 
-        tracker = TelemetryTracker(vdb.conn)
+        tracker = TelemetryTracker(vdb.backend)
         wp = tracker.compute_weak_points()
         assert "syntax_error_density_pct" in wp
         # 1 error in 4 total files (including initial calc.py) = 25%
@@ -184,7 +184,7 @@ class TestTelemetryTier1FeatureCoverage:
         (src / "complex_module.py").write_text(complex_code)
         vdb.sync(str(src), project="telemetry_test", verbose=False)
 
-        tracker = TelemetryTracker(vdb.conn)
+        tracker = TelemetryTracker(vdb.backend)
         wp = tracker.compute_weak_points()
         assert "complexity_hotspots" in wp
         hotspots = wp["complexity_hotspots"]
@@ -224,7 +224,7 @@ class TestTelemetryTier1FeatureCoverage:
     def test_telemetry_zero_queries_no_div_zero(self, telemetry_db):
         """ZeroDivisionError is avoided when retrieving summary with zero recorded queries."""
         _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].conn)
+        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
         summary = tracker.get_summary()
         lat = summary.get("latency", {})
         assert lat.get("count", 0) == 0
@@ -234,7 +234,7 @@ class TestTelemetryTier1FeatureCoverage:
     def test_telemetry_zero_cache_access_no_div_zero(self, telemetry_db):
         """Zero cache lookups safely returns 0.0% hit rate without division error."""
         _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].conn)
+        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
         summary = tracker.get_summary()
         cache = summary.get("cache", {})
         assert cache.get("lookups", 0) == 0
@@ -243,7 +243,7 @@ class TestTelemetryTier1FeatureCoverage:
     def test_telemetry_zero_raw_tokens_no_div_zero(self, telemetry_db):
         """Recording zero raw tokens defaults compression ratio to 1.0 (0% savings)."""
         _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].conn)
+        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
         tracker.record_token_compression(raw_tokens=0, stub_tokens=0, sexp_tokens=0, json_tokens=0)
         summary = tracker.get_summary()
         tok = summary.get("tokens", {})
@@ -253,7 +253,7 @@ class TestTelemetryTier1FeatureCoverage:
     def test_telemetry_reset_metrics(self, telemetry_db):
         """Calling reset() clears all accumulated latency, token, and cache counters."""
         _require_telemetry()
-        tracker = TelemetryTracker(telemetry_db["vdb"].conn)
+        tracker = TelemetryTracker(telemetry_db["vdb"].backend)
         tracker.record_query(backend="sqlite_wal", latency_ms=15.0, results_count=2)
         tracker.record_cache_access(hit=True, tokens_saved=500)
         tracker.reset()
@@ -299,7 +299,7 @@ class TestTelemetryTier1FeatureCoverage:
         from ai_db.storage.sqlite_backend import SQLiteBackend
         backend = SQLiteBackend(":memory:")
         backend.initialize()
-        tracker = TelemetryTracker(backend.conn, db_path=":memory:")
+        tracker = TelemetryTracker(backend, db_path=":memory:")
         summary = tracker.get_summary()
         storage = summary.get("storage", {})
         assert storage.get("db_size_kb", 0) == 0.0
@@ -353,13 +353,13 @@ class TestTelemetryTier3Combinations:
 
         # Session 1: Record metric
         vdb1 = VectorDB(db_file)
-        t1 = TelemetryTracker(vdb1.conn, db_path=db_file)
+        t1 = TelemetryTracker(vdb1.backend, db_path=db_file)
         t1.record_token_compression(raw_tokens=5000, stub_tokens=1000, sexp_tokens=2000, json_tokens=3000)
         vdb1.close()
 
         # Session 2: Restore and verify
         vdb2 = VectorDB(db_file)
-        t2 = TelemetryTracker(vdb2.conn, db_path=db_file)
+        t2 = TelemetryTracker(vdb2.backend, db_path=db_file)
         summary = t2.get_summary()
         assert summary["tokens"]["raw_tokens"] == 5000
         vdb2.close()
@@ -381,7 +381,7 @@ class TestTelemetryTier4Workflows:
         """
         _require_telemetry()
         vdb = telemetry_db["vdb"]
-        tracker = TelemetryTracker(vdb.conn, db_path=telemetry_db["db_file"])
+        tracker = TelemetryTracker(vdb.backend, db_path=telemetry_db["db_file"])
 
         # Simulate queries & token usage
         tracker.record_query("sqlite_wal", latency_ms=12.4, results_count=4)
@@ -399,7 +399,7 @@ class TestTelemetryTier4Workflows:
         """
         _require_telemetry()
         vdb = telemetry_db["vdb"]
-        tracker = TelemetryTracker(vdb.conn, db_path=telemetry_db["db_file"])
+        tracker = TelemetryTracker(vdb.backend, db_path=telemetry_db["db_file"])
 
         report = tracker.compute_weak_points()
         assert "syntax_error_density_pct" in report

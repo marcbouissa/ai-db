@@ -55,7 +55,7 @@ Pack formats (`investigate --format`) are a **different** set: `compact`, `json`
 | `check` | files on disk (default with a path), `--index` | Two different questions; both together is an error |
 | `trace --format` | `tree`, `json`, `mermaid` | |
 | `expand --format` | `json`, `raw` | |
-| `todos --kind` | `todo`, `fixme`, `hack`, `note`, `xxx` | comment markers to look for |
+| `todos --kind` | `todo`, `fixme`, `hack`, `note`, `xxx`, `docstring` | comment markers to look for |
 | `todos --format` | `text`, `json` | |
 | `optimize --default-format` | `stub`, `sexp`, `json`, `outline`, `prose` | persisted into session state |
 | `route-skill --format` | `dense`, `json`, `path` | |
@@ -88,7 +88,7 @@ Env-var overrides: `AI_DB_RETRIEVAL_MODE`, `AI_DB_PATH`, `AI_DB_CONFIG`, `AI_DB_
 
 | Area | Coverage |
 |---|---|
-| Languages parsed | 9 grammars across 16 extensions: c (`.c`, `.h`), cpp (`.cc`, `.cpp`, `.hpp`), go (`.go`), java (`.java`), javascript (`.cjs`, `.js`, `.jsx`, `.mjs`), python (`.py`, `.pyi`), rust (`.rs`), tsx (`.tsx`), typescript (`.ts`) |
+| Languages parsed | 11 grammars across 18 extensions: c (`.c`, `.h`), cpp (`.cc`, `.cpp`, `.hpp`), csharp (`.cs`), go (`.go`), java (`.java`), javascript (`.cjs`, `.js`, `.jsx`, `.mjs`), pkl (`.pkl`), python (`.py`, `.pyi`), rust (`.rs`), tsx (`.tsx`), typescript (`.ts`) |
 | `check` file validation | tree-sitter for those 9, a per-extension linter for everything else, both through one `parse_source` path |
 | `tokens_out_formatted` | **CLI only.** Over MCP/HTTP, `analyze` with a format returns a rendered string (no `meta` to carry the number) and without a format there is no formatted output to count. Closing that gap is a transport contract change, not a missing line. |
 

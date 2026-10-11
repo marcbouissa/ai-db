@@ -171,8 +171,14 @@ uv pip install torch --index-url https://download.pytorch.org/whl/cu118
 uv pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-`ai-db init` writes `"device": "cuda"` when a usable GPU is detected and `"cpu"`
-otherwise, so the usual flow needs no editing. To see what was resolved:
+`ai-db init` writes `"device": "cpu"` and, when a usable GPU is detected,
+`"bulk_device": "cuda"`: large runs (the first index, `reindex --embeddings`, any
+sync with at least `bulk_threshold` = 256 chunks to embed) move the model to the
+GPU and back, while day-to-day syncs and queries stay on the CPU, so VRAM is
+only held while there is real work. The dtype is kept across the move, so
+vectors from either device match (cosine ≈ 0.997 measured for Qwen3-Embedding-0.6B).
+Set `"device": "cuda"` and drop `bulk_device` to keep everything on the GPU;
+`AI_DB_DEVICE=cpu` pins every embed, bulk runs included. To see what was resolved:
 
 ```bash
 ai-db config check
@@ -221,8 +227,11 @@ or `~/.config/ai-db/config.json` (first match). Sections:
 | `retrieval.doc_weight` | `0.0`–`1.0`. Weight of file-level documentation chunks (module headers, markdown sections) against code chunks. `0.5` by default |
 | `index.ignore` | Glob patterns excluded from indexing. Defaults to `[".agents/**"]` |
 | `index.doc_weight` | Per-index counterpart of `retrieval.doc_weight` |
+| `index.languages` | Tree-sitter grammars to use, e.g. `["python", "typescript"]`. Defaults to all supported (`c cpp csharp go java javascript pkl python rust tsx typescript`). Files in other languages are still indexed and searchable, as plain text: no symbols, call graph or syntax check, and their grammar is never loaded or downloaded. Changing the list re-parses only the affected files on the next `sync`. Set it at init with `ai-db init --languages python,go`; `ai-db grammars` shows what is enabled and downloaded, `ai-db grammars download` fetches the enabled grammars up front |
+| `recall.providers` | Recall extensions used by skill routing and context recall, on top of keyword search. Built in: `vectors` (semantic similarity over embeddings). Defaults to `["vectors"]` when an embedding provider is configured, else `[]`. Third-party providers register in the `ai_db.recall` entry-point group (ARCHITECTURE.md §3.5) |
 | `embedding.provider` | `none`, `sentence_transformers`, `openai_compatible`, `voyage`, or an `ai_db.embedding` plugin |
 | `embedding.device` | `cpu` or `cuda`. `ai-db init` auto-detects; `cuda` on a machine without a usable GPU is a hard error, never a silent downgrade |
+| `embedding.bulk_device`, `embedding.bulk_threshold` | Optional (`sentence_transformers`). Device for runs with at least `bulk_threshold` chunks to embed (default 256), e.g. `cuda` for the first index while `device` stays `cpu`. Validated like `device`: `cuda` without a GPU is a hard error |
 | `embedding.batch_size` | Documents per forward pass. Raise it on a GPU with VRAM to spare |
 | `embedding.dtype` | `float32`, `bfloat16` or `float16`. **Omit it** (recommended) and ai-db probes the hardware and picks. See below. |
 | `rerank.provider` | `none`, `sentence_transformers`, `voyage`, `cohere`, or an `ai_db.rerank` plugin |
@@ -308,17 +317,26 @@ ai-db daemon status
 ```
 
 **Features:**
-- **Hot config reload**: Watches `config.json` for changes and auto-reloads projects
-- **Model warming**: Pre-loads embedding/rerank models on project registration
-- **Idle project TTL**: Auto-unloads projects idle > 5 minutes to reclaim memory
-- **Cross-project queries**: Single request searches multiple projects (`/query/cross-project`)
-- **WebSocket progress**: Real-time progress via `ws://host/projects/{name}/tools/call/progress/ws`
-- **Prometheus metrics**: `/metrics` endpoint with per-project latency, requests, errors
-- **Project templates**: `GET /templates` returns python/js/rust/go configs
-- **Bearer token auth**: Per-project API keys via `AI_DB_API_KEYS="proj=key"`
-- **Rate limiting**: Per-project token bucket (default 100 req/min)
-- **Structured JSON logging**: Every request logged with latency, status, project
-- **WAL checkpointing**: Periodic SQLite `PRAGMA wal_checkpoint(TRUNCATE)`
+- **Your working directory**: the client sends its cwd with every call, so `sync .` and
+  relative paths resolve where you ran the command, not where the daemon runs
+- **Non-blocking**: tool calls run in worker threads; `/health` and other projects stay
+  responsive during a long `sync`. Calls to one project are serialised.
+- **Hot config reload**: watches the config file (the one passed with `--config` /
+  `AI_DB_CONFIG`) and reloads; projects registered at runtime survive a reload
+- **Model warming**: pre-loads embedding/rerank models for `auto_start` projects
+- **Idle project TTL**: unloads projects idle > 5 minutes to reclaim memory
+- **Cross-project queries**: one request searches several projects (`/query/cross-project`)
+- **Progress**: WebSocket (`/projects/{name}/tools/call/progress/ws`) or SSE stream, ends with a `done` event
+- **Metrics**: `/metrics` with per-project latency, requests, errors
+- **Auth (fail closed once configured)**: per-project keys `AI_DB_API_KEYS="proj=key"` and an
+  admin key `AI_DB_ADMIN_KEY`. With neither set the daemon is open (it binds to localhost).
+  With any set, every route but `/health` needs `Authorization: Bearer <key>`: project
+  routes take that project's key or the admin key; management routes (`/projects`,
+  `/metrics`, `/query/cross-project`, `/daemon/*`) take only the admin key. Clients read
+  `AI_DB_API_KEY` and `AI_DB_ADMIN_KEY`.
+- **Rate limiting**: per project and client IP (default 100 req/min), `429` when exceeded
+- **Logs**: `~/.local/state/ai-db/daemon.log` (`$XDG_STATE_HOME`) when run in the background
+- **WAL checkpointing**: periodic SQLite `PRAGMA wal_checkpoint(TRUNCATE)`
 
 **Client usage:**
 ```python
@@ -328,8 +346,51 @@ client = create_daemon_client("http://localhost:8080", project="myproj", api_key
 results = client.execute("query", {"query": "hello"})
 client.cross_project_query("hello", projects=["proj1", "proj2"])
 client.execute_batch([{"name": "query", "arguments": {"query": "hello"}}, {"name": "status", "arguments": {}}])
-print(client.metrics())  # Prometheus-style metrics
-print(client.templates())  # Project templates
+print(client.metrics())  # per-project request metrics
+```
+
+### Keeping command output out of the agent's context (`ai-db run` / `ai-db filter`)
+
+A test run or build can print thousands of lines when the agent needs ten. `ai-db run`
+executes the command in your shell and directory, then prints only what matters for the
+stated need; the command's exit code is passed through unchanged.
+
+```bash
+ai-db run --need "why did the login test fail" -- pytest -q
+ai-db run --shell -- "make 2>&1 | tail -n 400"      # pipes and globs need --shell
+pytest -v | ai-db filter "price parsing"            # or filter output you already have
+ai-db filter --id 30b72a8f89 "the other failure"     # re-filter, no re-run
+ai-db filter --id 30b72a8f89 --lines 311-330          # exact lines of the stored output
+```
+
+What is kept, within `--budget` tokens (default 1200): blocks relevant to `--need` (BM25,
+light stemming, identifier splitting), every error/failure block (tracebacks, `error:`,
+`FAILED`, pytest failure headers), summary lines (`2 failed, 300 passed`, `test result:`)
+and the final block. Repeated same-shape lines collapse (`... x298 similar lines`), ANSI
+colours and `\r` progress bars are removed, and every gap is marked
+`... [lines a-b omitted]` with real line numbers. Output that already fits the budget is
+shown whole. The header reports what was dropped, including error blocks that did not fit.
+
+`--rerank` adds meaning-based ranking for needs worded differently from the output
+("dividing a number by nothing" -> `ZeroDivisionError`). It uses the configured
+`rerank` model (a cross-encoder), else cosine similarity with the `embedding` model, and
+blends it with the keyword score (`OUTPUT_W_SEMANTIC`, default 70 % model). The first call
+loads the model (seconds on CPU); the daemon and an MCP session keep it loaded. With neither
+model configured, `--rerank` is a configuration error.
+
+A 340-line pytest run with two failures (5,600 tokens) comes back in ~325 tokens with both
+failures, their assertions and the summary. Raw outputs are stored owner-only (0600) in
+`$XDG_CACHE_HOME/ai-db/outputs/`, newest 50 kept. MCP clients get the same as the
+`filter_output` tool (`text` or `output_id`, `need`, `budget`, `lines`, `rerank`).
+
+### Plugins (3D scene and video tools)
+
+Extra tools ship as separate packages that register through the `ai_db.tools` entry
+point; every dispatcher (CLI, `ai-db mcp`, the daemon) picks them up automatically.
+The 3D scene and video tools live in [`packages/ai-db-scene`](packages/ai-db-scene/README.md):
+
+```bash
+pip install -e packages/ai-db-scene
 ```
 
 ### MCP Server via Daemon
@@ -345,6 +406,52 @@ ai-db mcp --daemon-url http://localhost:8080 --project myproj
 ```
 
 Then configure your AI client (Claude Desktop, Cursor, etc.) to use the `ai-db mcp` command as usual. The MCP server will forward tool calls to the daemon, sharing loaded models.
+
+#### One daemon for every Claude Code session
+
+Run the daemon as a systemd user service, so it starts at login and restarts if it crashes:
+
+```ini
+# ~/.config/systemd/user/ai-db.service
+[Unit]
+Description=ai-db daemon (shared by every Claude Code session)
+
+[Service]
+ExecStart=%h/bin/ai-db daemon start --foreground
+WorkingDirectory=/
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user enable --now ai-db
+```
+
+Then set `AI_DB_DAEMON_URL` for every session in `~/.claude/settings.json`:
+
+```json
+{ "env": { "AI_DB_DAEMON_URL": "http://127.0.0.1:8080" } }
+```
+
+The MCP server (`ai-db mcp`) and every `ai-db` command run from a session, including
+`ai-db run`/`filter`, then go through the one daemon:
+
+- **Projects:** each session's project is detected from its working directory, and
+  relative paths resolve there.
+- **Models:** each embedding and rerank model is loaded once and shared by every
+  project. It is freed when the last project goes idle.
+
+After changing ai-db's code, run `systemctl --user restart ai-db`. Logs:
+`journalctl --user -u ai-db -f`. The daemon is open to local clients unless
+`AI_DB_API_KEYS`/`AI_DB_ADMIN_KEY` are set (see Auth above).
+
+CPU inference is capped at `min(8, cores/2)` torch threads; set `AI_DB_CPU_THREADS` to
+change it. On a hybrid CPU (Core Ultra 9 275HX), using all 24 threads made one query
+embedding take 3.2 s instead of 42 ms.
 
 ---
 

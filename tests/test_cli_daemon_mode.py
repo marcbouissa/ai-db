@@ -50,9 +50,7 @@ def test_status_in_daemon_mode(fake, capsys):
     _run(["--daemon-url", "http://127.0.0.1:1", "--project", "p", "status"])
     out = capsys.readouterr().out
     assert "default_format:sexp" in out
-    assert ("session_state", {"db": None, "key": "default_format"}) in fake.calls or any(
-        c[0] == "session_state" for c in fake.calls
-    )
+    assert ("session_state", {"key": "default_format"}) in fake.calls
 
 
 def test_trace_in_daemon_mode(fake, capsys):

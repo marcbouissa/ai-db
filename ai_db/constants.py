@@ -37,7 +37,8 @@ else:
 INDEXABLE_EXTENSIONS = {
     ".py", ".pyi", ".js", ".ts", ".d.ts", ".jsx", ".tsx", ".html", ".css", ".scss",
     ".json", ".md", ".yaml", ".yml", ".toml", ".sh", ".bash",
-    ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".java", ".sql",
+    ".c", ".cpp", ".cc", ".h", ".hpp", ".rs", ".go", ".java", ".cs", ".sql",
+    ".mjs", ".cjs", ".pkl",
     ".txt", ".rst"
 }
 
@@ -70,15 +71,7 @@ PARALLEL_PARSE_MIN_FILES = 32
 MAX_CHUNK_TOKENS = 512  # tiktoken o200k_base
 TEXT_WINDOW_LINES = 60
 TEXT_WINDOW_OVERLAP = 10
-EXT_TO_LANG = {
-    ".py": "python", ".pyi": "python",
-    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
-    ".ts": "typescript", ".tsx": "tsx",
-    ".go": "go", ".rs": "rust",
-    ".c": "c", ".h": "c",
-    ".cpp": "cpp", ".hpp": "cpp", ".cc": "cpp",
-    ".java": "java",
-}
+# The extension -> language map lives in ai_db/parser/languages.py.
 
 # Lexical search
 CODE_STOPWORDS = frozenset({
@@ -129,10 +122,16 @@ DELEGATE_MAX_TOKENS = 120  # seeds this small also get their callees' callees
 
 # Skill router
 SKILL_W_TRIGGER = 8.0  # weight for exact trigger phrase match in prompt
+SKILL_MIN_CONFIDENCE = 0.15  # route_skills drops matches below this confidence by default
+SKILL_W_BM25 = 5.0  # BM25 contribution after min-max normalisation to [0, 1]
+SKILL_W_BM25_FLAT = 2.5  # BM25 contribution when every hit scored the same
+SKILL_BM25_CANDIDATES = 20  # skills fetched from FTS before fusion
+SKILL_CONTENT_MAX_CHARS = 4000  # skill body stored for FTS
 
 # trace
 TRACE_DEPTH = 20
 TRACE_MAX_NODES = 200
+TRACE_SNAP_LINES = 3  # trace file:line on a blank/comment/decorator line takes the definition starting within this many lines
 TRACE_CONTEXT_LINES = 3
 TRACE_WAIT_PATTERNS = (
     "wait_*",
@@ -152,26 +151,41 @@ TRACE_WAIT_PATTERNS = (
     "release",
 )
 
-# --- Scene layout solver (ai_db/scene/layout.py) ---
-LAYOUT_SEED = 0
-LAYOUT_EPS_M = 1e-4  # geometric slack for exact contact (walls, stacking)
-LAYOUT_REL_TOL_M = 0.03  # tolerance when verifying gap/contact/centering relations
-LAYOUT_FACING_TOL_DEG = 20.0
-LAYOUT_CANDIDATES = 300  # sampled candidates per object (greedy pass)
-LAYOUT_RETRY_CANDIDATES = 2000  # one denser retry before declaring a conflict
-LAYOUT_LOCAL_ITERS = 400  # local-search proposals after the greedy pass
-LAYOUT_LOCAL_STEP_M = 0.25
-LAYOUT_LOCAL_YAW_DEG = 15.0
-LAYOUT_DEFAULT_IN_FRONT_GAP_M = 0.4
-LAYOUT_DEFAULT_BESIDE_GAP_M = 0.15
-LAYOUT_DEFAULT_AROUND_GAP_M = 0.3
-LAYOUT_FLAT_MAX_H_M = 0.03  # objects at most this tall (rugs) do not block others
-LAYOUT_BREATHING_M = 1.0  # soft preference for free space around objects
-LAYOUT_MAX_COUNT = 50  # max instances per ObjectSpec
-LAYOUT_MAX_BOUND_M = 500.0
-LAYOUT_RESTARTS = 4  # greedy passes (fresh random draws) before reporting a conflict
+# Daemon (ai_db/daemon/)
+DAEMON_IDLE_TTL_S = 300  # unload a project's VectorDB after this long without a request
+DAEMON_IDLE_CHECK_S = 60  # how often idle projects are looked for
+DAEMON_WAL_CHECKPOINT_S = 300  # how often each project's WAL is checkpointed
+DAEMON_CONFIG_POLL_S = 2.0  # config-file hot-reload poll interval
+DAEMON_RATE_LIMIT = 100  # requests per DAEMON_RATE_WINDOW_S, per project and client IP
+DAEMON_RATE_WINDOW_S = 60.0
+DAEMON_PROGRESS_KEEPALIVE_S = 30.0  # progress stream keepalive when no event arrives
+DAEMON_CLIENT_TIMEOUT_S = 30.0  # HTTP timeout of DaemonClient / DaemonManager requests
+DAEMON_LOG_FILE = os.path.join(
+    os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "ai-db", "daemon.log")
+INDEX_LANGUAGES_STATE_KEY = "index_languages"  # session_state key: grammars the index was built with
 
-# --- Blender (addon socket server) ---
-BLENDER_OX_HOST = "127.0.0.1"
-BLENDER_OX_PORT = 9877  # override: AI_DB_BLENDER_PORT
-BLENDER_OX_TIMEOUT_S = 15.0
+# Recall extensions (ai_db/ext/recall.py, built-in "vectors" in ai_db/ext/vector_recall.py)
+RECALL_VECTORS_STATE_KEY = "recall_vectors_meta"  # session_state: model the skill/context vectors came from
+CPU_THREADS_MAX = 8  # torch intra-op threads for CPU inference; override with AI_DB_CPU_THREADS
+EMBED_BULK_THRESHOLD = 256  # pending chunks at or above which embedding.bulk_device is used
+RECALL_EMBED_BATCH = 64  # texts per embed_documents call when backfilling
+SKILL_W_RECALL = 5.0  # weight of a recall provider's similarity in route_skills (same scale as BM25)
+SKILL_RECALL_MIN_SIM = 0.3  # similarities at or below this add nothing (unrelated skills)
+CONTEXT_RECALL_CANDIDATES = 20  # contexts per ranking (BM25, each provider) before RRF fusion
+
+# Command-output filter (ai_db/output_filter.py): `ai-db run` / `ai-db filter` / MCP filter_output
+OUTPUT_BUDGET_TOKENS = 1200  # default size of the filtered result
+OUTPUT_MAX_BLOCK_LINES = 60  # longer paragraphs are split into blocks of this size
+OUTPUT_COLLAPSE_MIN = 3  # this many consecutive same-shape lines collapse into one marker
+OUTPUT_TAIL_LINES = 6  # the last lines (usually the summary) are always candidates
+OUTPUT_W_NEED = 3.0  # weight of relevance to the agent's stated need (BM25, normalised)
+OUTPUT_W_SIGNAL = 1.5  # weight of error/failure lines in a block
+OUTPUT_W_SUMMARY = 1.0  # weight of summary lines (pytest totals, "test result:", ...)
+OUTPUT_W_TAIL = 0.75  # bonus for the final block
+OUTPUT_STORE_DIR = os.path.join(
+    os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "ai-db", "outputs")
+OUTPUT_STORE_KEEP = 50  # stored raw outputs kept for re-filtering (oldest pruned)
+OUTPUT_RERANK_MAX_BLOCKS = 200  # blocks scored by the semantic model (best by keyword/signal first)
+OUTPUT_W_SEMANTIC = 0.7  # share of need-relevance from the semantic score when --rerank is on
+OUTPUT_RERANK_BLOCK_CHARS = 2000  # text per block sent to the model
+TODO_LINE_CHARS = 160  # `ai-db todos` prints each hit on one line, cut to this width

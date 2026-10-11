@@ -10,6 +10,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Collection
+
+from ai_db.parser.languages import SUPPORTED_LANGUAGES, enabled_language_for, language_for
 
 # Built-in validator registry: ext -> command template (use {file} for the temp filepath)
 BUILTIN_VALIDATORS: dict[str, list[str]] = {
@@ -133,7 +136,7 @@ def get_linter(config_validators: dict[str, list[str]] | None = None) -> Externa
 
 
 def parse_source(
-    filepath: str, content: str
+    filepath: str, content: str, languages: Collection[str] = SUPPORTED_LANGUAGES,
 ) -> tuple[list[dict], list[dict], tuple[int, int, str] | None]:
     """Parse one file and report its syntax verdict. Pure: touches no storage.
 
@@ -145,13 +148,17 @@ def parse_source(
     here, so a file's syntax cannot be reported one way when checked on disk and
     another way when read back from the index.
 
-    Languages tree-sitter handles are parsed with tree-sitter. Everything else
-    goes to the configured linter for its extension, which is a no-op when no
-    validator is registered -- an unvalidatable file is clean, not broken.
+    Selected languages (``languages``) are parsed with tree-sitter. A supported
+    language the user de-selected is not parsed at all (no linter either: that would
+    run e.g. ``npx tsc`` for the files the user opted out of). Everything else goes to
+    the configured linter for its extension, which is a no-op when no validator is
+    registered -- an unvalidatable file is clean, not broken.
     """
-    from ai_db.parser.ts_graph import extract_graph, language_for
+    from ai_db.parser.ts_graph import extract_graph
 
-    if language_for(filepath) is not None:
+    if enabled_language_for(filepath, languages) is not None:
         symbols, refs, errors = extract_graph(filepath, content)
         return symbols, refs, (errors[0] if errors else None)
+    if language_for(filepath) is not None:
+        return [], [], None  # supported but de-selected in index.languages
     return [], [], get_linter().validate(filepath, content)

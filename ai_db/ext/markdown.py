@@ -5,17 +5,18 @@ Supports frontmatter, headings, code blocks, and structured content.
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import frontmatter
+import yaml
 
-from ai_db.ext.base import ChunkerExtension, Chunk, register_chunker
+from ai_db.ext.base import Chunk, ChunkerExtension, register_chunker
 
 
 class MarkdownChunker(ChunkerExtension):
     """Chunker for Markdown files with frontmatter support."""
     
-    extensions = [".md", ".markdown", ".mdx", ".mdown"]
+    extensions: ClassVar[list[str]] = [".md", ".markdown", ".mdx", ".mdown"]
     language = "markdown"
     ts_language = "markdown"
     
@@ -24,11 +25,8 @@ class MarkdownChunker(ChunkerExtension):
         
         # Parse frontmatter
         try:
-            post = frontmatter.loads(content)
-            fm_data = post.metadata
-            body = post.content
-        except Exception:
-            fm_data = {}
+            body = frontmatter.loads(content).content
+        except (ValueError, yaml.YAMLError):  # malformed frontmatter: index the raw text
             body = content
         
         lines = body.splitlines(keepends=True)

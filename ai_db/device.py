@@ -43,6 +43,54 @@ def torch_version_cuda() -> str | None:
     return getattr(torch.version, "cuda", None)
 
 
+_THREAD_ENV = ("AI_DB_CPU_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+_threads_configured = False
+
+
+def cpu_threads() -> int:
+    """Intra-op threads for CPU inference.
+
+    torch defaults to one thread per core. On hybrid CPUs (performance +
+    efficiency cores) and on busy machines that is drastically slow for small
+    inputs: every op waits at a barrier for the slowest core. Measured on a Core
+    Ultra 9 275HX (8P+16E) embedding one query with Qwen3-Embedding-0.6B: 24
+    threads 3207 ms, 16 threads 46 ms, 8 threads 42 ms. So cap it.
+    ``AI_DB_CPU_THREADS`` sets it explicitly.
+    """
+    import os
+
+    from ai_db.constants import CPU_THREADS_MAX
+
+    explicit = os.environ.get("AI_DB_CPU_THREADS")
+    if explicit:
+        try:
+            n = int(explicit)
+        except ValueError as exc:
+            raise AiDbConfigError(f"AI_DB_CPU_THREADS must be an integer, got {explicit!r}") from exc
+        if n < 1:
+            raise AiDbConfigError(f"AI_DB_CPU_THREADS must be >= 1, got {n}")
+        return n
+    return max(1, min(CPU_THREADS_MAX, (os.cpu_count() or 2) // 2))
+
+
+def configure_cpu_threads() -> None:
+    """Apply ``cpu_threads()`` to torch once per process.
+
+    Left alone when the user already chose through OMP_NUM_THREADS/MKL_NUM_THREADS
+    (and did not set AI_DB_CPU_THREADS, which wins).
+    """
+    global _threads_configured
+    if _threads_configured:
+        return
+    import os
+
+    _threads_configured = True
+    if not os.environ.get("AI_DB_CPU_THREADS") and any(os.environ.get(v) for v in _THREAD_ENV):
+        return
+    import torch
+    torch.set_num_threads(cpu_threads())
+
+
 def preferred_device() -> str:
     """Device to write into a fresh config: cuda when usable, else cpu."""
     return CUDA if cuda_available() else CPU
@@ -191,6 +239,7 @@ def describe(where: str) -> dict[str, Any]:
         "cuda_available": cuda_available(),
         "torch_cuda": torch_version_cuda(),
         "preferred_device": preferred_device(),
+        "cpu_threads": cpu_threads(),
         "scope": where,
     }
 

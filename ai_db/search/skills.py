@@ -2,7 +2,18 @@ import os
 import re
 from typing import Any
 
-from ai_db.constants import DEFAULT_SKILL_DIRS
+from ai_db.constants import (
+    DEFAULT_SKILL_DIRS,
+    SKILL_BM25_CANDIDATES,
+    SKILL_CONTENT_MAX_CHARS,
+    SKILL_MIN_CONFIDENCE,
+    SKILL_RECALL_MIN_SIM,
+    SKILL_W_BM25,
+    SKILL_W_BM25_FLAT,
+    SKILL_W_RECALL,
+    SKILL_W_TRIGGER,
+)
+from ai_db.ext.recall import RecallProvider
 from ai_db.logger import _logger
 from ai_db.storage.models import SkillRecord
 from ai_db.utils import compute_sha256, get_allowed_projects, tokenize
@@ -12,17 +23,21 @@ STOP_WORDS = {"with", "for", "the", "and", "that", "this", "from", "into", "need
 
 class SkillRouter:
     def __init__(self, db: Any = None, conn: Any = None, db_path: str = "",
-                 embedder: Any = None):
+                 recall: list[RecallProvider] | None = None):
         self.db = db if db is not None else conn
         self.cross_project: dict[str, list[str]] = {}
         self.db_path = db_path or getattr(self.db, "db_path", "")
-        # Set by VectorDB in hybrid mode; None (lexical) means no vectors.
-        self.embedder = embedder
+        # Recall extensions (recall.providers), set by VectorDB; empty = keyword only.
+        self.recall: list[RecallProvider] = list(recall or [])
 
     def sync_skills(self, skill_dirs: list[str] | None = None, project: str = "global", verbose: bool = True) -> dict[str, int]:
         """Indexes skills from skill directories into skills and fts_skills tables under the specified project scope."""
         if skill_dirs is None:
-            skill_dirs = DEFAULT_SKILL_DIRS
+            # AI_DB_SKILL_DIRS replaces the defaults entirely (plugins included)
+            from ai_db.plugins import plugin_skill_dirs
+
+            skill_dirs = list(DEFAULT_SKILL_DIRS) + (
+                [] if os.environ.get("AI_DB_SKILL_DIRS") else plugin_skill_dirs())
             project = "global"
 
         stored = self.db.get_skills_by_project(project)
@@ -47,8 +62,6 @@ class SkillRouter:
         for stored_path, (sname, _) in list(stored.items()):
             if stored_path not in found_set:
                 self.db.delete_skill(filepath=stored_path, project=project, name=sname)
-                if hasattr(self.db, "delete_skill_vectors"):
-                    self.db.delete_skill_vectors(sname, project)
                 pruned += 1
 
         for sfile in found_files:
@@ -102,47 +115,35 @@ class SkillRouter:
             else:
                 added += 1
 
-            self.db.upsert_skill(
-                SkillRecord(
-                    name=skill_name,
-                    description=desc,
-                    filepath=sfile,
-                    triggers=triggers_str,
-                    sha256=curr_sha,
-                    last_modified=mtime,
-                    content=body_content[:4000],
-                    project=project,
-                )
+            record = SkillRecord(
+                name=skill_name,
+                description=desc,
+                filepath=sfile,
+                triggers=triggers_str,
+                sha256=curr_sha,
+                last_modified=mtime,
+                content=body_content[:SKILL_CONTENT_MAX_CHARS],
+                project=project,
             )
-            self._embed_skill(skill_name, desc, triggers_str, project)
+            self.db.upsert_skill(record)
+            for provider in self.recall:
+                provider.index_skill(record)
+
+        # Backfill what a provider has not seen yet (e.g. skills unchanged since it was
+        # enabled, or after an embedding-model change).
+        for provider in self.recall:
+            provider.sync()
 
         if verbose:
             db_name = os.path.basename(str(self.db_path))
             print(f"[{db_name}] Skills Sync ({project}): +{added} ~{updated} -{pruned} ={skipped}")
         return {"added": added, "updated": updated, "pruned": pruned, "skipped": skipped}
 
-    def _embed_skill(self, name: str, description: str, triggers: str, project: str) -> None:
-        """Store the skill embedding (hybrid mode only).
-
-        Text is ``description + triggers`` per spec. Best-effort: a missing or
-        failed vector must never stop skills from being indexed.
-        """
-        if self.embedder is None:
-            return
-        try:
-            text = f"{description or ''}\n{triggers or ''}".strip()
-            if not text:
-                return
-            self.db.upsert_skill_vector(name, project,
-                                        self.embedder.embed_documents([text])[0])
-        except Exception as exc:  # noqa: BLE001 - vectorisation is best-effort
-            _logger.debug("skill embedding skipped for %s: %s", name, exc)
-
     def route_skills(self, prompt: str, top_k: int = 3,
                      project: str | None = None, allowed_projects: list[str] | None = None,
                      min_confidence: float | None = None) -> list[dict[str, Any]]:
         """Analyzes prompt intent and returns ranked matching skills within allowed project scopes."""
-        _min_confidence = min_confidence if min_confidence is not None else 0.15
+        _min_confidence = min_confidence if min_confidence is not None else SKILL_MIN_CONFIDENCE
         allowed = get_allowed_projects(project or "global", allowed_projects, self.cross_project)
 
         skills_list = self.db.get_skills(allowed_projects=allowed)
@@ -172,15 +173,12 @@ class SkillRouter:
 
         prompt_lower = prompt.lower()
 
-        # Load constant
-        from ai_db.constants import SKILL_W_TRIGGER
-
         # Compute fused retrieval score via search_skills (BM25)
         filtered_tokens = [t for t in tokens if t not in STOP_WORDS and len(t) > 2]
         fused_scores: dict[str, float] = {name: 0.0 for name in all_skills}
         if filtered_tokens:
             query_str = " ".join(filtered_tokens)
-            ranked_skills = self.db.search_skills(query_str, allowed_projects=allowed, limit=20)
+            ranked_skills = self.db.search_skills(query_str, allowed_projects=allowed, limit=SKILL_BM25_CANDIDATES)
             if ranked_skills:
                 bm25_values = [s for _, s in ranked_skills]
                 min_bm25 = min(bm25_values)
@@ -190,11 +188,11 @@ class SkillRouter:
                     for name, bm25_score in ranked_skills:
                         if name in fused_scores:
                             normalized = (bm25_score - min_bm25) / bm25_range
-                            fused_scores[name] = normalized * 5.0
+                            fused_scores[name] = normalized * SKILL_W_BM25
                 else:
                     for name, _ in ranked_skills:
                         if name in fused_scores:
-                            fused_scores[name] = 2.5
+                            fused_scores[name] = SKILL_W_BM25_FLAT
 
         # Exact trigger phrase bonus
         trigger_bonus = {}
@@ -207,14 +205,27 @@ class SkillRouter:
                     trigger_bonus[name] = 1.0
                     break
 
-        # Compute final scores: fused BM25 + trigger bonus
+        # Recall extensions (e.g. the built-in "vectors"): similarity above the floor,
+        # rescaled to [0, SKILL_W_RECALL] so it sits on the BM25 scale.
+        recall_bonus: dict[str, float] = {}
+        recall_reason: dict[str, str] = {}
+        for provider in self.recall:
+            for hit in provider.rank_skills(prompt, allowed, SKILL_BM25_CANDIDATES):
+                if hit.name not in all_skills or hit.similarity <= SKILL_RECALL_MIN_SIM:
+                    continue
+                bonus = (hit.similarity - SKILL_RECALL_MIN_SIM) / (1.0 - SKILL_RECALL_MIN_SIM) * SKILL_W_RECALL
+                if bonus > recall_bonus.get(hit.name, 0.0):
+                    recall_bonus[hit.name] = bonus
+                    recall_reason[hit.name] = f"{provider.name} similarity: {hit.similarity:.2f}"
+
+        # Final score: fused BM25 + trigger bonus + recall bonus
         scores: dict[str, float] = {}
         reasons: dict[str, list[str]] = {name: [] for name in all_skills}
 
         for name in all_skills:
             fused = fused_scores.get(name, 0.0)
             trigger_bonus_val = SKILL_W_TRIGGER if trigger_bonus.get(name, 0.0) > 0.0 else 0.0
-            score = fused + trigger_bonus_val
+            score = fused + trigger_bonus_val + recall_bonus.get(name, 0.0)
             if score > 0:
                 scores[name] = score
                 # Build reasons
@@ -222,6 +233,8 @@ class SkillRouter:
                     reasons[name].append(f"BM25 score: {fused_scores[name]:.2f}")
                 if trigger_bonus.get(name, 0.0) > 0.0:
                     reasons[name].append("Exact trigger phrase match")
+                if name in recall_reason:
+                    reasons[name].append(recall_reason[name])
 
         # Normalize confidence to 0.0 - 1.0 range using min-max scaling
         max_score = max(scores.values()) if scores else 0.0

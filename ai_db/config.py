@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ai_db.errors import AiDbConfigError
+from ai_db.parser.languages import SUPPORTED_LANGUAGES, validate_languages
 
 CONFIG_VERSION = 2
 
@@ -32,7 +33,7 @@ EMBEDDING_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "none": (frozenset(), frozenset()),
     "sentence_transformers": (
         frozenset({"model", "device", "batch_size"}),
-        frozenset({"query_prompt", "dtype", "_note"}),
+        frozenset({"query_prompt", "dtype", "bulk_device", "bulk_threshold", "_note"}),
     ),
     "openai_compatible": (
         frozenset({"model", "base_url", "api_key_env", "dimensions", "batch_size"}),
@@ -55,7 +56,7 @@ RERANK_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {    "none"
 }
 
 TOP_LEVEL_KEYS = frozenset(
-    {"version", "storage", "retrieval", "embedding", "rerank", "access", "auto_sync_paths", "index", "trace", "daemon", "scene"}
+    {"version", "storage", "retrieval", "embedding", "rerank", "access", "auto_sync_paths", "index", "trace", "daemon", "plugins", "recall"}
 )
 REQUIRED_TOP_LEVEL = frozenset({"version", "storage", "retrieval", "embedding", "rerank"})
 
@@ -80,14 +81,8 @@ class ProviderConfig:
 class IndexConfig:
     doc_weight: float = DEFAULT_DOC_WEIGHT
     ignore: list[str] = field(default_factory=lambda: list(DEFAULT_INDEX_IGNORE))
-
-
-DEFAULT_JUDGE_MODEL = "claude-opus-5-5"
-
-
-@dataclass(frozen=True)
-class SceneConfig:
-    judge_model: str = DEFAULT_JUDGE_MODEL
+    # Tree-sitter grammars to use; files in other languages are indexed as plain text.
+    languages: frozenset[str] = SUPPORTED_LANGUAGES
 
 
 @dataclass(frozen=True)
@@ -152,7 +147,11 @@ class AppConfig:
     trace_wait_patterns: list[str] | None = None
     trace_wait_patterns_extend: list[str] | None = None
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
-    scene: SceneConfig = field(default_factory=SceneConfig)
+    # Settings of installed plugins, by plugin name (e.g. "scene"). Core does not
+    # interpret them; each plugin validates its own section.
+    plugins: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Recall extensions run by route_skills / query_contexts (ai_db.recall entry points).
+    recall_providers: list[str] = field(default_factory=list)
     source_path: str | None = None
 
     @property
@@ -161,25 +160,15 @@ class AppConfig:
         return self.retrieval.mode
 
     def to_dict(self) -> dict[str, Any]:
-        daemon_dict = {
-            "enabled": self.daemon.enabled,
-            "host": self.daemon.host,
-            "port": self.daemon.port,
-            "pid_file": self.daemon.pid_file,
-            "auto_discover": self.daemon.auto_discover,
-            "shutdown_timeout": self.daemon.shutdown_timeout,
-            "projects": {
-                name: {"db_path": p.db_path, "config_path": p.config_path, "auto_start": p.auto_start}
-                for name, p in self.daemon.projects.items()
-            },
-        }
+        daemon_dict = self.daemon.to_dict()
         return {
             "version": self.version,
             "storage": {"provider": self.storage.provider, "options": dict(self.storage.options)},
             "retrieval": {"mode": self.retrieval.mode, "doc_weight": self.retrieval.doc_weight},
             "embedding": {"provider": self.embedding.provider, **self.embedding.options},
             "rerank": {"provider": self.rerank.provider, "top_n": self.rerank.top_n, **self.rerank.options},
-            "index": {"doc_weight": self.index.doc_weight, "ignore": self.index.ignore},
+            "index": {"doc_weight": self.index.doc_weight, "ignore": self.index.ignore,
+                      "languages": sorted(self.index.languages)},
             "access": {"cross_project": {k: list(v) for k, v in self.cross_project.items()}},
             "auto_sync_paths": list(self.auto_sync_paths),
             "trace": {
@@ -187,6 +176,8 @@ class AppConfig:
                 "wait_patterns_extend": self.trace_wait_patterns_extend,
             },
             "daemon": daemon_dict,
+            "plugins": {name: dict(section) for name, section in self.plugins.items()},
+            "recall": {"providers": list(self.recall_providers)},
         }
 
 
@@ -233,6 +224,14 @@ def _parse_provider(
             not isinstance(options["batch_size"], int) or options["batch_size"] < 1
         ):
             raise AiDbConfigError(f"'{where}.batch_size' must be a positive integer")
+        if "bulk_threshold" in options and (
+            not isinstance(options["bulk_threshold"], int) or options["bulk_threshold"] < 1
+        ):
+            raise AiDbConfigError(f"'{where}.bulk_threshold' must be a positive integer")
+        if "bulk_device" in options and (
+            not isinstance(options["bulk_device"], str) or not options["bulk_device"].strip()
+        ):
+            raise AiDbConfigError(f"'{where}.bulk_device' must be a device string such as 'cuda'")
         if "dimensions" in options and (
             not isinstance(options["dimensions"], int) or options["dimensions"] < 1
         ):
@@ -314,7 +313,9 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
     device_override = os.environ.get("AI_DB_DEVICE")
     if device_override:
         if embedding.provider == "sentence_transformers":
-            embedding = ProviderConfig(embedding.provider, {**embedding.options, "device": device_override})
+            # Pins the device for every embed, bulk runs included.
+            pinned = {k: v for k, v in embedding.options.items() if k != "bulk_device"}
+            embedding = ProviderConfig(embedding.provider, {**pinned, "device": device_override})
         if rerank.provider == "sentence_transformers":
             rerank = RerankConfig(rerank.provider, {**rerank.options, "device": device_override}, rerank.top_n)
 
@@ -360,21 +361,33 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         raise AiDbConfigError("'trace.wait_patterns_extend' must be a list of strings")
 
     index_raw = _require_dict(data.get("index", {}), "index")
-    _check_keys(index_raw, frozenset({"doc_weight", "ignore"}), "index")
+    _check_keys(index_raw, frozenset({"doc_weight", "ignore", "languages"}), "index")
     doc_weight = index_raw.get("doc_weight", DEFAULT_DOC_WEIGHT)
     if not isinstance(doc_weight, (int, float)) or not (0.0 < doc_weight <= 1.0):
         raise AiDbConfigError("'index.doc_weight' must be a float in (0.0, 1.0]")
     ignore = index_raw.get("ignore", list(DEFAULT_INDEX_IGNORE))
     if not isinstance(ignore, list) or not all(isinstance(p, str) for p in ignore):
         raise AiDbConfigError("'index.ignore' must be a list of strings")
-    index = IndexConfig(doc_weight=doc_weight, ignore=ignore)
+    languages_raw = index_raw.get("languages", sorted(SUPPORTED_LANGUAGES))
+    if not isinstance(languages_raw, list) or not all(isinstance(x, str) for x in languages_raw):
+        raise AiDbConfigError("'index.languages' must be a list of language names")
+    index = IndexConfig(doc_weight=doc_weight, ignore=ignore,
+                        languages=validate_languages(languages_raw))
 
-    scene_raw = _require_dict(data.get("scene", {}), "scene")
-    _check_keys(scene_raw, frozenset({"judge_model"}), "scene")
-    judge_model = scene_raw.get("judge_model", DEFAULT_JUDGE_MODEL)
-    if not isinstance(judge_model, str) or not judge_model:
-        raise AiDbConfigError("'scene.judge_model' must be a non-empty string")
-    scene_cfg = SceneConfig(judge_model=judge_model)
+    recall_raw = _require_dict(data.get("recall", {}), "recall")
+    _check_keys(recall_raw, frozenset({"providers"}), "recall")
+    # Default: the built-in semantic provider whenever there is an embedder to run it.
+    default_recall = ["vectors"] if embedding.provider != "none" else []
+    recall_providers = recall_raw.get("providers", default_recall)
+    if not isinstance(recall_providers, list) or not all(isinstance(x, str) for x in recall_providers):
+        raise AiDbConfigError("'recall.providers' must be a list of provider names")
+    if "vectors" in recall_providers and embedding.provider == "none":
+        raise AiDbConfigError("recall provider 'vectors' needs an embedding provider; "
+                              "set embedding.provider or remove 'vectors' from recall.providers")
+
+    plugins_raw = _require_dict(data.get("plugins", {}), "plugins")
+    plugins = {name: dict(_require_dict(section, f"plugins.{name}"))
+               for name, section in plugins_raw.items()}
 
     # Parse daemon configuration
     daemon_raw = _require_dict(data.get("daemon", {}), "daemon")
@@ -429,7 +442,8 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         cross_project=cross,
         auto_sync_paths=list(paths),
         index=index,
-        scene=scene_cfg,
+        plugins=plugins,
+        recall_providers=list(recall_providers),
         trace_wait_patterns=trace_wait_patterns,
         trace_wait_patterns_extend=trace_wait_patterns_extend,
         daemon=daemon,

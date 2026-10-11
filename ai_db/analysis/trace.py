@@ -15,9 +15,11 @@ from ai_db.analysis.resolve import Resolver
 from ai_db.constants import (
     TRACE_DEPTH,
     TRACE_MAX_NODES,
+    TRACE_SNAP_LINES,
     TRACE_WAIT_PATTERNS,
 )
 from ai_db.storage.models import ChunkRecord
+from ai_db.utils import resolve_client_path
 
 
 @dataclass
@@ -45,6 +47,23 @@ class TraceResult:
     edges: list[tuple[str, str]]
     readiness_summary: list[str]
     unresolved: list[str]
+
+
+def _plausible_targets(ref: Any, candidates: list[ChunkRecord]) -> list[ChunkRecord]:
+    """Drop name-only matches a call's receiver rules out.
+
+    ``self.x()`` / ``Cls.x()`` resolved to a class (``callee_resolved``) keeps that
+    class's method; a call on some other object whose type is unknown
+    (``_CLIENT_CWD.reset()``) cannot be any class's method we can name, so it keeps only
+    module-level functions instead of linking to whichever class has a ``reset``.
+    """
+    if ref.callee_resolved:
+        exact = [c for c in candidates if c.qualified_name == ref.callee_resolved
+                 or c.qualified_name.endswith("." + ref.callee_resolved)]
+        return exact or candidates
+    if ref.callee_qualifier and ref.callee_qualifier not in ("self", "cls"):
+        return [c for c in candidates if "." not in c.qualified_name]
+    return candidates
 
 
 class TraceEngine:
@@ -130,14 +149,15 @@ class TraceEngine:
         if ":" in entry and entry.rsplit(":", 1)[-1].isdigit():
             filepath, line_str = entry.rsplit(":", 1)
             line = int(line_str)
-            # Resolve relative paths
-            filepath = os.path.abspath(filepath)
-            # Find chunk containing this line
-            chunks = self.db.get_chunks_for_file(filepath)  # type: ignore[assignment]
-            for chunk in chunks:
-                if chunk.start_line <= line <= chunk.end_line:
-                    return chunk  # type: ignore[no-any-return]
-            return None
+            chunks: list[ChunkRecord] = self.db.get_chunks_for_file(resolve_client_path(filepath))
+            # The innermost chunk containing the line: a class header spans its methods,
+            # so the first match would trace the whole class for a line inside a method.
+            containing = [c for c in chunks if c.start_line <= line <= c.end_line]
+            if containing:
+                return min(containing, key=lambda c: (c.end_line - c.start_line, c.chunk_type == "module"))
+            # A blank line, comment or decorator just above a definition means that definition.
+            following = [c for c in chunks if line < c.start_line <= line + TRACE_SNAP_LINES]
+            return min(following, key=lambda c: c.start_line) if following else None
 
         # Try as filepath (script)
         if os.path.isfile(entry):
@@ -148,21 +168,19 @@ class TraceEngine:
                     return chunk  # type: ignore[no-any-return]
             return chunks[0] if chunks else None  # type: ignore[no-any-return]
 
-        # Try as qualified symbol name
-        entry_for_symbol = entry.removeprefix("module.")
-        chunks_dict = self.db.find_chunks_by_symbol([entry_for_symbol], self.allowed_projects or ["global"])  # type: ignore[assignment]
-        if chunks_dict:
-            # Flatten and prefer exact match
-            all_chunks: list[ChunkRecord] = []
-            for chunk_list in chunks_dict.values():
-                all_chunks.extend(chunk_list)
-            # Also try with module. prefix stripped
-            entry_stripped = entry.removeprefix("module.")
-            for chunk in all_chunks:
-                if chunk.qualified_name == entry or chunk.qualified_name == entry_stripped or chunk.name == entry or chunk.name == entry_stripped:
-                    return chunk  # type: ignore[return-value]
-            return all_chunks[0] if all_chunks else None  # type: ignore[return-value]
-        return None
+        # A symbol: `filter_output`, or qualified `ServiceDispatcher.execute`. Chunks are
+        # indexed by their last name component, so look that up and match the rest
+        # against the qualified name (a dotted entry used to match nothing).
+        wanted = entry.removeprefix("module.")
+        last = wanted.rsplit(".", 1)[-1]
+        found: dict[str, list[ChunkRecord]] = self.db.find_chunks_by_symbol(
+            [last], self.allowed_projects or ["global"])
+        candidates = [c for chunk_list in found.values() for c in chunk_list]
+        if "." in wanted:
+            candidates = [c for c in candidates
+                          if c.qualified_name == wanted or c.qualified_name.endswith("." + wanted)]
+        exact = [c for c in candidates if c.qualified_name == wanted]
+        return (exact or candidates)[0] if (exact or candidates) else None
 
     def _build_trace(
         self,
@@ -216,10 +234,8 @@ class TraceEngine:
 
         refs = self.db.get_refs_from(chunk.filepath, f"module.{chunk.qualified_name}")
         # Sort by seq for call order
-        calls = sorted(
-            [r for r in refs if r.ref_type == "call" and r.callee_name not in _BUILTINS],
-            key=lambda r: (r.seq or 0, r.caller_line or 0),
-        )
+        # Source order (get_refs_from sorts by call site).
+        calls = [r for r in refs if r.ref_type == "call" and r.callee_name not in _BUILTINS]
 
         seen_callees: set[str] = set()
         for ref in calls:
@@ -230,10 +246,10 @@ class TraceEngine:
             seen_callees.add(ref.callee_name)
 
             result = self.resolver.resolve_callees({ref.callee_name}, chunk, self.allowed_projects)
-            for callee in result.resolved.get(ref.callee_name, []):
+            for callee in _plausible_targets(ref, result.resolved.get(ref.callee_name, [])):
                 child = self._build_trace(callee, depth, max_nodes, "down", False)
                 if child:
-                    child.call_line = ref.caller_line
+                    child.call_line = ref.call_line or ref.caller_line
                     child.await_kind = ref.await_kind
                     child.guard = ref.guard
                     child.receiver = ref.receiver

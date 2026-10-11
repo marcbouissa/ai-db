@@ -4,7 +4,7 @@ One chunking path per file kind:
 
 - package metadata (``package.json``, ``METADATA``, ``pyproject.toml``): one ``lib_meta`` chunk
 - markdown: one chunk per header section, named by header, qualified by header path
-- source code in a language from ``EXT_TO_LANG``: tree-sitter structural chunks
+- source code in a selected language (``ai_db.parser.languages``): tree-sitter structural chunks
   (module runs, functions, class headers + one chunk per method, recursively)
 - any other text file: fixed line windows with overlap
 
@@ -21,31 +21,23 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Collection
 from dataclasses import dataclass, field
-from functools import cache, lru_cache
+from functools import cache
 from typing import Any
 
 from ai_db.constants import (
-    EXT_TO_LANG,
     MAX_CHUNK_TOKENS,
     TEXT_WINDOW_LINES,
     TEXT_WINDOW_OVERLAP,
 )
+from ai_db.parser.languages import SUPPORTED_LANGUAGES, declared_name, enabled_language_for
+from ai_db.parser.languages import language_for as _language_for
+from ai_db.tokens import count_tokens
 from ai_db.utils import strip_code_bloat
 
 META_FILES = ("package.json", "METADATA", "pyproject.toml")
 META_MAX_CHARS = 1500
-
-
-@lru_cache(maxsize=1)
-def _encoder() -> Any:
-    import tiktoken
-
-    return tiktoken.get_encoding("o200k_base")
-
-
-def count_tokens(text: str) -> int:
-    return len(_encoder().encode(text, disallowed_special=()))
 
 
 @cache
@@ -119,13 +111,29 @@ LANG_SPECS: dict[str, LangSpec] = {
         funcs=frozenset({"method_declaration", "constructor_declaration"}),
         containers=frozenset({"class_declaration", "interface_declaration", "enum_declaration"}),
     ),
+    "csharp": LangSpec(
+        comment="//",
+        funcs=frozenset({"method_declaration", "constructor_declaration", "destructor_declaration",
+                         "operator_declaration"}),
+        # Namespaces are containers so their classes are chunked (and qualified) like
+        # the call graph names them (ts_graph._QUALIFYING_NODES).
+        containers=frozenset({"namespace_declaration", "class_declaration", "struct_declaration",
+                              "interface_declaration", "record_declaration"}),
+        leaves=frozenset({"enum_declaration", "delegate_declaration"}),
+    ),
+    # Apple Pkl. Module-level properties (the config values) stay in the module
+    # chunks; classes, methods and type aliases get their own.
+    "pkl": LangSpec(
+        comment="//",
+        funcs=frozenset({"classMethod"}),
+        containers=frozenset({"clazz"}),
+        leaves=frozenset({"typeAlias"}),
+    ),
 }
 
 
 def language_for(filepath: str) -> str | None:
-    if filepath.endswith(".d.ts"):
-        return "typescript"
-    return EXT_TO_LANG.get(os.path.splitext(filepath)[1].lower())
+    return _language_for(filepath)
 
 
 def _hash(text: str) -> str:
@@ -265,7 +273,7 @@ class _CodeChunker:
                 if inner is not None:
                     return self._text(inner).replace("::", ".")
             return "?"
-        name = node.child_by_field_name("name")
+        name = declared_name(node)
         if name is not None:
             return self._text(name)
         return f"L{node.start_point[0] + 1}"
@@ -368,7 +376,7 @@ class _CodeChunker:
         if body is None:
             for child in inner.named_children:
                 if child.type in ("declaration_list", "class_body", "field_declaration_list",
-                                  "interface_body", "enum_body", "block"):
+                                  "interface_body", "enum_body", "block", "classBody"):
                     body = child
         members: list[tuple[str, Any, Any, str, int]] = []
         if body is not None:
@@ -416,7 +424,7 @@ def _child_starts(node: Any) -> list[int]:
         for c in n.named_children:
             starts.append(c.start_point[0] + 1)
             if c.type in ("block", "statement_block", "compound_statement", "class_body",
-                          "declaration_list", "field_declaration_list"):
+                          "declaration_list", "field_declaration_list", "classBody"):
                 stack.append(c)
     return sorted(set(starts))
 
@@ -503,8 +511,10 @@ def _chunk_text(filepath: str, lines: list[str]) -> list[dict[str, Any]]:
     return builder.chunks
 
 
-def chunk_file(filepath: str, content: str) -> list[dict[str, Any]]:
-    """Split one file into retrieval chunks (see module docstring)."""
+def chunk_file(filepath: str, content: str,
+               languages: Collection[str] = SUPPORTED_LANGUAGES) -> list[dict[str, Any]]:
+    """Split one file into retrieval chunks (see module docstring). Files whose language
+    is not in ``languages`` are chunked as plain text."""
     lines = content.splitlines()
     if not lines:
         return []
@@ -530,7 +540,7 @@ def chunk_file(filepath: str, content: str) -> list[dict[str, Any]]:
     ext = os.path.splitext(filepath)[1].lower()
     if ext == ".md":
         return _chunk_markdown(filepath, content, lines)
-    lang = language_for(filepath)
+    lang = enabled_language_for(filepath, languages)
     if lang is not None:
         return _chunk_code(filepath, content, lines, lang)
     return _chunk_text(filepath, lines)

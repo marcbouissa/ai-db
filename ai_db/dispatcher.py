@@ -9,7 +9,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ai_db.errors import AiDbConfigError, UnknownToolError
+from ai_db.plugins import register_tool_plugins
 from ai_db.search import freshness
+from ai_db.utils import _CLIENT_CWD, client_cwd, resolve_client_path
 
 
 @dataclass
@@ -52,7 +55,9 @@ class ServiceDispatcher:
         self._tools: dict[str, ToolDefinition] = {}
         # Set for the duration of a tools/call that carries a progressToken.
         self._progress: Any = None
+        self._filter_scorer: Any = None  # semantic scorer for filter_output, built on first use
         self._register_default_tools()
+        register_tool_plugins(self)
 
     def register_tool(
         self,
@@ -97,7 +102,7 @@ class ServiceDispatcher:
                 progress: Any = None) -> Any:
         """
         Validates arguments against schema and executes the tool handler.
-        Raises KeyError if tool is unregistered.
+        Raises UnknownToolError if tool is unregistered.
         Raises ValueError if required arguments are missing.
 
         ``progress`` is an optional ``progress(done, total, message)`` callback.
@@ -112,13 +117,20 @@ class ServiceDispatcher:
 
         tool = self._tools.get(tool_name)
         if not tool:
-            raise KeyError(f"Unknown tool: '{tool_name}'. Available: {list(self._tools.keys())}")
+            raise UnknownToolError(f"Unknown tool: '{tool_name}'. Available: {list(self._tools.keys())}")
 
+        # "cwd" is transport metadata, not a tool argument: the daemon client sends the
+        # caller's directory so relative paths resolve where the user ran the command.
+        arguments = dict(arguments)
+        cwd = arguments.pop("cwd", None)
+        cwd_token = _CLIENT_CWD.set(cwd) if cwd else None
         previous = self._progress
         self._progress = progress
         try:
             return self._execute_validated(tool_name, tool, arguments)
         finally:
+            if cwd_token is not None:
+                _CLIENT_CWD.reset(cwd_token)
             self._progress = previous
             # Detach the sink so a later direct call (CLI, tests) cannot report.
             for candidate in (self.db, self._lazy_db):
@@ -173,18 +185,57 @@ class ServiceDispatcher:
         return db
 
     def _resolve_db(self, args: dict[str, Any] | None = None) -> Any:
+        # The database is fixed when the dispatcher is built (CLI --db, MCP --db, daemon
+        # project). Tool arguments never choose it: an MCP caller could otherwise open
+        # (and create) any SQLite file on disk by passing "db".
         if self.db is not None:
             return self.db
-        target_path = (args.get("db") if args else None) or self.db_path
-        if target_path and self._lazy_db is not None and getattr(self._lazy_db, "db_path", None) != target_path:
-            self._lazy_db.close()
-            from ai_db import VectorDB
-            self._lazy_db = VectorDB(target_path, config=self.config)
-            return self._lazy_db
         if self._lazy_db is None:
             from ai_db import VectorDB
-            self._lazy_db = VectorDB(target_path, config=self.config)
+            self._lazy_db = VectorDB(self.db_path, config=self.config)
         return self._lazy_db
+
+    def _semantic_scorer(self) -> Any:
+        """(need, texts) -> scores for ``filter_output(rerank=True)``.
+
+        The configured cross-encoder reranker when there is one, else cosine similarity
+        with the embedding model. Reuses the VectorDB's loaded models when the dispatcher
+        has one (daemon), and keeps its own otherwise, so a session loads a model once.
+        """
+        if self._filter_scorer is not None:
+            return self._filter_scorer
+        cfg = self.config
+        if cfg is None:
+            from ai_db.config import load_config
+            cfg = self.config = load_config()
+        from ai_db.lazy import LazyEmbedder, LazyReranker
+
+        if cfg.rerank.provider != "none":
+            reranker = getattr(self.db, "reranker", None) or LazyReranker(cfg.rerank)
+            self._filter_scorer = reranker.score
+        elif cfg.embedding.provider != "none":
+            embedder = getattr(self.db, "embedder", None) or LazyEmbedder(cfg.embedding)
+
+            def cosine(need: str, texts: list[str]) -> list[float]:
+                query = embedder.embed_query(need)  # providers return L2-normalised vectors
+                return [sum(q * d for q, d in zip(query, doc))
+                        for doc in embedder.embed_documents(texts)]
+
+            self._filter_scorer = cosine
+        else:
+            raise AiDbConfigError(
+                "filter rerank needs a model: set rerank.provider (a cross-encoder) or "
+                "embedding.provider in the config")
+        return self._filter_scorer
+
+    def _languages(self) -> frozenset[str]:
+        """``index.languages``, for the parse-only tools (outline, check <path>) that do
+        not open the database."""
+        if self.config is None:
+            from ai_db.config import load_config
+            self.config = load_config()
+        languages: frozenset[str] = self.config.index.languages
+        return languages
 
     def close(self) -> None:
         """Closes lazily initialized database connection if open."""
@@ -208,11 +259,41 @@ class ServiceDispatcher:
                     "scope": {"type": "string", "default": ".", "description": "Directory or repository path scope"},
                     "k": {"type": "integer", "default": 5, "description": "Maximum number of results to return"},
                     "format": {"type": "string", "enum": ["stub", "sexp", "json"], "default": "json", "description": "Output serialization format"},
+                    "project": {"type": "string", "description": "Project scope (default: the project owning 'scope')"},
+                    "allow_project": {"type": "array", "items": {"type": "string"}, "description": "Extra readable projects"},
                 },
                 "required": ["query"],
             },
             handler=self._handle_locate,
             category="search",
+        )
+
+        # 1b. filter_output
+        self.register_tool(
+            name="filter_output",
+            description=(
+                "Cut long command output (test runs, builds, logs) down to what you need, "
+                "instead of reading all of it. Pass the raw output as `text` and say what you "
+                "are looking for in `need` (e.g. 'why did test_login fail'). Errors, tracebacks "
+                "and summary lines are always kept. The full output is stored: re-filter it "
+                "with `output_id` + another `need`, or read exact lines with `lines`."),
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Raw command output"},
+                    "output_id": {"type": "string", "description": "Id of a previously stored output"},
+                    "need": {"type": "string", "description": "What you need from the output"},
+                    "budget": {"type": "integer", "description": "Token budget of the result (default OUTPUT_BUDGET_TOKENS)"},
+                    "lines": {"type": "string", "description": "Exact line range of the stored output, e.g. '120-160'"},
+                    "command": {"type": "string", "description": "The command that produced `text` (shown in the header)"},
+                    "exit_code": {"type": "integer", "description": "Its exit code (shown in the header)"},
+                    "rerank": {"type": "boolean", "description": (
+                        "Also rank by meaning with the configured reranker (or embedding) model, "
+                        "for needs worded differently from the output. Slower on first use.")},
+                },
+            },
+            handler=self._handle_filter_output,
+            category="analysis",
         )
 
         # 2. outline
@@ -601,7 +682,7 @@ class ServiceDispatcher:
                 "properties": {
                     "prompt": {"type": "string", "description": "User prompt to route"},
                     "top": {"type": "integer", "default": 3, "description": "Max skills to return"},
-                    "min_confidence": {"type": "number", "default": 0.0, "description": "Confidence threshold"},
+                    "min_confidence": {"type": "number", "description": "Confidence threshold (default SKILL_MIN_CONFIDENCE)"},
                     "project": {"type": "string", "description": "Project scope"},
                 },
                 "required": ["prompt"],
@@ -637,7 +718,9 @@ class ServiceDispatcher:
         k = int(args.get("k", 5))
         fmt = args.get("format")
         hits, stale = freshness.resolve(
-            db, lambda: db.locate_targets(q=query, scope=scope, k=k, path_prefix=path_prefix))
+            db, lambda: db.locate_targets(q=query, scope=scope, k=k, path_prefix=path_prefix,
+                                          project=args.get("project"),
+                                          allowed_projects=args.get("allow_project")))
         if fmt in ("stub", "sexp"):
             return freshness.annotate(self._format_locate(hits, query, fmt), stale)
         return freshness.annotate(hits, stale)
@@ -665,15 +748,58 @@ class ServiceDispatcher:
             return f"(:locate :query {sexp_esc(query)} :hits ({' '.join(hit_sexps)}))"
         raise ValueError(f"unsupported locate format {fmt!r}")
 
+    def _handle_filter_output(self, args: dict[str, Any]) -> str:
+        from ai_db import output_store
+        from ai_db.constants import OUTPUT_BUDGET_TOKENS
+        from ai_db.output_filter import filter_output, line_range
+
+        if args.get("output_id"):
+            output_id = str(args["output_id"])
+            text, meta = output_store.load(output_id)
+        elif args.get("text") is not None:
+            text = str(args["text"])
+            meta = {"command": args.get("command"), "exit_code": args.get("exit_code")}
+            output_id = output_store.save(text, meta)
+        else:
+            raise ValueError("filter_output needs 'text' or 'output_id'")
+
+        origin = []
+        if meta.get("command"):
+            origin.append(f"`{meta['command']}`")
+        if meta.get("exit_code") is not None:
+            origin.append(f"exit {meta['exit_code']}")
+        origin_s = (" · " + ", ".join(origin)) if origin else ""
+
+        if args.get("lines"):
+            first, _, last = str(args["lines"]).partition("-")
+            body = line_range(text, int(first), int(last or first))
+            return f"# output {output_id}{origin_s}, lines {args['lines']}\n{body}"
+
+        budget = int(args["budget"]) if args.get("budget") else OUTPUT_BUDGET_TOKENS
+        semantic = self._semantic_scorer() if args.get("rerank") else None
+        res = filter_output(text, need=args.get("need"), budget_tokens=budget, semantic=semantic)
+        if res.kept_lines == res.total_lines:
+            header = f"# output {output_id}{origin_s}: {res.total_lines} lines, shown in full"
+        else:
+            header = (f"# output {output_id}{origin_s}: kept {res.kept_lines}/{res.total_lines} "
+                      f"lines, ~{res.tokens_out}/{res.tokens_in} tokens"
+                      + (" (semantic rerank)" if res.semantic else ""))
+            if res.dropped_signal_blocks:
+                header += (f"; {res.dropped_signal_blocks} more error block(s) did not fit "
+                           f"(raise budget)")
+            header += (f"\n# more: ai-db filter --id {output_id} \"<other need>\""
+                       f"  |  ai-db filter --id {output_id} --lines A-B")
+        return f"{header}\n{res.text}"
+
     def _handle_outline(self, args: dict[str, Any]) -> Any:
         raw_path = args.get("path", "")
-        target_path = os.path.abspath(os.path.expanduser(raw_path))
+        target_path = resolve_client_path(raw_path)
         if not os.path.exists(target_path):
             raise FileNotFoundError(f"File not found: {raw_path}")
         with open(target_path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
         from ai_db.parser.ast_visitor import extract_file_outline
-        outline = extract_file_outline(target_path, content)
+        outline = extract_file_outline(target_path, content, self._languages())
         total_lines = len(content.splitlines())
         return {
             "file": target_path,
@@ -687,7 +813,7 @@ class ServiceDispatcher:
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
         result, stale = freshness.resolve(db, lambda: db.query_symbol(
-            name, relative_to=os.getcwd(), project=project,
+            name, relative_to=client_cwd(), project=project,
             allowed_projects=allow_projects, prefix=bool(args.get("prefix"))))
         return freshness.annotate(result, stale)
 
@@ -722,7 +848,7 @@ class ServiceDispatcher:
         no_cache = bool(args.get("no_cache", False))
         fmt = args.get("format")
 
-        if len(raw_targets) == 1 and not any(c in raw_targets[0] for c in ["*", "?", "["]) and os.path.isfile(os.path.expanduser(raw_targets[0])):
+        if len(raw_targets) == 1 and not any(c in raw_targets[0] for c in ["*", "?", "["]) and os.path.isfile(resolve_client_path(raw_targets[0])):
             res = db.analyze_file(
                 raw_targets[0],
                 depth=depth,
@@ -778,7 +904,7 @@ class ServiceDispatcher:
 
     def _handle_sync(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
-        target_path = os.path.abspath(os.path.expanduser(args.get("path", ".")))
+        target_path = resolve_client_path(args.get("path", "."))
         from ai_db.utils import detect_project_name
         proj_name = args.get("project") or detect_project_name(target_path)
         verbose = bool(args.get("verbose", False))
@@ -786,13 +912,10 @@ class ServiceDispatcher:
         if os.path.isdir(target_path):
             return db.sync(target_path, project=proj_name, verbose=verbose)
         elif os.path.isfile(target_path):
-            from ai_db.utils import compute_sha256
-            current_sha = compute_sha256(target_path)
-            db.prune_file(target_path)
-            db._index_file(target_path, current_sha, project=proj_name or "global")
-            if hasattr(db, "conn") and db.conn:
-                db.conn.commit()
-            return {"added": 1, "updated": 0, "pruned": 0, "skipped": 0}
+            # The same path the watcher uses, rooted at the file's project so
+            # .aidbignore and the extension filters apply to a single file too.
+            from ai_db.utils import detect_project_root
+            return db.sync_paths(detect_project_root(target_path), [target_path], project=proj_name)
         else:
             return db.sync(target_path, project=proj_name, verbose=verbose)
 
@@ -829,14 +952,14 @@ class ServiceDispatcher:
                     "combined with a path. Use `check <path>` to validate files "
                     "on disk, or `check --index` to validate the index."
                 )
-            return db.check_syntax(relative_to=os.getcwd(), project=project,
+            return db.check_syntax(relative_to=client_cwd(), project=project,
                                    allowed_projects=allow_projects)
 
         if not path:
             # No path and no --index: the whole index is the only thing left to
             # report on, so treat it as index mode rather than silently
             # validating nothing.
-            return db.check_syntax(relative_to=os.getcwd(), project=project,
+            return db.check_syntax(relative_to=client_cwd(), project=project,
                                    allowed_projects=allow_projects)
 
         return self._check_files_on_disk(db, path, project or "global")
@@ -853,7 +976,7 @@ class ServiceDispatcher:
         if os.path.isdir(path):
             targets = db.scan_directory(path)
         else:
-            target = os.path.abspath(os.path.expanduser(path))
+            target = resolve_client_path(path)
             if not os.path.isfile(target):
                 raise AiDbConfigError(f"check: not a file or directory: {path}")
             targets = [target]
@@ -865,12 +988,12 @@ class ServiceDispatcher:
                     content = fh.read()
             except OSError as exc:
                 raise AiDbConfigError(f"check: cannot read {target}: {exc}") from exc
-            _, _, error = parse_source(target, content)
+            _, _, error = parse_source(target, content, self._languages())
             if error is None:
                 continue
             line, col, message = error
             results.append({
-                "file": os.path.relpath(target, os.getcwd()),
+                "file": os.path.relpath(target, client_cwd()),
                 "abs_path": target,
                 "line": line,
                 "col": col,
@@ -882,8 +1005,7 @@ class ServiceDispatcher:
 
     def _handle_session_state(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
-        getter = getattr(db, "get_session_state", None)
-        return {"key": args["key"], "value": getter(args["key"]) if getter else None}
+        return {"key": args["key"], "value": db.get_session_state(args["key"])}
 
     def _handle_query_log(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
@@ -909,7 +1031,7 @@ class ServiceDispatcher:
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
         limit = int(args.get("limit") or 100)
         result, stale = freshness.resolve(db, lambda: db.query_callers(
-            name, relative_to=os.getcwd(), project=project,
+            name, relative_to=client_cwd(), project=project,
             allowed_projects=allow_projects, top_k=limit))
         return freshness.annotate(result, stale)
 
@@ -928,7 +1050,10 @@ class ServiceDispatcher:
 
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
-        allowed_projects = [project] + allow_projects if project and allow_projects else ([project] if project else allow_projects)
+        if not project:  # like every other read tool: the project of the caller's directory
+            from ai_db.utils import detect_project_name
+            project = detect_project_name(client_cwd())
+        allowed_projects = [project] + list(allow_projects or [])
 
         trace_engine = TraceEngine(
             db.backend,
@@ -956,10 +1081,16 @@ class ServiceDispatcher:
         kind = args.get("kind")
         filepath = args.get("filepath") or args.get("file")
         if filepath:
-            filepath = os.path.abspath(os.path.expanduser(filepath))
+            filepath = resolve_client_path(filepath)
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
-        return db.query_annotations(kind=kind, filepath=filepath, project=project, allowed_projects=allow_projects)
+        hits = db.query_annotations(kind=kind, filepath=filepath, project=project,
+                                    allowed_projects=allow_projects)
+        if kind is None:
+            # Docstrings are indexed as annotations too (for analysis); a todo list of
+            # every docstring buried the handful of real TODOs (196 vs 3 on this repo).
+            hits = [h for h in hits if h["kind"] != "docstring"]
+        return hits
 
     def _handle_context_save(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
@@ -1019,10 +1150,6 @@ class ServiceDispatcher:
         db = self._get_db(args)
         reset = bool(args.get("reset", False))
         tracker = getattr(db, "telemetry_tracker", None)
-        if tracker is None and hasattr(db, "conn") and db.conn:
-            from ai_db.telemetry.tracker import TelemetryTracker
-            tracker = TelemetryTracker(db.conn, db_path=getattr(db, "db_path", None))
-            db.telemetry_tracker = tracker
 
         if tracker is not None:
             if reset:
@@ -1085,7 +1212,7 @@ class ServiceDispatcher:
             allowed_projects=args.get("allow_project") or args.get("allowed_projects"),
             languages=args.get("languages"), chunk_types=args.get("chunk_types"),
             modified_since=args.get("modified_since"),
-            since=args.get("since"), root=args.get("root"),
+            since=args.get("since"), root=resolve_client_path(args.get("root") or "."),
         ))
         pack = freshness.annotate(pack, stale)
         # Default stays a dict so every existing caller keeps parsing JSON.
@@ -1094,7 +1221,7 @@ class ServiceDispatcher:
         # three instead of being reimplemented per transport.
         # Check session default if no format given. Default to "json" for backward compat
         # with direct dispatcher calls; CLI layer ensures effective_fmt is always passed.
-        default_fmt = db.get_session_state("default_format") if hasattr(db, "get_session_state") else None
+        default_fmt = db.get_session_state("default_format")
         style = args.get("format") or default_fmt or "stub"
         if style == "json":
             return pack
@@ -1106,30 +1233,16 @@ class ServiceDispatcher:
 
     def _handle_prune(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
-        backend = getattr(db, "backend", getattr(db, "db", db))
-        if hasattr(backend, "get_all_filepaths"):
-            all_paths = backend.get_all_filepaths()
-        elif hasattr(db, "get_all_filepaths"):
-            all_paths = db.get_all_filepaths()
-        else:
-            all_paths = []
-        pruned_count = 0
-        for p in all_paths:
-            if not os.path.exists(p):
-                if hasattr(backend, "delete_file"):
-                    backend.delete_file(p)
-                elif hasattr(db, "delete_file"):
-                    db.delete_file(p)
-                elif hasattr(db, "prune_file"):
-                    db.prune_file(p)
-                pruned_count += 1
-        return {"pruned": pruned_count}
+        missing = [p for p in db.backend.get_all_filepaths() if not os.path.exists(p)]
+        for p in missing:
+            db.prune_file(p)  # also invalidates the query cache, unlike backend.delete_file
+        return {"pruned": len(missing)}
 
     def _handle_route_skill(self, args: dict[str, Any]) -> Any:
         db = self._get_db(args)
         prompt = args.get("prompt", "")
         top_k = int(args.get("top", 3))
-        min_conf = float(args.get("min_confidence", 0.0))
+        min_conf = float(args["min_confidence"]) if args.get("min_confidence") is not None else None
         project = args.get("project")
         allow_projects = args.get("allow_project") or args.get("allowed_projects")
         return db.route_skills(prompt, top_k=top_k, min_confidence=min_conf, project=project, allowed_projects=allow_projects)

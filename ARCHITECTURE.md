@@ -70,7 +70,7 @@ Core tenets of the architecture:
 
 | Principle | Architectural Implementation in `ai-db` | Primary File Locations |
 |-----------|------------------------------------------|------------------------|
-| **Single Responsibility Principle (SRP)** | Every module has one, and only one, reason to change. Parsing ASTs does not query databases; storage backends do not format CLI output; transports do not parse ASTs. | `ai_db/parser/` (AST parsing only)<br>`ai_db/storage/` (persistence only)<br>`ai_db/search/` (indexing/ranking only)<br>`ai_db/transports/` (protocol handling only) |
+| **Single Responsibility Principle (SRP)** | Every module has one, and only one, reason to change. Parsing ASTs does not query databases; storage backends do not format CLI output; transports do not parse ASTs. | `ai_db/parser/` (AST parsing only)<br>`ai_db/storage/` (persistence only)<br>`ai_db/search/` (indexing/ranking only)<br>`mcp_server.py`, `ai_db/daemon/` (protocol handling only) |
 | **Open/Closed Principle (OCP)** | Core indexing, querying, and analysis services are closed for modification but open for extension. New storage engines (e.g. DuckDB, PostgreSQL) and new transport adapters (e.g. WebSocket, gRPC) can be plugged in without modifying existing domain code. | `ai_db/storage/backend.py`<br>`ai_db/storage/factory.py`<br>`ai_db/dispatcher.py` |
 | **Liskov Substitution Principle (LSP)** | Any storage backend implementing `StorageBackend` can be substituted into `VectorDB` or `Indexer` without altering the correctness of the system. Implementations communicate strictly through typed `slots=True` domain DTOs. | `ai_db/storage/models.py`<br>`ai_db/storage/sqlite_backend.py`<br>`ai_db/storage/conformance.py` |
 | **Interface Segregation Principle (ISP)** | The storage contract is cleanly segregated into focused functional areas (Files, Chunks, Symbols, Cross-Refs, Diagnostics, Skills, Context Memory, Analysis Refs, State/Cache). Domain services invoke only the interface subsets they need. | `ai_db/storage/backend.py` |
@@ -165,6 +165,28 @@ The default engine (`ai_db/storage/sqlite_backend.py`) provides embedded persist
 - **zlib Level 9 Compression**: Code chunks are compressed into binary blobs (`zcontent`) upon insertion and decompressed transparently on retrieval, saving 60–80% disk space.
 - **Cascading Deletions**: Deleting a file cascades to associated chunks, symbols, and cross-references.
 
+### 3.5 Recall extensions (`ai_db/ext/recall.py`)
+Skill routing (`route_skills`) and context recall (`query_contexts`) always run keyword
+search (BM25, trigger phrases); recall providers add a second signal. A provider is a
+`RecallProvider` (`index_skill`, `index_context`, `sync`, `rank_skills`, `rank_contexts`)
+built by a factory `(backend, embedder, options)` registered in the `ai_db.recall`
+entry-point group; `recall.providers` in the config selects which run. Skill scores add
+`SKILL_W_RECALL x` rescaled similarity; context lists are fused with RRF.
+
+The built-in `vectors` provider (`ai_db/ext/vector_recall.py`) is registered the same way,
+in ai-db's own pyproject.toml. It embeds skills (`description + triggers`) and contexts
+(`title + summary`), records the model id in `session_state`, drops and re-embeds
+everything when the model changes, and backfills items it has not seen. Embedding errors
+propagate.
+
+### 3.6 Tree-sitter grammars per language (`ai_db/parser/languages.py`)
+`EXT_TO_LANG` is the one extension -> grammar map. `index.languages` selects grammars;
+the selection is passed explicitly (indexer jobs, `chunk_file`, `parse_source`,
+`extract_file_outline`, `AnalyzerEngine`) rather than held globally, because one daemon
+process serves projects with different configs. A de-selected language is chunked as text
+and never parsed or linted. `VectorDB` stores the selection it indexed with and resets the
+hashes of files whose grammar was toggled, so the next sync re-parses exactly those.
+
 ### 3.4 Writing a storage connector
 
 ai-db ships only the SQLite backend. Other databases are separate pip packages that
@@ -243,14 +265,11 @@ If the provider name is not installed, ai-db stops with the list of installed pr
 
 `ai-db` decouples communication interfaces (CLI, MCP) from business logic through a centralized `ServiceDispatcher`.
 
-> **Removed: the HTTP REST transport.** `ai-db serve` and `ai_db/server/http_server.py` were
-> deleted. The server could only ever analyse code on its own filesystem, in its own
-> SQLite file, yet it exposed a network API with wildcard CORS, a tool-discovery endpoint,
-> and no authentication -- and `POST /tools/sync` let any unauthenticated caller index an
-> arbitrary path on the host. The one genuine capability it had over stdio MCP (N concurrent
-> clients on one shared index) was never used and would have needed auth, a read-only mode
-> and tenant isolation before it was safe. MCP over SSH covers the single-client case
-> without a listening port.
+> **History: the old HTTP REST transport (`ai-db serve`) was removed** because it had no
+> authentication and let any caller index an arbitrary host path. The daemon
+> (`ai_db/daemon/`, §4.2) is the HTTP transport that replaced it: it is opt-in, binds to
+> localhost by default, fails closed once API keys are configured, and gates project
+> registration (which takes a DB path) behind the admin key.
 
 ### 4.1 Unified ServiceDispatcher (`ai_db/dispatcher.py`)
 
@@ -278,7 +297,19 @@ class ServiceDispatcher:
 ### 4.2 Transport Adapters
 - **CLI (`ai_db/cli.py`)**: Translates argparse commands to dispatcher tool calls. Formats output for terminal consumption (colored tables, text outlines) or JSON (`--format json`).
 - **MCP Server (`mcp_server.py`)**: Exposes registered tools over stdio JSON-RPC 2.0. Dynamically exports all tools in `tools/list` and executes calls via `dispatcher.execute()`. A `tools/call` carrying `params._meta.progressToken` streams `notifications/progress` frames while a long `sync` runs.
-- **HTTP REST: removed.** See the note at the top of §4. No HTTP transport ships.
+- **Daemon (`ai_db/daemon/`)**: a FastAPI server holding one warm `VectorDB` +
+  `ServiceDispatcher` per project. Tool calls run in worker threads under a per-project
+  lock; the client's cwd travels with each call (`ai_db.utils.client_cwd`) so relative
+  paths resolve as they would in the CLI. Auth, rate limiting and the request log are one
+  middleware (`guard`). See README "Daemon Mode".
+
+### 4.2a Tool plugins (`ai_db/plugins.py`)
+A package adds tools by declaring an entry point in the `ai_db.tools` group whose value is
+`register(dispatcher)`. `ServiceDispatcher.__init__` calls every installed plugin, so all
+transports expose the same tool set. `register` must be cheap (import heavy dependencies
+inside handlers); a plugin that fails to import raises `AiDbConfigError`. Plugin settings
+live in the config's `plugins.<name>` section, which core does not interpret. The 3D scene
+and video tools are such a plugin: `packages/ai-db-scene`.
 
 ### 4.3 Step-by-Step Guide: Creating a New Transport Adapter
 
@@ -476,8 +507,7 @@ ai-db/
 │   │   ├── factory.py          # StorageBackendFactory (URI & connection resolution)
 │   │   ├── sqlite_backend.py   # SQLite backend (WAL, FTS5, BM25, zlib, vec0)
 │   │   ├── conformance.py      # Backend-agnostic contract suite
-│   │   ├── database.py         # Backward-compatible Database wrapper
-│   │   └── state.py            # Session state persistence helpers
+│   │   └── database.py         # Backward-compatible Database wrapper
 │   │
 │   ├── parser/                 # Tree-sitter parsing, symbols and chunking
 │   │   ├── __init__.py         # Parser exports

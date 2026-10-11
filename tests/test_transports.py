@@ -234,12 +234,14 @@ class TestTransportsTier1FeatureCoverage:
         assert "OrderService" in content[0]["text"]
 
     def test_service_dispatcher_unknown_tool(self):
-        """Calling an unregistered tool in ServiceDispatcher raises KeyError."""
+        """Calling an unregistered tool in ServiceDispatcher raises UnknownToolError."""
         if ServiceDispatcher is None:
             pytest.skip("ServiceDispatcher not yet implemented (planned for Milestone 3)")
 
+        from ai_db.errors import UnknownToolError
+
         dispatcher = ServiceDispatcher()
-        with pytest.raises(KeyError):
+        with pytest.raises(UnknownToolError):
             dispatcher.execute("non_existent_tool", {})
 
     def test_service_dispatcher_missing_args(self):
@@ -444,8 +446,8 @@ class TestTransportsDaemonBackedMCP:
     """
 
     def test_run_stdio_does_not_register_local_tools_on_daemon_client(self, monkeypatch):
-        from ai_db.daemon.client import DaemonClient
         import mcp_server
+        from ai_db.daemon.client import DaemonClient
 
         dispatcher = DaemonClient("http://127.0.0.1:59999", default_project="test")
         monkeypatch.setattr(mcp_server.sys, "stdin", io.StringIO(""))
@@ -462,6 +464,7 @@ class TestTransportsDaemonBackedMCP:
         drop the connection, even though the server itself is fine.
         """
         import json
+
         import mcp_server
 
         dispatcher = ServiceDispatcher(db_path=str(tmp_path / "json.db"))
@@ -561,17 +564,37 @@ class TestTransportsDaemonBackedMCP:
         assert [p["id"] for p in parsed] == [1, 2, 3]
         assert parsed[2]["result"] == {}
 
-    def test_run_stdio_still_registers_local_tools_for_service_dispatcher(self, monkeypatch, tmp_path):
-        import mcp_server
+    def test_tool_plugins_register_on_every_service_dispatcher(self, monkeypatch, tmp_path):
+        """Plugins come in through ServiceDispatcher itself, so MCP, CLI and the daemon
+        (each builds its own dispatcher) always expose the same tool set."""
+        from ai_db import plugins
 
+        def register(dispatcher):
+            dispatcher.register_tool("plugin_echo", "echo", {"type": "object"}, lambda a: a)
+
+        class FakeEntryPoint:
+            name, value = "fake", "fake_plugin:register"
+
+            def load(self):
+                return register
+
+        monkeypatch.setattr(plugins, "entry_points", lambda group: [FakeEntryPoint()])
         dispatcher = ServiceDispatcher(db_path=str(tmp_path / "local.db"))
-        registered_before = set(dispatcher._tools)
-        monkeypatch.setattr(mcp_server.sys, "stdin", io.StringIO(""))
+        assert dispatcher.execute("plugin_echo", {"x": 1}) == {"x": 1}
 
-        mcp_server.run_stdio(dispatcher=dispatcher)
+    def test_broken_tool_plugin_fails_loudly(self, monkeypatch, tmp_path):
+        from ai_db import plugins
+        from ai_db.errors import AiDbConfigError
 
-        assert {"snapshot_scene", "video_to_scene"} <= set(dispatcher._tools)
-        assert registered_before <= set(dispatcher._tools)
+        class BrokenEntryPoint:
+            name, value = "broken", "missing_module:register"
+
+            def load(self):
+                raise ImportError("No module named 'missing_module'")
+
+        monkeypatch.setattr(plugins, "entry_points", lambda group: [BrokenEntryPoint()])
+        with pytest.raises(AiDbConfigError, match="broken"):
+            ServiceDispatcher(db_path=str(tmp_path / "local.db"))
 
     def test_run_stdio_daemon_url_fails_fast_on_unreachable_daemon(self, monkeypatch):
         import mcp_server
@@ -597,3 +620,16 @@ class TestTransportsDaemonBackedMCP:
         # Should not raise
         mcp_server.run_stdio(daemon_url="http://127.0.0.1:8080", project="test")
 
+
+
+def test_mcp_tool_allowlist(monkeypatch, tmp_path):
+    """AI_DB_MCP_TOOLS limits what an MCP client sees and may call."""
+    from mcp_server import StdioMCPServer
+
+    monkeypatch.setenv("AI_DB_MCP_TOOLS", "status,query")
+    server = StdioMCPServer(db_path=str(tmp_path / "a.db"))
+    listed = server.handle_request({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert {t["name"] for t in listed["result"]["tools"]} == {"status", "query"}
+    denied = server.handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                    "params": {"name": "symbol", "arguments": {"name": "x"}}})
+    assert "Unknown tool: symbol" in json.dumps(denied)

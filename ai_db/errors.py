@@ -24,3 +24,16 @@ class AiDbStorageError(AiDbError):
 
 class AiDbProtocolError(AiDbError):
     """A remote (daemon) response had an unexpected JSON shape."""
+
+
+class AiDbDaemonError(AiDbError):
+    """The daemon could not be reached, or rejected a management request."""
+
+
+class UnknownToolError(AiDbError, KeyError):
+    """No tool is registered under the requested name.
+
+    Transports catch this, not ``KeyError``: a ``KeyError`` raised *inside* a tool
+    handler is a bug and must surface as one, not be reported as "Unknown tool".
+    It still subclasses ``KeyError`` so existing ``except KeyError`` callers keep working.
+    """

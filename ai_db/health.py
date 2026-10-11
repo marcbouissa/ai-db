@@ -40,6 +40,8 @@ def check_config(cfg: AppConfig) -> HealthReport:
         from ai_db.embed.registry import build_embedder
 
         _report_device(report, "embedding", cfg.embedding.options.get("device"))
+        if cfg.embedding.options.get("bulk_device"):
+            _report_device(report, "embedding.bulk", cfg.embedding.options["bulk_device"])
         try:
             emb = build_embedder(cfg.embedding)
             assert emb is not None
@@ -48,7 +50,9 @@ def check_config(cfg: AppConfig) -> HealthReport:
                 report.failed(f"embedding returned dim {len(vec)}, expected {emb.dim}")
             else:
                 device = getattr(emb, "device", None) or cfg.embedding.options.get("device")
-                report.passed(f"embedding '{emb.model_id}' dim={emb.dim} device={device}")
+                bulk = getattr(emb, "bulk_device", None)
+                extra = f" bulk_device={bulk} (>= {emb.bulk_threshold} chunks)" if bulk else ""
+                report.passed(f"embedding '{emb.model_id}' dim={emb.dim} device={device}{extra}")
         except AiDbError as exc:
             report.failed(f"embedding '{cfg.embedding.provider}': {exc}")
 

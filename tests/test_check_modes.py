@@ -1,7 +1,7 @@
 """`check`/`lint` validate the file or the index -- two questions, not one.
 
 `check <path>` used to re-index the file it was checking: `_handle_check` called
-`prune_file` then `_index_file`, then read the syntax errors back out of the
+`sync_paths`, then read the syntax errors back out of the
 database it had just rewritten. Three consequences, all measured:
 
 - A read-only command mutated the index.
@@ -230,9 +230,7 @@ class TestCheckModes:
     def test_index_mode_reads_stored_errors(self, dispatcher, tmp_path):
         db = dispatcher._get_db({})
         path = _write(tmp_path, "broken.py", BROKEN)
-        with open(path, encoding="utf-8") as fh:
-            db._index_file(path, hashlib.sha256(fh.read().encode()).hexdigest(),
-                           project="global")
+        db.sync_paths(str(tmp_path), [path], project="global")
         errors = dispatcher.execute("check", {"index": True})
         assert len(errors) == 1
         assert errors[0]["line"] == 1
@@ -242,10 +240,7 @@ class TestCheckModes:
         good = _write(tmp_path, "good.py", CLEAN)
         bad = _write(tmp_path, "bad.py", BROKEN)
         db = dispatcher._get_db({})
-        for p in (good, bad):
-            with open(p, encoding="utf-8") as fh:
-                db._index_file(p, hashlib.sha256(fh.read().encode()).hexdigest(),
-                               project="global")
+        db.sync_paths(str(tmp_path), [good, bad], project="global")
         from_index = {e["abs_path"] for e in dispatcher.execute("check", {"index": True})}
         from_disk = {e["abs_path"] for e in
                      dispatcher.execute("check", {"path": str(tmp_path)})}

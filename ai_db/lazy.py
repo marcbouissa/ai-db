@@ -24,6 +24,36 @@ def configured_model_id(cfg: ProviderConfig | RerankConfig) -> str | None:
     return f"{cfg.provider}:{model}" if model else cfg.provider
 
 
+def release_models() -> int:
+    """Drop every cached embedding/rerank model and free its memory (GPU included).
+
+    The registries keep one instance per provider config for the whole process,
+    so every VectorDB (each daemon project) shares it. Call this only when none of
+    them is in use any more -- the daemon does, once no project is loaded. Returns
+    the number of models released.
+    """
+    from ai_db.embed.registry import _EMBEDDER_CACHE
+    from ai_db.rerank.registry import _RERANKER_CACHE
+
+    released = 0
+    for cache in (_EMBEDDER_CACHE, _RERANKER_CACHE):
+        models = list(cache.values())
+        cache.clear()
+        for inner in models:
+            _release(inner)
+            released += 1
+    return released
+
+
+def _release(inner: Any) -> None:
+    """Free a model's memory (GPU included)."""
+    if inner is not None and hasattr(inner, "model"):
+        import torch
+        inner.model.cpu()
+        del inner.model
+        torch.cuda.empty_cache()
+
+
 class LazyEmbedder(EmbeddingProvider):
     def __init__(self, cfg: ProviderConfig, on_load: Callable[[EmbeddingProvider], None] | None = None):
         self._cfg = cfg
@@ -37,7 +67,11 @@ class LazyEmbedder(EmbeddingProvider):
     def load(self) -> EmbeddingProvider:
         if self._inner is None:
             from ai_db.embed.registry import build_embedder
-            inner = build_embedder(self._cfg)
+            try:
+                inner = build_embedder(self._cfg)
+            except OSError as exc:  # missing weights, no network, unreadable cache
+                raise AiDbConfigError(
+                    f"cannot load embedding model {configured_model_id(self._cfg)}: {exc}") from exc
             if inner is None:
                 raise AiDbConfigError("embedding provider is 'none' but an embedding was requested")
             self._inner = inner
@@ -64,16 +98,20 @@ class LazyEmbedder(EmbeddingProvider):
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return self.load().embed_documents(texts)
 
+    @property
+    def bulk_threshold(self) -> int | None:  # type: ignore[override]
+        return self.load().bulk_threshold
+
+    def bulk(self, pending: int) -> Any:
+        return self.load().bulk(pending)
+
     def embed_query(self, text: str) -> list[float]:
         return self.load().embed_query(text)
 
     def unload(self) -> None:
-        inner, self._inner = self._inner, None
-        if inner is not None and hasattr(inner, "model"):
-            import torch
-            inner.model.cpu()
-            del inner.model
-            torch.cuda.empty_cache()
+        # Only this proxy's reference: the registry shares the instance with every
+        # other VectorDB, so freeing it here would break them. release_models() frees.
+        self._inner = None
 
 
 class LazyReranker(RerankProvider):
@@ -88,7 +126,11 @@ class LazyReranker(RerankProvider):
     def load(self) -> RerankProvider:
         if self._inner is None:
             from ai_db.rerank.registry import build_reranker
-            inner = build_reranker(self._cfg)
+            try:
+                inner = build_reranker(self._cfg)
+            except OSError as exc:  # missing weights, no network, unreadable cache
+                raise AiDbConfigError(
+                    f"cannot load rerank model {configured_model_id(self._cfg)}: {exc}") from exc
             if inner is None:
                 raise AiDbConfigError("rerank provider is 'none' but a rerank was requested")
             self._inner = inner
@@ -102,9 +144,6 @@ class LazyReranker(RerankProvider):
         return self.load().score(query, texts)
 
     def unload(self) -> None:
-        inner, self._inner = self._inner, None
-        if inner is not None and hasattr(inner, "model"):
-            import torch
-            inner.model.cpu()
-            del inner.model
-            torch.cuda.empty_cache()
+        # Only this proxy's reference: the registry shares the instance with every
+        # other VectorDB, so freeing it here would break them. release_models() frees.
+        self._inner = None

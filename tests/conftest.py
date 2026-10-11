@@ -15,6 +15,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Session-level protection: Guarantee host database is never accessed during test imports
 _SESSION_GUARD_DIR = tempfile.mkdtemp(prefix="ai_db_pytest_guard_")
 _SESSION_GUARD_DB = os.path.join(_SESSION_GUARD_DIR, "session_guard.db")
+# A shell set up for daily use points the CLI at a live daemon (AI_DB_DAEMON_URL), which
+# serves the user's real index: CLI subprocesses in tests would sync into it. Drop the
+# daemon settings for the whole session, before any test (or subprocess) can see them.
+for _var in ("AI_DB_DAEMON_URL", "AI_DB_API_KEY", "AI_DB_ADMIN_KEY", "AI_DB_API_KEYS",
+             "AI_DB_SCENE_MEMORY", "AI_DB_DEVICE", "AI_DB_CPU_THREADS"):
+    os.environ.pop(_var, None)
 os.environ.setdefault("AI_DB_PATH", _SESSION_GUARD_DB)
 os.environ.setdefault("AI_DB_CONFIG", os.path.join(_SESSION_GUARD_DIR, "config.json"))
 os.environ.setdefault("AI_DB_SKILL_DIRS", os.path.join(_SESSION_GUARD_DIR, "skills"))
@@ -67,9 +73,13 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("AI_DB_SKILL_DIRS", str(skills_dir))
     monkeypatch.setenv("XDG_DATA_HOME", str(data_dir))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_dir))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))  # ai-db run/filter store
+    import ai_db.output_store as _store
+    monkeypatch.setattr(_store.save, "__defaults__", (str(tmp_path / "cache" / "outputs"),))
+    monkeypatch.setattr(_store.load, "__defaults__", (str(tmp_path / "cache" / "outputs"),))
 
     # Patch already loaded modules
-    for mod_name in ("ai_db", "ai_db.cli", "ai_db.constants"):
+    for mod_name in ("ai_db", "ai_db.facade", "ai_db.cli", "ai_db.constants"):
         if mod_name in sys.modules:
             mod = sys.modules[mod_name]
             if hasattr(mod, "DEFAULT_DB_FILE"):

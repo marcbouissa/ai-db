@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 
 def l2_normalize(vec: list[float]) -> list[float]:
@@ -28,6 +30,18 @@ class EmbeddingProvider(ABC):
 
     @abstractmethod
     def embed_query(self, text: str) -> list[float]: ...
+
+    #: Pending documents at or above which ``bulk`` switches device; None = never.
+    bulk_threshold: int | None = None
+
+    @contextmanager
+    def bulk(self, pending: int) -> Iterator[None]:
+        """Scope a large embedding run (``pending`` documents to go).
+
+        Providers with a separate bulk device (a GPU for the first index, a CPU
+        for day-to-day) switch inside this block; the default does nothing.
+        """
+        yield
 
 
 def document_text(language: str, qualified_name: str, content: str) -> str:

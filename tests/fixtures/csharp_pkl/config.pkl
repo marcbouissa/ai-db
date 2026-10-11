@@ -1,0 +1,29 @@
+/// Application configuration
+module acme.AppConfig
+
+extends "base.pkl"
+import "pkl:math"
+import "lib/Server.pkl" as srv
+
+typealias Port = Int(isBetween(1, 65535))
+
+/// A database connection
+class Database {
+  host: String
+  port: Port = 5432
+  function url(): String = "postgres://\(host):\(port)"
+  function describe(): String = "db at " + url()
+}
+
+open class Service extends Base {
+  name: String
+  replicas: Int = math.max(1, 2)
+}
+
+abstract class Base {}
+
+local function double(x: Int): Int = x * 2
+
+db: Database = new Database { host = "localhost" }
+servers: Listing<srv.Server> = new { new srv.Server { port = double(4040) } }
+label = db.url()

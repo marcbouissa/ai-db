@@ -81,6 +81,18 @@ class BackendConformance:
         hits = backend.search_chunks(["needle"], allowed_projects=["p"], top_k=5, path_prefix="/s")
         assert {h.filepath for h in hits} == {"/s/a.py"}
 
+    def test_path_prefix_is_literal_and_case_sensitive(self, backend):
+        # '_' and '%' are not wildcards and case matters: syncing /src/a_b must never
+        # see (and then prune) the sibling projects /src/a-b or /src/A_B.
+        for path in ("/src/a_b/x.py", "/src/a-b/x.py", "/src/A_B/x.py", "/src/a_b2/x.py"):
+            self._seed(backend, path=path)
+        assert set(backend.get_files_by_prefix("/src/a_b")) == {"/src/a_b/x.py"}
+        assert set(backend.get_files_by_prefix("/src/a_b/")) == {"/src/a_b/x.py"}
+        assert set(backend.get_files_by_prefix("/src/a_b/x.py")) == {"/src/a_b/x.py"}
+        hits = backend.search_chunks(["needle"], allowed_projects=["p"], top_k=10,
+                                     path_prefix="/src/a_b")
+        assert {h.filepath for h in hits} == {"/src/a_b/x.py"}
+
     def test_cascade_delete(self, backend):
         self._seed(backend)
         backend.insert_symbols([SymbolRecord("alpha", "function", "/r/a.py", 1, "def alpha()", "p")])
@@ -181,6 +193,48 @@ class BackendConformance:
         assert set(stored) == {"class A", "def A.g"}
         assert stored["def A.g"].parent_id == header_id
         assert backend.search_chunks(["return"], allowed_projects=["p"], top_k=5)[0].name == "def A.g"
+
+    def test_kept_chunk_is_searchable_by_its_new_qualified_name(self, backend):
+        # Renaming class Old -> New leaves method foo byte-identical, so its chunk is kept;
+        # its full-text row must follow the new qualified name, not the old one.
+        path = "/r/ren.py"
+        backend.upsert_file(FileRecord(path, "s1", 1.0, 1, "p"))
+        body = "def foo(): return 'needle'"
+        backend.replace_file_chunks(path, [ChunkRecord(path, "code", "def foo", 1, 2, body, "p",
+                                                       qualified_name="m.Old.foo")])
+        backend.replace_file_chunks(path, [ChunkRecord(path, "code", "def foo", 1, 2, body, "p",
+                                                       qualified_name="m.New.foo")])
+        assert [c.qualified_name for c in backend.get_chunks_for_file(path)] == ["m.New.foo"]
+        assert [h.qualified_name for h in
+                backend.search_chunks(["New"], allowed_projects=["p"], top_k=5)] == ["m.New.foo"]
+        assert backend.search_chunks(["Old"], allowed_projects=["p"], top_k=5) == []
+
+    def test_kept_chunk_moved_to_other_project_follows_in_vector_search(self, backend):
+        vb = self._vector_backend(backend)
+        path = "/r/mv.py"
+        vb.upsert_file(FileRecord(path, "s1", 1.0, 1, "A"))
+        body = "def foo(): return 1"
+        vb.replace_file_chunks(path, [ChunkRecord(path, "code", "def foo", 1, 2, body, "A")])
+        vb.ensure_vector_index(3, "test:model")
+        vb.upsert_embeddings([(c.id, _unit([1, 0, 0])) for c in vb.chunks_missing_embeddings(10)])
+        vb.upsert_file(FileRecord(path, "s1", 1.0, 1, "B"))
+        moved = [ChunkRecord(path, "code", "def foo", 1, 2, body, "B")]
+        assert vb.replace_file_chunks(path, moved)["kept"] == 1
+        query = _unit([1, 0, 0])
+        assert [cid for cid, _ in vb.search_vectors(query, k=5, filters={"allowed_projects": ["B"]})] \
+            == [moved[0].id]
+        assert vb.search_vectors(query, k=5, filters={"allowed_projects": ["A"]}) == []
+
+    def test_reindex_with_a_different_dimension(self, backend):
+        vb = self._vector_backend(backend)
+        self._seed(vb)
+        vb.ensure_vector_index(3, "test:model")
+        vb.upsert_embeddings([(c.id, _unit([1, 0, 0])) for c in vb.chunks_missing_embeddings(10)])
+        vb.drop_vector_index()
+        vb.ensure_vector_index(4, "test:model-4d")
+        vb.upsert_embeddings([(c.id, _unit([1, 0, 0, 0])) for c in vb.chunks_missing_embeddings(10)])
+        assert len(vb.search_vectors(_unit([1, 0, 0, 0]), k=5,
+                                     filters={"allowed_projects": ["p"]})) == 2
 
     def test_clear_file_metadata_keeps_chunks(self, backend):
         self._seed(backend)

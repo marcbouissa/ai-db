@@ -45,7 +45,7 @@ def main() -> int:
     from ai_db.analysis.investigate import MODES as INVESTIGATE_MODES
     from ai_db.analyzer.formatters import ANALYZE_FORMATS, PACK_FORMATS
     from ai_db.config import ALLOWED_DTYPES, EMBEDDING_PROVIDERS, RETRIEVAL_MODES
-    from ai_db.parser.ts_graph import SUPPORTED_LANGUAGES
+    from ai_db.parser.languages import EXT_TO_LANG as SUPPORTED_LANGUAGES
     from ai_db.storage.sqlite_backend import SQLiteBackend
 
     analyze_depth = choices_for("analyze", "--depth")

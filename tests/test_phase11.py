@@ -12,7 +12,6 @@ from ai_db.eval.harness import load_skills_golden, run_skills
 from ai_db.storage.models import ContextRecord
 from ai_db.storage.sqlite_backend import (
     SQLiteBackend,
-    cosine_distance,
     pack_vector,
     unpack_vector,
 )
@@ -122,74 +121,7 @@ def test_pack_unpack_roundtrip():
     assert unpack_vector(pack_vector(v)) == pytest.approx(v)
 
 
-def test_cosine_distance_basics():
-    assert cosine_distance([1.0, 0.0], [1.0, 0.0]) == pytest.approx(0.0)
-    assert cosine_distance([1.0, 0.0], [0.0, 1.0]) == pytest.approx(1.0)
-    # mismatch / zero vector must not raise and must be maximally distant
-    assert cosine_distance([1.0], [1.0, 2.0]) == 1.0
-    assert cosine_distance([0.0, 0.0], [1.0, 1.0]) == 1.0
-
-
-def test_context_vector_written_and_searched(tmp_path):
-    class Emb:
-        def embed_documents(self, texts):
-            out = []
-            for t in texts:
-                v = [0.0] * 4
-                for i, ch in enumerate(t.lower()):
-                    v[i % 4] += ord(ch) / 1000.0
-                n = sum(x * x for x in v) ** 0.5 or 1.0
-                out.append([x / n for x in v])
-            return out
-
-    from ai_db.memory.context import ContextMemory
-    b = SQLiteBackend(str(tmp_path / "v.db"))
-    b.initialize()
-    mem = ContextMemory(db=b, embedder=Emb())
-    mem.save_context("s1", "OAuth Authentication token refresh", title="OAuth")
-    mem.save_context("s2", "database vacuum and prune", title="DB Maint")
-
-    rows = b.conn.execute("SELECT COUNT(*) FROM context_vectors").fetchone()[0]
-    assert rows == 2, "one vector per saved context"
-
-    hits = b.search_contexts_vector(Emb().embed_documents(["oauth token"])[0], top_k=5)
-    assert next(h["title"] for h in hits) == "OAuth"
-    assert hits[0]["distance"] < hits[1]["distance"]
-
-    hyb = b.search_contexts_hybrid("oauth token",
-                                   Emb().embed_documents(["oauth token"])[0], top_k=5)
-    assert hyb and hyb[0]["title"] == "OAuth"
-    # RRF scores must be real, positive and strictly ordered (regression: these
-    # were previously abs(bm25()) and came back as 0.0)
-    assert all(h["score"] > 0 for h in hyb)
-    assert hyb[0]["score"] >= hyb[-1]["score"]
-    b.close()
-
-
-def test_context_vector_cascades_on_context_delete(tmp_path):
-    class Emb:
-        def embed_documents(self, texts):
-            return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
-
-    from ai_db.memory.context import ContextMemory
-    b = SQLiteBackend(str(tmp_path / "d.db"))
-    b.initialize()
-    mem = ContextMemory(db=b, embedder=Emb())
-    mem.save_context("s1", "something", title="T")
-    assert b.conn.execute("SELECT COUNT(*) FROM context_vectors").fetchone()[0] == 1
-    b.conn.execute("DELETE FROM contexts")
-    b.conn.commit()
-    assert b.conn.execute("SELECT COUNT(*) FROM context_vectors").fetchone()[0] == 0
-    b.close()
-
-
-def test_no_embedder_means_no_vectors(tmp_path):
-    from ai_db.memory.context import ContextMemory
-    b = SQLiteBackend(str(tmp_path / "n.db"))
-    b.initialize()
-    ContextMemory(db=b, embedder=None).save_context("s1", "x", title="T")
-    assert b.conn.execute("SELECT COUNT(*) FROM context_vectors").fetchone()[0] == 0
-    b.close()
+# Skill/context vectors moved to the recall extension: see tests/test_recall.py.
 
 
 # ------------------------------------------------------------------ 11.9 skills

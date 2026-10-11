@@ -3,20 +3,30 @@ import json
 import os
 import sys
 import time
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from ai_db import (
-    VectorDB,
-    __version__,
-    detect_project_name,
-    run_watch,
-)
+from ai_db import __version__
 from ai_db.config import AppConfig, config_path, load_config, masked_dict
-from ai_db.constants import TRACE_DEPTH, TRACE_MAX_NODES
-from ai_db.daemon.client import create_daemon_client
-from ai_db.daemon.manager import get_daemon_manager
+from ai_db.constants import TODO_LINE_CHARS, TRACE_DEPTH, TRACE_MAX_NODES
 from ai_db.dispatcher import ServiceDispatcher
-from ai_db.errors import AiDbConfigError
+from ai_db.errors import AiDbConfigError, AiDbDaemonError, AiDbError
+from ai_db.utils import detect_project_name
+
+if TYPE_CHECKING:
+    from ai_db.daemon.manager import DaemonManager
+
+
+def create_daemon_client(*args: Any, **kwargs: Any) -> Any:
+    """Imported on use: httpx alone costs ~50 ms, and most commands never talk to a daemon."""
+    from ai_db.daemon.client import create_daemon_client as create
+
+    return create(*args, **kwargs)
+
+
+def get_daemon_manager(*args: Any, **kwargs: Any) -> "DaemonManager":
+    from ai_db.daemon.manager import get_daemon_manager as get
+
+    return get(*args, **kwargs)
 
 
 class _Dispatcher(Protocol):
@@ -26,9 +36,9 @@ class _Dispatcher(Protocol):
     def close(self) -> None: ...
 
 
-def _session_state(dispatcher: _Dispatcher, db: str | None, key: str) -> Any:
+def _session_state(dispatcher: _Dispatcher, key: str) -> Any:
     """Read a session-state value via the tool surface (works in daemon mode)."""
-    res = dispatcher.execute("session_state", {"db": db, "key": key})
+    res = dispatcher.execute("session_state", {"key": key})
     return res.get("value") if isinstance(res, dict) else None
 
 
@@ -51,6 +61,7 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
         if args.skills:
             # Skill routing scores against the *locally installed* skills, so it
             # never syncs a corpus and is not part of the CI gate.
+            from ai_db.facade import VectorDB
             db = VectorDB(os.path.join(tmp, "eval.db"), config=cfg)
             try:
                 result = run_skills(args.golden, db, top_k=args.k,
@@ -61,6 +72,7 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
             root = os.path.abspath(args.root)
             if not args.all_files:
                 root = materialize_tracked(root, os.path.join(tmp, "corpus"))
+            from ai_db.facade import VectorDB
             db = VectorDB(os.path.join(tmp, "eval.db"), config=cfg)
             try:
                 if args.pack:
@@ -100,6 +112,12 @@ def main(argv: list[str] | None = None) -> int:
     except AiDbConfigError as exc:
         print(f"[ai-db] configuration error: {exc}", file=sys.stderr)
         return 2
+    except AiDbDaemonError as exc:
+        print(f"[ai-db] daemon error: {exc}", file=sys.stderr)
+        return 1
+    except AiDbError as exc:
+        print(f"[ai-db] error: {exc}", file=sys.stderr)
+        return 1
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
@@ -119,8 +137,10 @@ def _cmd_init(args: argparse.Namespace) -> int:
         if os.path.exists(target) and not args.force:
             raise AiDbConfigError(f"config already exists at {target}; use --force to overwrite")
         try:
+            languages = ([x.strip() for x in args.languages.split(",") if x.strip()]
+                         if args.languages else None)
             data = build_template(storage=args.storage, embedding=args.embedding,
-                                  rerank=args.rerank, mode=args.mode)
+                                  rerank=args.rerank, mode=args.mode, languages=languages)
         except ValueError as exc:
             raise AiDbConfigError(str(exc)) from exc
     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -163,6 +183,7 @@ def _cmd_reindex(args: argparse.Namespace, cfg: AppConfig) -> int:
     if not isinstance(backend, VectorCapable):
         raise AiDbConfigError(f"storage '{cfg.storage.provider}' does not support vectors")
     backend.drop_vector_index()  # must happen before VectorDB checks the model guard
+    from ai_db.facade import VectorDB
     db = VectorDB(backend, config=cfg)
     try:
         count = db.embed_missing()
@@ -170,6 +191,73 @@ def _cmd_reindex(args: argparse.Namespace, cfg: AppConfig) -> int:
         db.close()
     model_id = db.embedder.model_id if db.embedder is not None else "?"
     print(f"[ai-db reindex] embedded {count} chunks with {model_id}")
+    return 0
+
+
+def _cmd_run(args: argparse.Namespace, dispatcher: _Dispatcher) -> int:
+    """Run the command here (the user's shell and cwd), filter its output, keep its exit code."""
+    import shlex
+    import subprocess
+
+    cmd = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
+    if not cmd:
+        raise AiDbConfigError("usage: ai-db run [--need TEXT] -- <command> [args...]")
+    shown = " ".join(cmd) if args.shell else shlex.join(cmd)
+    try:
+        proc = subprocess.run(" ".join(cmd) if args.shell else cmd, shell=args.shell,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    except FileNotFoundError:
+        print(f"[ai-db run] command not found: {cmd[0]}", file=sys.stderr)
+        return 127
+    text = proc.stdout.decode("utf-8", errors="replace")
+    print(dispatcher.execute("filter_output", {
+        "text": text, "need": args.need, "budget": args.budget, "rerank": args.rerank,
+        "command": shown, "exit_code": proc.returncode}))
+    dispatcher.close()
+    return proc.returncode
+
+
+def _cmd_filter(args: argparse.Namespace, dispatcher: _Dispatcher) -> int:
+    call: dict[str, Any] = {"need": args.need, "budget": args.budget, "lines": args.lines,
+                            "rerank": args.rerank}
+    if args.output_id:
+        call["output_id"] = args.output_id
+    elif args.file:
+        with open(args.file, encoding="utf-8", errors="replace") as f:
+            call["text"] = f.read()
+    elif sys.stdin.isatty():
+        raise AiDbConfigError("ai-db filter: pipe output in, or pass --file / --id")
+    else:
+        call["text"] = sys.stdin.read()
+    print(dispatcher.execute("filter_output", call))
+    dispatcher.close()
+    return 0
+
+
+def _cmd_grammars(args: argparse.Namespace, cfg: AppConfig) -> int:
+    """Show which grammars are enabled (index.languages) and downloaded, or fetch them.
+
+    tree-sitter-language-pack downloads a grammar on first use into its cache; this
+    lets you fetch exactly the enabled ones up front (e.g. before going offline).
+    """
+    import tree_sitter_language_pack as tslp
+
+    from ai_db.parser.languages import EXT_TO_LANG, SUPPORTED_LANGUAGES, validate_languages
+
+    enabled = cfg.index.languages
+    if args.grammars_action == "download":
+        wanted = validate_languages(args.languages) if args.languages else enabled
+        tslp.download(sorted(wanted))
+        print(f"[ai-db grammars] downloaded: {', '.join(sorted(wanted))} -> {tslp.cache_dir()}")
+        return 0
+    downloaded = set(tslp.downloaded_languages())
+    print(f"{'language':<12} {'enabled':<8} {'downloaded':<11} extensions")
+    for lang in sorted(SUPPORTED_LANGUAGES):
+        exts = " ".join(e for e, lng in EXT_TO_LANG.items() if lng == lang)
+        print(f"{lang:<12} {'yes' if lang in enabled else 'no':<8} "
+              f"{'yes' if lang in downloaded else 'no':<11} {exts}")
+    print(f"\nenabled = index.languages in {cfg.source_path}; "
+          "other languages are indexed as plain text.")
     return 0
 
 
@@ -211,7 +299,7 @@ def _cmd_daemon(args: argparse.Namespace, cfg: AppConfig) -> int:
             )
             print(json.dumps(result, indent=2))
             return 0
-        except Exception as e:
+        except (AiDbError, OSError, ValueError) as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
 
@@ -220,7 +308,7 @@ def _cmd_daemon(args: argparse.Namespace, cfg: AppConfig) -> int:
             result = manager.unregister_project(args.name)
             print(json.dumps(result, indent=2))
             return 0
-        except Exception as e:
+        except (AiDbError, OSError, ValueError) as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
 
@@ -229,7 +317,7 @@ def _cmd_daemon(args: argparse.Namespace, cfg: AppConfig) -> int:
             result = manager.reload_config()
             print(json.dumps(result, indent=2))
             return 0
-        except Exception as e:
+        except (AiDbError, OSError, ValueError) as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
 
@@ -259,6 +347,16 @@ def _main(argv: list[str] | None = None) -> int:
     init_p.add_argument("--mode", choices=["lexical", "hybrid"], default=None, help="Retrieval mode (default: derived from --embedding)")
     init_p.add_argument("--force", action="store_true", help="Overwrite an existing config")
     init_p.add_argument("--migrate", action="store_true", help="Rewrite a legacy (unversioned) config into version 1")
+    init_p.add_argument("--languages", default=None,
+                        help="Comma-separated tree-sitter grammars to use (default: all; "
+                             "see `ai-db grammars`). Other languages are indexed as text.")
+
+    # grammars
+    grammars_p = subparsers.add_parser(
+        "grammars", help="List or download the tree-sitter grammars (index.languages)")
+    grammars_p.add_argument("grammars_action", nargs="?", choices=["list", "download"], default="list")
+    grammars_p.add_argument("languages", nargs="*",
+                            help="download: these languages (default: the enabled ones)")
 
     # reindex
     reindex_p = subparsers.add_parser("reindex", help="Rebuild derived indexes")
@@ -508,11 +606,37 @@ def _main(argv: list[str] | None = None) -> int:
 
     # todos
     todos_p = subparsers.add_parser("todos", help="List TODO/FIXME/HACK annotations")
-    todos_p.add_argument("--kind", choices=["todo", "fixme", "hack", "note", "xxx"], default=None, help="Filter by annotation kind")
+    todos_p.add_argument("--kind", choices=["todo", "fixme", "hack", "note", "xxx", "docstring"], default=None,
+                         help="Filter by annotation kind (default: all but docstrings)")
     todos_p.add_argument("--file", default=None, help="Filter by specific file path")
     todos_p.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
     todos_p.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
     todos_p.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
+
+    # run / filter: keep long command output out of the agent's context
+    run_p = subparsers.add_parser(
+        "run", help="Run a command and print only what matters in its output (exit code is kept)")
+    run_p.add_argument("--need", default=None,
+                       help="What you need from the output, e.g. 'why did test_login fail'")
+    run_p.add_argument("--budget", type=int, default=None, help="Token budget of the result")
+    run_p.add_argument("--rerank", action="store_true",
+                       help="Also rank by meaning with the configured reranker/embedding model")
+    run_p.add_argument("--shell", action="store_true",
+                       help="Run through the shell (pipes, globs, &&); quote the command")
+    run_p.add_argument("cmd", nargs=argparse.REMAINDER, help="-- command and its arguments")
+    run_p.set_defaults(db=None)  # filtering never opens the database
+
+    filter_p = subparsers.add_parser(
+        "filter", help="Filter command output (stdin, --file or a stored --id) to what you need")
+    filter_p.add_argument("need", nargs="?", default=None, help="What you need from the output")
+    filter_p.add_argument("--id", dest="output_id", default=None,
+                          help="Re-filter a stored output (its id is in every filtered header)")
+    filter_p.add_argument("--file", default=None, help="Read the output from this file")
+    filter_p.add_argument("--lines", default=None, help="Print exact lines A-B of a stored output")
+    filter_p.add_argument("--budget", type=int, default=None, help="Token budget of the result")
+    filter_p.add_argument("--rerank", action="store_true",
+                          help="Also rank by meaning with the configured reranker/embedding model")
+    filter_p.set_defaults(db=None)
 
     # log
     log_p = subparsers.add_parser("log", help="Show the query log (latency per stage, top results)")
@@ -562,17 +686,19 @@ def _main(argv: list[str] | None = None) -> int:
     if args.command == "init-agent":
         return _cmd_init_agent(args)
 
-    # Handle daemon command
-    if args.command == "daemon":
-        cfg = load_config(args.config)
-        return _cmd_daemon(args, cfg)
-
     cfg = load_config(args.config)
-    # Every downstream component resolves the same file.
+    # Every downstream component resolves the same file -- including the daemon,
+    # whose server process loads its config from AI_DB_CONFIG.
     os.environ["AI_DB_CONFIG"] = cfg.source_path or config_path(args.config)
+
+    if args.command == "daemon":
+        return _cmd_daemon(args, cfg)
 
     if args.command == "config":
         return _cmd_config(args, cfg)
+
+    if args.command == "grammars":
+        return _cmd_grammars(args, cfg)
 
     if args.command == "eval":
         return _run_eval(args, cfg)
@@ -603,6 +729,7 @@ def _main(argv: list[str] | None = None) -> int:
                 os.dup2(devnull.fileno(), sys.stdout.fileno())
                 os.dup2(devnull.fileno(), sys.stderr.fileno())
 
+        from ai_db.facade import run_watch
         run_watch(args.db, args.path, debounce_ms=args.debounce_ms)
         return 0
 
@@ -620,6 +747,11 @@ def _main(argv: list[str] | None = None) -> int:
         dispatcher = create_daemon_client(daemon_url, project=project, api_key=api_key)
     else:
         dispatcher = ServiceDispatcher(db_path=args.db, config=cfg)
+
+    if args.command == "run":
+        return _cmd_run(args, dispatcher)
+    if args.command == "filter":
+        return _cmd_filter(args, dispatcher)
 
     # Handle sync-all
     if args.command == "sync-all":
@@ -662,7 +794,7 @@ def _main(argv: list[str] | None = None) -> int:
         print(f"+{res['added']} ~{res['updated']} -{res['pruned']} ={res['skipped']}")
 
     elif args.command == "log":
-        entries = dispatcher.execute("query_log", {"db": args.db, "min_total_ms": args.slow, "limit": args.limit})
+        entries = dispatcher.execute("query_log", {"min_total_ms": args.slow, "limit": args.limit})
         if args.format == "json":
             print(json.dumps(entries, indent=2))
         else:
@@ -674,7 +806,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     elif args.command in ("investigate", "inv"):
         # Get effective format: explicit arg > session default > "stub"
-        default_fmt = _session_state(dispatcher, args.db, "default_format")
+        default_fmt = _session_state(dispatcher, "default_format")
         effective_fmt = args.format or default_fmt or "stub"
 
         investigate_args = {
@@ -797,7 +929,7 @@ def _main(argv: list[str] | None = None) -> int:
         route_args = {
             "prompt": args.prompt,
             "top": args.top,
-            "min_confidence": min_conf if min_conf is not None else 0.0,
+            "min_confidence": min_conf,
             "allow_project": allowed_projs,
         }
         if not daemon_url:
@@ -922,7 +1054,6 @@ def _main(argv: list[str] | None = None) -> int:
             result = dispatcher.execute("context_forget", {
                 "session_id": args.session_id,
                 "project": args.project or "global",
-                "db": args.db
             })
             if result.get("deleted"):
                 print(f"✓ Deleted context for session '{args.session_id}' (project: {result['project']})")
@@ -975,7 +1106,7 @@ def _main(argv: list[str] | None = None) -> int:
 
         targets = args.targets
         if not targets:
-            last_analysis = _session_state(dispatcher, args.db, "last_analysis")
+            last_analysis = _session_state(dispatcher, "last_analysis")
             if last_analysis and "targets" in last_analysis:
                 targets = last_analysis["targets"]
             else:
@@ -995,7 +1126,7 @@ def _main(argv: list[str] | None = None) -> int:
             "format": args.format
         })
 
-        default_fmt = _session_state(dispatcher, args.db, "default_format")
+        default_fmt = _session_state(dispatcher, "default_format")
         effective_fmt = args.format or default_fmt or "stub"
 
         if isinstance(output_data, str):
@@ -1049,7 +1180,7 @@ def _main(argv: list[str] | None = None) -> int:
         elif isinstance(hits, str):
             print(hits)
         else:
-            default_fmt = _session_state(dispatcher, args.db, "default_format")
+            default_fmt = _session_state(dispatcher, "default_format")
             effective_fmt = args.format or default_fmt or "stub"
             if effective_fmt == "stub":
                 for h in hits:
@@ -1073,7 +1204,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     elif args.command == "status":
         s = dispatcher.execute("status", {})
-        active_fmt = _session_state(dispatcher, args.db, "default_format") or "stub"
+        active_fmt = _session_state(dispatcher, "default_format") or "stub"
         skills_str = f" | skills:{s.get('skills', 0)}" if "skills" in s else ""
         contexts_str = f" | contexts:{s.get('contexts', 0)}" if "contexts" in s else ""
         print(f"db:{s['db']} | files:{s['files']} | chunks:{s['chunks']} | symbols:{s['symbols']} | syntax_errors:{s['syntax_errors']}{skills_str}{contexts_str} | size:{s['kb']}KB | default_format:{active_fmt}")
@@ -1117,7 +1248,6 @@ def _main(argv: list[str] | None = None) -> int:
         depth = args.depth if args.depth is not None else TRACE_DEPTH
         max_nodes = args.max_nodes if args.max_nodes is not None else TRACE_MAX_NODES
         print(dispatcher.execute("trace", {
-            "db": args.db,
             "entry": args.entry,
             "depth": depth,
             "max_nodes": max_nodes,
@@ -1162,7 +1292,9 @@ def _main(argv: list[str] | None = None) -> int:
             for h in hits:
                 rel = os.path.relpath(h["filepath"], os.getcwd())
                 sym_str = f" [{h['symbol']}]" if h.get("symbol") else ""
-                print(f"{h['kind'].upper()}: {rel}:L{h['line']}{sym_str} — {h['content']}")
+                text = " ".join(str(h["content"]).split())  # one line per hit
+                text = text if len(text) <= TODO_LINE_CHARS else text[:TODO_LINE_CHARS - 1] + "…"
+                print(f"{h['kind'].upper()}: {rel}:L{h['line']}{sym_str} — {text}")
 
     elif args.command == "telemetry":
         res = dispatcher.execute("telemetry", {"reset": getattr(args, "reset", False)})

@@ -28,6 +28,8 @@ def get_tracked_files() -> list[str]:
 
 def is_non_test_tracked_file(rel_path: str) -> bool:
     """Filter out test files, .agents metadata, and virtual environments to avoid self-referential false positives."""
+    if rel_path.startswith("packages/") and "/tests/" in rel_path:
+        return False  # a plugin package's own test suite
     return not rel_path.startswith(("tests/", ".agents/", ".venv/", "venv/", ".venv/", ".mypy_cache/"))
 
 

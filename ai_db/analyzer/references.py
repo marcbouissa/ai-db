@@ -4,14 +4,17 @@ import os
 import time
 from typing import Any
 
+from ai_db.parser.languages import SUPPORTED_LANGUAGES
 from ai_db.storage.models import AnalysisRefRecord
 
 
 class ReferenceStore:
     def __init__(self, db: Any = None, conn: Any = None):
         self.db = db if db is not None else conn
+        # index.languages, so a file is re-chunked the way the indexer chunked it.
+        self.languages: frozenset[str] = SUPPORTED_LANGUAGES
 
-    def _store_analysis_ref(
+    def store_ref(
         self, filepath: str, name: str, start_line: int, end_line: int,
         kind: str, body_text: str
     ) -> str:
@@ -66,7 +69,7 @@ class ReferenceStore:
             "meta": {"tokens_out": tokens_est}
         }
 
-    def _diff_spans(self, filepath: str, current_content: str, since: str | None) -> dict[str, Any]:
+    def diff_spans(self, filepath: str, current_content: str, since: str | None) -> dict[str, Any]:
         """F8 Diff Mode: Identifies changed, added, or removed line spans.
 
         Resolution order:
@@ -105,14 +108,11 @@ class ReferenceStore:
             except (OSError, _sp.TimeoutExpired) as e:
                 raise AiDbConfigError(f"--since {since} needs the file to be in a git repository: {e}")
 
-        # 2. Fallback: reconstruct from stored DB chunks using get_chunks_for_file (only for "last" or "db")
+        # 2. "last"/"db": compare with what the index holds.
         if old_text is None:
             if since and since not in ("last", "db"):
                 raise AiDbConfigError(f"--since {since} needs the file to be in a git repository")
-            chunks = self.db.get_chunks_for_file(filepath)
-            if not chunks:
-                return {"added": [[1, len(current_content.splitlines())]], "removed": [], "changed": []}
-            old_text = "\n".join(c.content for c in chunks)
+            return self._diff_against_index(filepath, current_content)
 
         old_lines = old_text.splitlines()
         new_lines = current_content.splitlines()
@@ -130,3 +130,38 @@ class ReferenceStore:
                 changed_spans.append([j1 + 1, j2])
 
         return {"added": added_spans, "removed": removed_spans, "changed": changed_spans}
+
+    def _diff_against_index(self, filepath: str, current_content: str) -> dict[str, Any]:
+        """Spans that changed since the last index, at definition (chunk) granularity.
+
+        The index does not keep a file's raw text, and its chunks are compacted and skip
+        the lines between definitions, so joining them never reproduces the file: that
+        reported changes in files that had none. Instead: an unchanged hash means no
+        change; otherwise the current text is chunked the way the indexer chunks it and
+        chunks are matched by content hash. A new chunk whose name was indexed is
+        ``changed``, an unknown name is ``added``; an indexed chunk with no match is
+        ``removed`` (its old lines).
+        """
+        from ai_db.parser.chunker import chunk_file
+        from ai_db.utils import compute_sha256
+
+        record = self.db.get_file(filepath)
+        old = self.db.get_chunks_for_file(filepath)
+        lines = current_content.splitlines()
+        if record is None or not old:
+            return {"added": [[1, len(lines)]] if lines else [], "removed": [], "changed": []}
+        if os.path.isfile(filepath) and record.sha256 == compute_sha256(filepath):
+            return {"added": [], "removed": [], "changed": []}
+        new = chunk_file(filepath, current_content, self.languages)
+        old_hashes = {c.content_hash for c in old}
+        new_hashes = {c["content_hash"] for c in new}
+        old_names = {c.name for c in old}
+        added: list[list[int]] = []
+        changed: list[list[int]] = []
+        for c in new:
+            if c["content_hash"] in old_hashes:
+                continue
+            (changed if c["name"] in old_names else added).append([c["start_line"], c["end_line"]])
+        removed = [[c.start_line, c.end_line] for c in old if c.content_hash not in new_hashes
+                   and c.name not in {n["name"] for n in new}]
+        return {"added": added, "removed": removed, "changed": changed}

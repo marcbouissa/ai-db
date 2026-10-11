@@ -8,9 +8,12 @@ import re
 from typing import Any
 
 # Pattern matches: # TODO: message  or  // FIXME message  or  /* HACK: ... */
+# Uppercase tags as whole words (``# TODO fix``, ``# TODO: fix``); lowercase ones only
+# with a colon (``# todo: fix``), so ordinary comments (``# todos``, ``# note that ...``)
+# are not tags. Case-insensitive matching made ``# todos`` a TODO reading "s".
 _TAG_PATTERN = re.compile(
-    r"(?:#|//|/\*)\s*(TODO|FIXME|HACK|NOTE|XXX)\s*:?\s*(.+?)(?:\*/)?$",
-    re.IGNORECASE
+    r"(?:#|//|/\*)\s*(?:(TODO|FIXME|HACK|NOTE|XXX)\b\s*:?|(todo|fixme|hack|note|xxx)\s*:)"
+    r"\s*(.+?)(?:\*/)?$"
 )
 
 
@@ -26,8 +29,8 @@ def extract_annotations(filepath: str, content: str) -> list[dict[str, Any]]:
     for i, line in enumerate(lines, 1):
         m = _TAG_PATTERN.search(line)
         if m:
-            kind = m.group(1).lower()
-            text = m.group(2).strip()
+            kind = (m.group(1) or m.group(2)).lower()
+            text = m.group(3).strip()
             if text:
                 results.append({
                     "line": i,

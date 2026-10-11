@@ -1,24 +1,34 @@
+import contextvars
 import hashlib
 import os
 import re
 
 from ai_db.constants import HARD_IGNORE_DIRS, INDEXABLE_EXTENSIONS, VENDOR_NOISE_EXTENSIONS
 
+_PROJECT_MARKERS = (".git", "package.json", "pyproject.toml", "Cargo.toml", "go.mod")
 
-def detect_project_name(path: str) -> str:
+
+def detect_project_root(path: str) -> str:
+    """Nearest ancestor directory of ``path`` holding a project marker (``.git``,
+    ``pyproject.toml``...); the directory of ``path`` itself when there is none."""
     curr = os.path.abspath(os.path.expanduser(path))
     if os.path.isfile(curr):
         curr = os.path.dirname(curr)
     check_dir = curr
     home_dir = os.path.expanduser("~")
     while check_dir and check_dir != "/" and check_dir != home_dir:
-        if any(os.path.exists(os.path.join(check_dir, marker)) for marker in [".git", "package.json", "pyproject.toml", "Cargo.toml", "go.mod"]):
-            return os.path.basename(check_dir)
+        if any(os.path.exists(os.path.join(check_dir, marker)) for marker in _PROJECT_MARKERS):
+            return check_dir
         parent = os.path.dirname(check_dir)
         if parent == check_dir:
             break
         check_dir = parent
-    return os.path.basename(curr) if curr != "/" else "global"
+    return curr
+
+
+def detect_project_name(path: str) -> str:
+    root = detect_project_root(path)
+    return os.path.basename(root) if root != "/" else "global"
 
 def get_allowed_projects(current_project: str, explicit_allowed: list[str] | None = None,
                          cross_project: dict[str, list[str]] | None = None) -> list[str]:
@@ -92,3 +102,19 @@ def should_index_path(rel_path: str, filename: str) -> bool:
     if ext in INDEXABLE_EXTENSIONS:
         return not any(filename.endswith(ne) for ne in VENDOR_NOISE_EXTENSIONS)
     return False
+
+
+# The working directory of the *client* that issued the current tool call. The CLI and
+# MCP server run in the caller's directory, but the daemon is a long-lived process
+# (chdir'd to "/" when daemonized), so it receives the client's cwd with each call.
+_CLIENT_CWD: contextvars.ContextVar[str | None] = contextvars.ContextVar("ai_db_client_cwd", default=None)
+
+
+def client_cwd() -> str:
+    """Directory that relative paths and display paths of the current call refer to."""
+    return _CLIENT_CWD.get() or os.getcwd()
+
+
+def resolve_client_path(path: str) -> str:
+    """``path`` (``~`` and relative allowed) as an absolute path, relative to client_cwd()."""
+    return os.path.normpath(os.path.join(client_cwd(), os.path.expanduser(path)))

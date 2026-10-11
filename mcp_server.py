@@ -20,9 +20,7 @@ from ai_db import __version__
 from ai_db.constants import DEFAULT_DB_FILE
 from ai_db.daemon.client import DaemonClient, create_daemon_client
 from ai_db.dispatcher import ServiceDispatcher
-from ai_db.mcp_tools.scene_tools import register_scene_tools
-from ai_db.mcp_tools.video_tools import register_video_tools
-from ai_db.video.factory import load_video_processors
+from ai_db.errors import UnknownToolError
 
 
 def parse_args():
@@ -47,6 +45,10 @@ class StdioMCPServer:
         # Where notifications/progress frames go. Overridable so tests can use
         # a fake stream instead of the real stdout.
         self.stdout = stdout if stdout is not None else sys.stdout
+        # AI_DB_MCP_TOOLS="a,b,c": expose only these tools (a client with a small context,
+        # or a benchmark arm that must see exactly one tool surface).
+        raw = os.environ.get("AI_DB_MCP_TOOLS", "")
+        self.allowed: set[str] | None = {t.strip() for t in raw.split(",") if t.strip()} or None
 
     def _progress_callback(self, meta: dict[str, Any]) -> Any:
         """Build a progress callback if the client supplied a progressToken.
@@ -129,6 +131,8 @@ class StdioMCPServer:
                 return self._tool_error(req_id, f"Error listing tools: {err!s}")
             tools = []
             for t in raw_tools:
+                if self.allowed is not None and t.get("name") not in self.allowed:
+                    continue
                 td = dict(t)
                 if "inputSchema" not in td and "parameters_schema" in td:
                     td["inputSchema"] = td["parameters_schema"]
@@ -144,6 +148,8 @@ class StdioMCPServer:
         if method == "tools/call":
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
+            if self.allowed is not None and tool_name not in self.allowed:
+                return self._tool_error(req_id, f"Unknown tool: {tool_name}")
             progress = self._progress_callback(params.get("_meta") or {})
 
             try:
@@ -162,7 +168,7 @@ class StdioMCPServer:
                         "isError": False
                     }
                 }
-            except KeyError:
+            except UnknownToolError:
                 return self._tool_error(req_id, f"Unknown tool: {tool_name}")
             except Exception as err:  # noqa: BLE001 - JSON-RPC boundary: report to client
                 return self._tool_error(
@@ -197,18 +203,6 @@ def run_stdio(db_path: str = DEFAULT_DB_FILE, dispatcher: ServiceDispatcher | Da
             cfg = config if config is not None else load_config()
             dispatcher = ServiceDispatcher(db_path=db_path, config=cfg)
             dispatcher._get_db()  # fail fast on invalid storage/provider config
-
-    # Register scene memory and video tools.
-    # Only for the local dispatcher: a DaemonClient proxies every tool call to the
-    # daemon and serves its tool list from the daemon, so local registration is
-    # both impossible (register_tool raises) and wrong (it would shadow the daemon's
-    # tool set).
-    if isinstance(dispatcher, ServiceDispatcher):
-        register_scene_tools(dispatcher)
-        register_video_tools(dispatcher)
-
-    # Load video processors from entry points
-    load_video_processors()
 
     server = StdioMCPServer(db_path=db_path, dispatcher=dispatcher)
     for line in sys.stdin:

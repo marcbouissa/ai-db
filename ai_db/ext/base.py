@@ -5,7 +5,7 @@ Base classes for file type extensions.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 
 @dataclass
@@ -24,7 +24,7 @@ class ChunkerExtension(ABC):
     """Abstract base for file type chunkers."""
     
     # File extensions this chunker handles (e.g., [".md", ".markdown"])
-    extensions: list[str] = []
+    extensions: ClassVar[list[str]] = []
     
     # Language identifier (e.g., "markdown", "usd", "segmentation")
     language: str = ""
@@ -35,7 +35,6 @@ class ChunkerExtension(ABC):
     @abstractmethod
     def chunk(self, filepath: Path, content: str) -> list[Chunk]:
         """Parse file content into chunks."""
-        pass
     
     def can_handle(self, filepath: Path) -> bool:
         """Check if this chunker can handle the file."""

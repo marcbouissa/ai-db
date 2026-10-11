@@ -13,15 +13,10 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ai_db.storage.state import (
-    get_telemetry_state,
-    get_telemetry_table_counts,
-    get_telemetry_weak_points,
-    set_telemetry_state,
-)
+if TYPE_CHECKING:
+    from ai_db.storage.backend import StorageBackend
 
 
 class TelemetryTracker:
@@ -29,8 +24,10 @@ class TelemetryTracker:
 
     SESSION_STATE_KEY = "telemetry_metrics_v1"
 
-    def __init__(self, conn: sqlite3.Connection | None = None, db_path: str | None = None):
-        self.conn = conn
+    def __init__(self, backend: StorageBackend | None = None, db_path: str | None = None):
+        # All persistence goes through the storage backend (session_state, counts,
+        # weak points); None keeps the metrics in memory only.
+        self.backend = backend
         self.db_path = db_path
         self._metrics: dict[str, Any] = self._initial_metrics()
         self._load_state()
@@ -58,16 +55,16 @@ class TelemetryTracker:
         }
 
     def _load_state(self) -> None:
-        if not self.conn:
+        if self.backend is None:
             return
-        saved = get_telemetry_state(self.conn, self.SESSION_STATE_KEY)
+        saved = self.backend.get_state(self.SESSION_STATE_KEY)
         if saved and isinstance(saved, dict):
             self._metrics = saved
 
     def _save_state(self) -> None:
-        if not self.conn:
+        if self.backend is None:
             return
-        set_telemetry_state(self.conn, self.SESSION_STATE_KEY, self._metrics)
+        self.backend.set_state(self.SESSION_STATE_KEY, self._metrics)
 
     def record_query(self, backend: str = "sqlite_wal", latency_ms: float = 0.0, results_count: int = 0) -> None:
         """Records latency and result counts for a specific backend."""
@@ -212,17 +209,17 @@ class TelemetryTracker:
             except OSError:
                 storage["db_size_kb"] = 0.0
 
-        if self.conn:
-            storage["table_rows"] = get_telemetry_table_counts(self.conn)
+        if self.backend is not None:
+            storage["table_rows"] = self.backend.get_table_counts()
 
         return storage
 
     def compute_weak_points(self) -> dict[str, Any]:
         """Calculates syntax error density, complexity hotspots, and unindexed/stale files."""
-        if not self.conn:
+        if self.backend is None:
             return {
                 "syntax_error_density_pct": 0.0,
                 "complexity_hotspots": [],
                 "unindexed_or_stale_files": [],
             }
-        return get_telemetry_weak_points(self.conn)
+        return self.backend.get_weak_points()

@@ -12,8 +12,9 @@ from ai_db.config import (
     DEFAULT_RERANK_TOP_N,
     parse_config,
 )
-from ai_db.device import preferred_device
+from ai_db.device import CPU, CUDA, preferred_device
 from ai_db.embed.defaults import MODEL_NOTE, SUGGESTED_EMBEDDING, SUGGESTED_RERANK
+from ai_db.parser.languages import SUPPORTED_LANGUAGES
 
 
 def build_template(
@@ -21,8 +22,10 @@ def build_template(
     embedding: str = "none",
     rerank: str = "none",
     mode: str | None = None,
+    languages: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Return a validated config dict. ``mode`` is derived from ``embedding`` if omitted."""
+    """Return a validated config dict. ``mode`` is derived from ``embedding`` if omitted;
+    ``languages`` (tree-sitter grammars) defaults to every supported language."""
     if mode is None:
         mode = "lexical" if embedding == "none" else "hybrid"
 
@@ -32,10 +35,14 @@ def build_template(
             raise ValueError(f"no template for embedding provider '{embedding}'")
         emb.update(SUGGESTED_EMBEDDING[embedding])
         emb["_note"] = MODEL_NOTE
-        # Pick the GPU when one is actually usable, else CPU. torch is imported
-        # lazily inside preferred_device() and stays optional.
+        # With a usable GPU: big runs (first index, reindex) on the GPU, the
+        # small embeds of day-to-day syncs and queries on the CPU, so the GPU
+        # is only held while there is real work. torch is imported lazily
+        # inside preferred_device() and stays optional.
         if "device" in emb:
-            emb["device"] = preferred_device()
+            emb["device"] = CPU
+            if preferred_device() == CUDA:
+                emb["bulk_device"] = CUDA
 
     rr: dict[str, Any] = {"provider": rerank}
     if rerank != "none":
@@ -59,6 +66,8 @@ def build_template(
         "rerank": rr,
         "access": {"cross_project": {}},
         "auto_sync_paths": [],
+        # Written out so the knob is visible: drop a language to index its files as text.
+        "index": {"languages": sorted(languages if languages is not None else SUPPORTED_LANGUAGES)},
         "trace": {"wait_patterns": None, "wait_patterns_extend": None},
     }
     parse_config(data, check_env=False)

@@ -259,7 +259,9 @@ class Investigator:
             # diff mode answers "what breaks because of this change"
             self._add_callers(seed_items, allowed, items, edges, depth_limit=IMPACT_DEPTH)
 
-        pack = InvestigationPack(query=query, mode=mode, budget_tokens=budget_tokens)
+        # A diff pack needs no question; say what it covers instead of printing ''.
+        label = query if query.strip() or mode != "diff" else f"changes since {since}"
+        pack = InvestigationPack(query=label, mode=mode, budget_tokens=budget_tokens)
         pack.retrieval = {
             "mode": self.vdb.config.retrieval_mode,
             "embedding_model": self.vdb.retrieval_signature()["embedding_model"],
@@ -573,7 +575,7 @@ class Investigator:
             if c.chunk_type != "class_header" and any(
                     a <= c.start_line and c.end_line <= b for a, b in body_spans.get(c.filepath, [])):
                 continue  # already fully shown inside another body
-            ref = self.vdb.analyzer_engine._store_analysis_ref(
+            ref = self.vdb.analyzer_engine.ref_store.store_ref(
                 c.filepath, c.qualified_name, c.start_line, c.end_line, it.role, c.content)
             ev = Evidence(ref=ref, filepath=self._display(c.filepath, relative_to),
                           lines=f"L{c.start_line}-{c.end_line}", qualified_name=c.qualified_name,

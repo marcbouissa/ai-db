@@ -16,6 +16,7 @@ from ai_db.ignorer import AidbIgnore
 from ai_db.logger import _logger
 from ai_db.parser.annotations import extract_annotations
 from ai_db.parser.chunker import chunk_file
+from ai_db.parser.languages import SUPPORTED_LANGUAGES
 from ai_db.parser.linters import parse_source
 from ai_db.storage.models import (
     AnnotationRecord,
@@ -29,14 +30,18 @@ from ai_db.storage.models import (
 from ai_db.utils import compute_sha256, detect_project_name, should_index_path
 
 
-def parse_file(filepath: str, file_hash: str, project: str) -> ParsedFile:
-    """Read and fully parse one file. Pure: touches no storage."""
+def parse_file(filepath: str, file_hash: str, project: str,
+               languages: frozenset[str]) -> ParsedFile:
+    """Read and fully parse one file. Pure: touches no storage.
+
+    ``languages`` (``index.languages``) are the grammars to use; files in other
+    languages are indexed as plain text."""
     with open(filepath, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
     mtime = os.path.getmtime(filepath)
     parsed = ParsedFile(filepath=filepath, sha256=file_hash, last_modified=mtime, project=project)
 
-    symbols, refs, syntax_error = parse_source(filepath, content)
+    symbols, refs, syntax_error = parse_source(filepath, content, languages)
     if syntax_error is not None:
         line, col, msg = syntax_error
         parsed.syntax_error = SyntaxErrorRecord(
@@ -84,7 +89,7 @@ def parse_file(filepath: str, file_hash: str, project: str) -> ParsedFile:
             content_hash=c["content_hash"],
             parent_index=c["parent_index"],
         )
-        for c in chunk_file(filepath, content)
+        for c in chunk_file(filepath, content, languages)
     ]
     parsed.annotations = [
         AnnotationRecord(
@@ -96,7 +101,7 @@ def parse_file(filepath: str, file_hash: str, project: str) -> ParsedFile:
     return parsed
 
 
-def _parse_job(job: tuple[str, str, str]) -> ParsedFile:
+def _parse_job(job: tuple[str, str, str, frozenset[str]]) -> ParsedFile:
     return parse_file(*job)
 
 
@@ -125,6 +130,11 @@ class Indexer:
         # transport asked for progress. None means "do not report".
         self.progress_sink: Any = None
         self._ignore_patterns: list[str] = []
+        self.languages: frozenset[str] = SUPPORTED_LANGUAGES
+
+    def set_languages(self, languages: frozenset[str]) -> None:
+        """Grammars to parse with (``index.languages``)."""
+        self.languages = frozenset(languages)
 
     def set_ignore_patterns(self, patterns: list[str]) -> None:
         """Set additional ignore patterns from config."""
@@ -148,14 +158,15 @@ class Indexer:
         return candidates
 
     def _parse_many(self, jobs: list[tuple[str, str, str]]) -> list[ParsedFile]:
-        if len(jobs) < PARALLEL_PARSE_MIN_FILES:
-            return [_parse_job(j) for j in jobs]
+        full_jobs = [(*job, self.languages) for job in jobs]
+        if len(full_jobs) < PARALLEL_PARSE_MIN_FILES:
+            return [_parse_job(j) for j in full_jobs]
         workers = min(os.cpu_count() or 1, max(1, len(jobs) // 8))
         # 'fork' does not re-import the caller's __main__ (library-safe); Windows has only 'spawn'.
         method = "fork" if "fork" in multiprocessing.get_all_start_methods() else "spawn"
         ctx = multiprocessing.get_context(method)
         with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
-            return list(pool.map(_parse_job, jobs, chunksize=8))
+            return list(pool.map(_parse_job, full_jobs, chunksize=8))
 
     def sync(self, root_dir: str, project: str | None = None, verbose: bool = True) -> dict[str, int]:
         root_dir = os.path.abspath(root_dir)
@@ -298,7 +309,7 @@ class Indexer:
     def _index_file(self, filepath: str, file_hash: str, project: str = "global") -> None:
         with self.db.transaction():
             self.db.clear_file_metadata(filepath)
-            self._write_parsed(parse_file(filepath, file_hash, project))
+            self._write_parsed(parse_file(filepath, file_hash, project, self.languages))
         for hook in self.post_sync_hooks:
             hook(True, {project})
 

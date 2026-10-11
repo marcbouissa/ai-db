@@ -19,7 +19,7 @@ jobs:
         run: pip install uv
 
       - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
+        run: uv pip install --system -e ".[dev]" -e packages/ai-db-scene
 
       - name: Create CI config
         run: |
@@ -46,7 +46,9 @@ jobs:
         run: ruff check .   # scope + exclusions come from [tool.ruff] in pyproject.toml
 
       - name: Type check
-        run: mypy ai_db mcp_server.py
+        run: |
+          mypy ai_db mcp_server.py
+          mypy packages/ai-db-scene/ai_db_scene
 
       - name: Eval lexical baseline
         env:

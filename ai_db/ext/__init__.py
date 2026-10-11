@@ -16,10 +16,10 @@ Example extensions included:
 - seg: Image segmentation masks (PNG/RLE formats)
 """
 
-from ai_db.ext.base import ChunkerExtension, register_chunker, get_chunker
+from ai_db.ext.base import ChunkerExtension, get_chunker, register_chunker
 
 __all__ = [
     "ChunkerExtension",
-    "register_chunker",
     "get_chunker",
+    "register_chunker",
 ]

@@ -2,13 +2,17 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ToolCallRequest(BaseModel):
+    # MCP sends the progress token as "_meta"; a leading underscore makes a pydantic
+    # field private (silently dropped), so it is exposed as ``meta`` via an alias.
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
-    _meta: dict[str, Any] | None = None
+    meta: dict[str, Any] | None = Field(default=None, alias="_meta")
 
 
 class ToolCallResponse(BaseModel):
@@ -74,12 +78,6 @@ class ProjectResponse(BaseModel):
     db_path: str
     config_path: str | None = None
     auto_start: bool = True
-
-
-class ProjectTemplate(BaseModel):
-    name: str
-    description: str
-    config: dict[str, Any]
 
 
 class ErrorResponse(BaseModel):

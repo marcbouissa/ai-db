@@ -73,9 +73,10 @@ def test_watcher_reindexes_on_change(tmp_path, repo):
         _stop.set()
         for _ in watch(str(repo), stop_event=_stop):
             pass
-    except Exception as e:
+    except (OSError, RuntimeError) as e:
         if "Too many open files" in str(e) or "os error 24" in str(e):
             pytest.skip(f"System inotify limit reached: {e}")
+        raise
 
     db_path = str(tmp_path / "w.db")
     stop = threading.Event()

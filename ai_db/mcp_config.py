@@ -86,4 +86,8 @@ Use `investigate --fmt stub` before reading files. `expand ref:` only what you n
 
 - Read the target lines before editing. Trust `stale: true` flags.
 - Use qualified names with `callers` (`Class.method`). Check `truncated`.
+- Run noisy commands (tests, builds, linters) as `ai-db run --need "<what you need>" -- <cmd>`:
+  you get the failures, tracebacks and summary, not the whole log; the exit code is kept.
+  Drill in with `ai-db filter --id <id> "<other need>"` or `--lines A-B` instead of re-running.
+  Add `--rerank` when your need is phrased differently from what the output would say.
 """

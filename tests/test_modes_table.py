@@ -68,14 +68,14 @@ class TestTableContent:
 
     def test_language_count_is_not_hardcoded_wrong(self) -> None:
         """The coverage row is generated; assert it agrees with the parser."""
-        from ai_db.parser.ts_graph import SUPPORTED_LANGUAGES
+        from ai_db.parser.languages import EXT_TO_LANG
 
-        langs = {v for v in SUPPORTED_LANGUAGES.values()}
+        langs = set(EXT_TO_LANG.values())
         with open(TABLE, encoding="utf-8") as fh:
             text = fh.read()
         row = next(line for line in text.splitlines() if "Languages parsed" in line)
         assert f"{len(langs)} grammars" in row, row
-        assert f"{len(SUPPORTED_LANGUAGES)} extensions" in row, row
+        assert f"{len(EXT_TO_LANG)} extensions" in row, row
 
     def test_no_placeholder_text_left(self) -> None:
         with open(TABLE, encoding="utf-8") as fh:

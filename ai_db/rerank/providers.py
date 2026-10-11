@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from ai_db.device import resolve_device
+from ai_db.device import CPU, configure_cpu_threads, resolve_device
 from ai_db.errors import AiDbConfigError
 from ai_db.http_client import AiDbProviderError, post_json
 from ai_db.rerank.base import RerankProvider
@@ -32,6 +32,8 @@ class CrossEncoderReranker(RerankProvider):
         self.model_name = options["model"]
         device = resolve_device(options.get("device"), where="rerank")
         self.device = device
+        if device == CPU:
+            configure_cpu_threads()
         from ai_db.quiet import quiet_model_load
         with quiet_model_load(self.model_name):
             self.model = CrossEncoder(self.model_name, device=device)
