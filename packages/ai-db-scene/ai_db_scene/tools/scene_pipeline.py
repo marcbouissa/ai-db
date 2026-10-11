@@ -863,6 +863,16 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
             out["physics"] = BlenderClient().request("run_code", physics_commands(spec, placements)["params"])["result"]
         except (BlenderError, KeyError, TypeError) as e:
             out["physics"] = {"error": str(e)}
+    if args.get("judge"):
+        import tempfile
+        import uuid
+
+        out["critique"] = critique(left, repairs, built.get("failed"), out.get("polys"))
+        target = Path(args.get("render_path") or Path(tempfile.gettempdir()) / "ai_db_judge" / f"{uuid.uuid4().hex}.png")
+        try:
+            out["render"] = judge_render(target)
+        except BlenderError as e:
+            out["render_error"] = str(e)
     # every build is a run: exemplar search (get_scene_spec_schema, search_exemplars) learns
     # from successes without anyone calling record_run (4 calls in 23 benchmark runs)
     blocking = sum(1 for i in left if i.get("severity") == "blocking")
@@ -974,6 +984,50 @@ def physics_commands(spec: SceneSpec, placements: list[Placement]) -> dict[str, 
     dynamic = {o.id for o in spec.objects if o.dynamic}
     payload = [pl.id for pl in placements if (pl.id if pl.id in ids else _SUFFIX.sub("", pl.id)) in dynamic]
     return {"type": "run_code", "params": {"code": _PHYSICS.format(payload=json.dumps(payload))}}
+
+
+#: validator check -> the edit_scene step that usually clears it (a hint, not an order)
+_CRITIQUE_FIX: dict[str, str] = {
+    "missing_objects": "update_setting {set: {bounds_m: larger}} or update_object {set: {count: fewer}}",
+    "out_of_bounds": "update_setting {set: {bounds_m: larger}} or remove_relation that pushes it out",
+    "interpenetration": "add_relation beside / in_front_of with gap_m, or remove_object one of them",
+    "floating": "add_relation {a: <id>, rel: on, b: <support>} or update_object {set: {category: a floor one}}",
+    "sunk": "remove_relation on, or update_object {set: {category: ...}} with a matching support",
+    "facing": "remove_relation against_wall that fixes its yaw, or move the target (add_relation in_front_of)",
+    "scale": "update_object {set: {category: the right one}}",
+    "door_clearance": "remove_relation against_wall near the door, or update_setting {set: {bounds_m: larger}}",
+}
+
+
+def critique(left: list[dict[str, Any]], repairs: list[str], failed: list[dict[str, Any]] | None,
+             polys: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """What a calling agent should look at after a build, worst first: validator issues still
+    open (missing objects included), spec repairs build_scene made, failed commands, a poly
+    budget it could not reach. Each item: source, severity, objects, message, suggest."""
+    out = [{"source": "validator", "severity": i.get("severity", "warning"), "check": i.get("check"),
+            "objects": i.get("objects") or [], "message": i.get("message", ""),
+            "suggest": _CRITIQUE_FIX.get(str(i.get("check")))} for i in left]
+    out += [{"source": "repair", "severity": "warning", "objects": [], "message": r,
+             "suggest": "edit the spec so it solves without this repair"} for r in repairs]
+    out += [{"source": "build", "severity": "blocking", "objects": [], "message": f"{f.get('type')}: {f.get('message')}",
+             "suggest": None} for f in failed or []]
+    if polys and polys.get("over_budget"):
+        out.append({"source": "polys", "severity": "warning", "objects": [],
+                    "message": f"{polys['faces_total']} faces, budget {polys['budget']} (heroes are never decimated)",
+                    "suggest": "update_object {set: {detail: draft}} or {hero: false} on heavy objects"})
+    rank = {"blocking": 0, "warning": 1}
+    return sorted(out, key=lambda c: rank.get(str(c["severity"]), 2))
+
+
+def judge_render(path: Path) -> str:
+    """Render the build's eye-level camera to ``path`` (small and quick: a probe, not a final)."""
+    from ai_db_scene.constants import BUILD_JUDGE_RESOLUTION, BUILD_JUDGE_SAMPLES
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    res = BlenderClient(timeout=300.0).request("render", {
+        "filepath": str(path), "resolution": list(BUILD_JUDGE_RESOLUTION), "samples": BUILD_JUDGE_SAMPLES,
+        "denoise": False})
+    return str(res.get("filepath") or path) if isinstance(res, dict) else str(path)
 
 
 def _stored_spec(scene_id: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -1126,7 +1180,11 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
                           "description": ("total faces; reports faces per object and decimates the heaviest "
                                           "non-hero objects until the scene fits (report: polys)")},
           "physics": {"type": "boolean",
-                      "description": "add rigid bodies: passive structure and furniture, active objects with dynamic: true"}},
+                      "description": "add rigid bodies: passive structure and furniture, active objects with dynamic: true"},
+          "judge": {"type": "boolean",
+                    "description": ("render the build camera (render) and return a structured critique (validator issues, "
+                                    "missing objects, repairs, failed commands) with suggested edit_scene steps")},
+          "render_path": {"type": "string", "description": "judge: where to write the render (default: a temp file)"}},
       "required": ["spec"]},
      _handle_build_scene),
     ("edit_scene",

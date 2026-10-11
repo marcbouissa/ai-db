@@ -373,3 +373,24 @@ def test_live_physics_adds_rigid_bodies(private_blender, mem, monkeypatch):
         "    return sorted({o.rigid_body.type for o in [r, *r.children_recursive] if o.rigid_body})\n"
         "result = {n: kinds(n) for n in ('sofa', 'lamp', 'Room_Floor')}\n")
     assert got == {"sofa": ["PASSIVE"], "lamp": ["ACTIVE"], "Room_Floor": ["PASSIVE"]}, got
+
+
+def test_critique_orders_blocking_first_and_suggests_steps():
+    left = [{"check": "facing", "severity": "warning", "objects": ["sofa"], "message": "sofa misses tv"},
+            {"check": "missing_objects", "severity": "blocking", "objects": ["chair"], "message": "chair: 2 of 4"}]
+    out = sp.critique(left, ["dropped relation lamp beside sofa"], [{"type": "generate_asset", "message": "boom"}],
+                      {"over_budget": True, "faces_total": 900, "budget": 500})
+    assert [c["source"] for c in out] == ["validator", "build", "validator", "repair", "polys"]
+    assert out[0]["check"] == "missing_objects" and "bounds_m" in out[0]["suggest"]
+    assert sp.critique([], [], None, None) == []
+
+
+@pytest.mark.blender
+def test_live_judge_renders_and_critiques(private_blender, mem, tmp_path):
+    spec = dict(SPEC, objects=[*SPEC["objects"], {"id": "chair", "category": "dining_chair", "count": 2}])
+    res = sp._handle_build_scene({"spec": spec, "clear": True, "snapshot": False, "judge": True,
+                                  "render_path": str(tmp_path / "judge.png")})
+    assert "render_error" not in res, res.get("render_error")
+    assert (tmp_path / "judge.png").stat().st_size > 0
+    assert isinstance(res["critique"], list)
+    assert all({"source", "severity", "objects", "message", "suggest"} <= set(c) for c in res["critique"])

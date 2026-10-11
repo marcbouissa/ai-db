@@ -33,6 +33,10 @@ Optional `build_scene` arguments:
   heaviest non-hero objects get a Decimate modifier until the scene fits (`polys.decimated`).
 - `physics: true`: rigid bodies on every mesh, passive (walls, floor, furniture) unless the
   object spec says `dynamic: true` (active, convex hull). Validation is unchanged.
+- `judge: true`: renders the build camera (`render`, or `render_path`) and returns `critique`:
+  open validator issues (missing objects included), repairs, failed commands, a missed poly
+  budget, blocking first, each with a `suggest`ed edit_scene step. Look at the render, fix with
+  `edit_scene`, build again until the critique has nothing blocking.
 
 1. **`get_scene_spec_schema(brief)`** returns the schema, the category vocabulary with typical
    sizes, the relations, and exemplar specs from past successful runs. Use only listed categories.
