@@ -25,6 +25,15 @@ MATERIAL_KINDS: dict[str, tuple[str, ...]] = {
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
+#: ``pbr:<preset>`` -> (library base material, wear amount 0..1, wear scale): the base gets the
+#: procedural grunge layer of the pbr-shader-builder skill (``add_grunge``), on a per-object copy.
+PBR_PRESETS: dict[str, tuple[str, float, float]] = {
+    "worn_metal": ("metal:steel", 0.6, 6.0), "rusty_steel": ("metal:rust", 0.7, 5.0),
+    "aged_brass": ("brass", 0.4, 10.0), "weathered_wood": ("wood:pine", 0.5, 4.0),
+    "scuffed_leather": ("leather", 0.4, 8.0), "dusty_plaster": ("plaster", 0.3, 12.0),
+    "worn_concrete": ("color:#8a8782", 0.6, 3.0),
+}
+
 #: Material of each category when the spec names none (box projection: placeholders have no UVs).
 CATEGORY_MATERIALS: dict[str, str] = {
     "armchair": "fabric:linen", "sofa": "fabric:linen", "bed": "fabric:weave", "rug": "fabric:weave",
@@ -117,14 +126,26 @@ def style_material(style: str | None, key: str) -> str | None:
 
 
 def material_vocabulary() -> list[str]:
-    """Every allowed ``kind[:variant]`` (tint suffix ``:#rrggbb`` allowed on any)."""
-    return [k if v == "" else f"{k}:{v}" for k, vs in MATERIAL_KINDS.items() for v in vs]
+    """Every allowed ``kind[:variant]`` (tint suffix ``:#rrggbb`` allowed on any but ``pbr:``)."""
+    return [k if v == "" else f"{k}:{v}" for k, vs in MATERIAL_KINDS.items() for v in vs] + [
+        f"pbr:{p}" for p in PBR_PRESETS]
+
+
+def pbr_preset(value: str | None) -> tuple[str, float, float] | None:
+    """(base material, wear amount, wear scale) of a ``pbr:<preset>`` material, else None."""
+    if not value or not value.startswith("pbr:"):
+        return None
+    return PBR_PRESETS.get(value[4:])
 
 
 def material_error(value: object) -> str | None:
     """Why ``value`` is not a valid material string, or None."""
     if not isinstance(value, str) or not value:
         return f"expected a material string like 'wood:oak', got {value!r}"
+    if value.startswith("pbr:"):
+        if value[4:] not in PBR_PRESETS:
+            return f"unknown pbr preset {value[4:]!r}; allowed: {sorted(PBR_PRESETS)}"
+        return None
     parts = value.split(":")
     kind, rest = parts[0], parts[1:]
     if kind not in MATERIAL_KINDS:
@@ -145,4 +166,6 @@ def material_for(category: str, chosen: str | None = None) -> str:
     """The addon material string for an object: the spec's choice, else the category default.
     Box projection: placeholders and simple meshes have no UV map."""
     base = chosen or CATEGORY_MATERIALS.get(category, DEFAULT_MATERIAL)
+    pbr = pbr_preset(base)
+    base = pbr[0] if pbr else base  # the wear layer goes on in a later step (scene_pipeline)
     return base if base.startswith("color") else f"{base}:proj=box"

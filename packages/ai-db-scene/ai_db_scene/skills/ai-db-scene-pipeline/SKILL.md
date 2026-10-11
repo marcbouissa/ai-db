@@ -34,7 +34,9 @@ Only use the step-by-step tools below when you need control over one stage.
    - `setting`: `kind` indoor|outdoor|tabletop|single_asset, `bounds_m` [x, y, height],
      `shape` rect|ellipse|polygon, optional `style` (modern|scandinavian|industrial|rustic|classic:
      a material palette for floor, walls and furniture), optional `floor_material` / `wall_material`
-     (explicit materials win over the style).
+     (explicit materials win over the style); any material may also be `pbr:<preset>` (worn_metal, rusty_steel,
+     aged_brass, weathered_wood, scuffed_leather, dusty_plaster, worn_concrete): a library
+     material with the pbr-shader-builder grunge layer.
    - `objects`: `id`, `category`, `count`, `hero`, `material` (see blender-material-library),
      `grid: {rows, cols, gap_m}` for rows of desks, tables or racks (solved as one block).
    - `relations`: `against_wall` (wall_north/south/east/west), `in_front_of` (A faces B at

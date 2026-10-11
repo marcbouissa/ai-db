@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
-from ai_db.errors import AiDbConfigError
+from ai_db.errors import AiDbConfigError, AiDbError
 from ai_db_scene.blender_client import BlenderClient, BlenderError
 from ai_db_scene.constants import (
     SCENE_CAMERA_HEIGHT_M,
@@ -33,6 +34,7 @@ from ai_db_scene.materials import (
     STYLE_PALETTES,
     WALL_MATERIAL,
     material_for,
+    pbr_preset,
     style_material,
 )
 from ai_db_scene.models import RUN_OUTCOMES, RunRecord
@@ -328,6 +330,40 @@ result = {{"reskinned": done}}
 """
 
 
+_WEAR = """
+import json
+for ent in json.loads(PAYLOAD):
+    root = bpy.data.objects.get(ent["name"])
+    if root is None:
+        continue
+    copies = {}
+    for o in [root, *root.children_recursive]:
+        for slot in (o.material_slots if o.type == "MESH" else ()):
+            m = slot.material
+            if m is None or not m.use_nodes or not any(n.type == "BSDF_PRINCIPLED" for n in m.node_tree.nodes):
+                continue
+            if m.name not in copies:  # library materials are shared: wear a copy
+                worn = m.copy()
+                worn.name = f"{m.name}_{ent['preset']}"
+                copies[m.name] = add_grunge(worn, amount=ent["amount"], scale=ent["scale"])
+            slot.material = copies[m.name]
+    worn_names.append(ent["name"])
+result = {"worn": worn_names}
+"""
+
+
+def _wear_command(wear: list[dict[str, Any]]) -> dict[str, Any]:
+    """run_code: the pbr-shader-builder skill's library, then its grunge on each listed object."""
+    from ai_db_scene import skills_dir
+
+    text = (Path(skills_dir()) / "pbr-shader-builder" / "SKILL.md").read_text(encoding="utf-8")
+    m = re.search(r"```python\n(.*?)```", text, re.DOTALL)
+    if m is None:
+        raise AiDbError("pbr-shader-builder skill has no code block")
+    code = m.group(1) + f"PAYLOAD = {json.dumps(wear)!r}\nworn_names = []\n" + _WEAR
+    return {"type": "run_code", "params": {"code": code}}
+
+
 def build_layout_commands(
     spec: SceneSpec, placements: list[Placement], asset_map: dict[str, Any] | None = None,
     geometry: str = "generated", providers: list[Any] | None = None,
@@ -451,6 +487,16 @@ def build_layout_commands(
             cmds.append({"type": "apply_material", "params": {"name": obj, "material": material_for("", mat)}})
         # anything else of the shell (ceiling, trim) gets the neutral room material
         cmds.append({"type": "run_code", "params": {"code": _ROOM_MATERIAL}})
+    ids = {o.id for o in spec.objects}
+    wear = [{"name": pl.id, "preset": chosen[4:], "amount": p[1], "scale": p[2]}
+            for pl in placements
+            if (chosen := materials.get(pl.id if pl.id in ids else _SUFFIX.sub("", pl.id)))
+            and (p := pbr_preset(chosen))]
+    if spec.setting.kind != "single_asset":
+        wear += [{"name": obj, "preset": mat[4:], "amount": p[1], "scale": p[2]}
+                 for obj, mat in surfaces if (p := pbr_preset(mat))]
+    if wear:
+        cmds.append(_wear_command(wear))
     cmds += lighting_commands(spec, placements, off)
     cmds.append(camera_command(spec, placements, off))
     return cmds, names

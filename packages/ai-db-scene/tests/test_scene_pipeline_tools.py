@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import json
+import re
 
 import pytest
 from ai_db_scene.memory import SceneMemory
@@ -238,3 +240,54 @@ def test_floor_area_by_shape():
     assert sp.floor_area_m2(_parsed(poly)) == pytest.approx(30.0)
     fill = next(c["params"] for c in _lights(poly) if c["type"] == "add_light")
     assert fill["location"][:2] == pytest.approx([3.0, 2.5])  # polygon rooms keep the layout frame
+
+
+_PBR_SPEC = {
+    "setting": {"kind": "indoor", "bounds_m": [5, 4, 2.7], "floor_material": "pbr:worn_concrete"},
+    "objects": [{"id": "cabinet", "category": "cabinet", "material": "pbr:rusty_steel"},
+                {"id": "crate", "category": "crate", "count": 2, "material": "pbr:weathered_wood"},
+                {"id": "lamp", "category": "floor_lamp"}],
+    "relations": [{"a": "cabinet", "rel": "against_wall", "b": "wall_north"}],
+}
+
+
+def test_pbr_presets_resolve_to_a_base_plus_the_skill_grunge():
+    from ai_db_scene.materials import material_error, material_for
+
+    assert material_error("pbr:worn_metal") is None
+    assert "allowed" in material_error("pbr:shiny")
+    assert material_for("cabinet", "pbr:rusty_steel") == "metal:rust:proj=box"
+    spec, _ = sp._parse_spec(_PBR_SPEC)
+    pls = sp.parse_placements(sp._handle_solve_layout({"spec": _PBR_SPEC})["placements"])
+    cmds, _ = sp.build_layout_commands(spec, pls, geometry="boxes")
+    mats = {c["params"]["name"]: c["params"]["material"] for c in cmds if c["type"] == "apply_material"}
+    assert mats["Room_Floor"] == "color:#8a8782" and mats["cabinet"] == "metal:rust:proj=box"
+    wear = [c for c in cmds if c["type"] == "run_code" and "add_grunge(worn" in c["params"]["code"]]
+    assert len(wear) == 1
+    code = wear[0]["params"]["code"]
+    compile(code, "<wear>", "exec")
+    payload = json.loads(ast.literal_eval(re.search(r"^PAYLOAD = (.*)$", code, re.MULTILINE).group(1)))
+    assert {e["name"] for e in payload} == {"cabinet", "crate_1", "crate_2", "Room_Floor"}
+    assert "lamp" not in code.split("PAYLOAD")[1]
+
+
+@pytest.mark.blender
+def test_live_pbr_preset_builds_worn_materials(private_blender, mem, monkeypatch):
+    from ai_db_scene.blender_client import BlenderClient
+
+    monkeypatch.setattr(sp, "_handle_validate_scene", lambda args: {"status": "success", "result": {"issues": []}})
+    res = sp._handle_build_scene({"spec": _PBR_SPEC, "clear": True, "snapshot": False})
+    assert res["status"] == "built", res
+    c = BlenderClient(port=private_blender, timeout=120)
+    got = c.run_code(
+        "import bpy\n"
+        "def mats(n):\n"
+        "    root = bpy.data.objects[n]\n"
+        "    return sorted({s.material.name for o in [root, *root.children_recursive]\n"
+        "                   for s in o.material_slots if s.material})\n"
+        "result = {n: mats(n) for n in ('cabinet', 'crate_1', 'Room_Floor', 'lamp')}\n"
+    )
+    assert all(m.endswith("_rusty_steel") for m in got["cabinet"]), got
+    assert got["crate_1"] and all(m.endswith("_weathered_wood") for m in got["crate_1"]), got
+    assert all(m.endswith("_worn_concrete") for m in got["Room_Floor"]), got
+    assert not any("_rusty" in m or "_weathered" in m for m in got["lamp"]), got
