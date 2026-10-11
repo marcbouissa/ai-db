@@ -8,6 +8,7 @@ The judges' fourth most common complaint about ai-db scenes was "boxes instead o
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from ai_db_scene.constants import (
@@ -255,24 +256,45 @@ _RECIPES.update({
         _box("shelf_gap", [0.5, 0.02, 0.4], [0.2, -0.47, 0.35], _DARK),
         *[_box(f"leg_{i}", [0.04, 0.04, 0.16], [x, y, 0], _DARK)
           for i, (x, y) in enumerate(((-0.46, -0.42), (0.46, -0.42), (-0.46, 0.45), (0.46, 0.45)))]],
+    # task chair: five-star base on casters, gas lift, upholstered seat and back cushions on a
+    # back support bar, armrests
     "office_chair": lambda: [
-        _cyl("base", [0.9, 0.9, 0.05], [0, 0, 0.04], _DARK),
-        *[_sphere(f"caster_{i}", [0.08, 0.08, 0.08], [x, y, 0], _DARK)
-          for i, (x, y) in enumerate(((0.4, 0), (-0.4, 0), (0, 0.4), (0, -0.4), (0.28, 0.28)))],
-        _cyl("gas_lift", [0.08, 0.08, 0.3], [0, 0, 0.09], "metal:chrome"),
-        _box("seat", [0.85, 0.8, 0.09], [0, -0.02, 0.39], "fabric:weave"),
-        _box("back_post", [0.08, 0.06, 0.2], [0, 0.4, 0.45], _DARK),
-        _box("back", [0.8, 0.08, 0.38], [0, 0.42, 0.62], "fabric:weave")],
+        _cyl("hub", [0.12, 0.12, 0.06], [0, 0, 0.05], _DARK),
+        *[_box(f"leg_{k}", [0.42, 0.06, 0.04], [round(0.19 * math.cos(math.radians(90 + 72 * k)), 4),
+                                                 round(0.19 * math.sin(math.radians(90 + 72 * k)), 4), 0.06],
+               _DARK, rotation_deg=[0, 0, 90 + 72 * k]) for k in range(5)],
+        *[_sphere(f"caster_{k}", [0.08, 0.08, 0.08], [round(0.38 * math.cos(math.radians(90 + 72 * k)), 4),
+                                                        round(0.38 * math.sin(math.radians(90 + 72 * k)), 4), 0], "rubber")
+          for k in range(5)],
+        _cyl("gas_lift", [0.06, 0.06, 0.32], [0, 0, 0.1], "metal:chrome"),
+        _box("seat_pan", [0.7, 0.66, 0.03], [0, 0, 0.41], _DARK),
+        {"id": "seat", "shape": "cushion", "size": [0.86, 0.8, 0.09], "at": [0, -0.02, 0.44], "crown": 0.012,
+         "material": "fabric:weave:#33373d"},
+        _box("back_bar", [0.08, 0.06, 0.3], [0, 0.41, 0.41], _DARK),
+        {"id": "back", "shape": "cushion", "size": [0.78, 0.08, 0.38], "at": [0, 0.44, 0.6], "crown": 0.01,
+         "material": "fabric:weave:#33373d"},
+        *[p for s, x in (("l", -0.44), ("r", 0.44)) for p in (
+            _box(f"arm_post_{s}", [0.05, 0.05, 0.2], [x, 0.05, 0.44], _DARK),
+            _box(f"arm_pad_{s}", [0.08, 0.36, 0.035], [x, 0.03, 0.64], "rubber"))]],
     "stool": lambda: [
         _cyl("seat", [1.0, 1.0, 0.07], [0, 0, 0.93], _WOOD),
         *[_box(f"leg_{i}", [0.07, 0.07, 0.93], [x, y, 0], _WOOD)
           for i, (x, y) in enumerate(((-0.3, -0.3), (0.3, -0.3), (-0.3, 0.3), (0.3, 0.3)))],
         _box("rung", [0.66, 0.05, 0.04], [0, -0.3, 0.3], _WOOD)],
+    # close-coupled toilet (front -Y): pedestal, a bowl widening to the rim, seat and lid,
+    # cistern with its lid and a chrome flush button
     "toilet": lambda: [
-        _box("tank", [0.9, 0.3, 0.45], [0, 0.35, 0.5], _WHITE_C),
-        _cyl("pedestal", [0.5, 0.6, 0.4], [0, 0.05, 0], _WHITE_C),
-        _cyl("bowl", [0.8, 0.85, 0.12], [0, -0.05, 0.4], _WHITE_C),
-        _cyl("seat", [0.82, 0.87, 0.03], [0, -0.05, 0.52], _WHITE_C)],
+        {"id": "pedestal", "shape": "tapered_cylinder", "size": [0.5, 0.55, 0.4], "at": [0, 0.02, 0],
+         "radius": 0.5, "radius_top": 0.62, "material": _WHITE_C},
+        {"id": "bowl", "shape": "tapered_cylinder", "size": [0.92, 0.76, 0.14], "at": [0, -0.06, 0.39],
+         "radius": 0.8, "radius_top": 1.0, "material": _WHITE_C},
+        _cyl("seat", [0.94, 0.78, 0.035], [0, -0.06, 0.53], "plastic:#f4f4f2"),
+        _cyl("lid", [0.9, 0.74, 0.025], [0, -0.07, 0.565], "plastic:#f4f4f2"),
+        {"id": "cistern", "shape": "rounded_slab", "size": [0.9, 0.24, 0.42], "at": [0, 0.38, 0.53],
+         "corner_radius": 0.03, "material": _WHITE_C},
+        {"id": "cistern_lid", "shape": "rounded_slab", "size": [0.94, 0.26, 0.04], "at": [0, 0.38, 0.95],
+         "corner_radius": 0.02, "material": _WHITE_C},
+        _cyl("flush", [0.12, 0.08, 0.012], [0, 0.38, 0.99], "metal:chrome")],
     "sink": lambda: [
         _box("cabinet", [0.96, 0.92, 0.8], [0, 0.04, 0], _WALNUT),
         _box("door_line", [0.006, 0.02, 0.7], [0, -0.43, 0.05], _DARK),
@@ -280,10 +302,14 @@ _RECIPES.update({
         _box("basin", [0.6, 0.55, 0.05], [0, -0.05, 0.84], "color:#c9ccd0"),  # the bowl, seen from above
         _box("faucet_base", [0.06, 0.08, 0.1], [0, 0.32, 0.86], "metal:chrome"),
         _box("spout", [0.04, 0.18, 0.04], [0, 0.2, 0.96], "metal:chrome")],
+    # built-in bathtub: a hollow body with rounded corners (open top, real inner basin), a little
+    # water, a chrome mixer on the rim at the foot end
     "bathtub": lambda: [
-        _box("outer", [1.0, 1.0, 1.0], [0, 0, 0], _WHITE_C),
-        _box("rim_water", [0.88, 0.8, 0.02], [0, 0, 0.99], "glass:tinted"),
-        _cyl("faucet", [0.04, 0.06, 0.15], [0.42, 0.44, 0.85], "metal:chrome")],
+        {"id": "body", "shape": "rounded_slab", "size": [1.0, 1.0, 0.9], "at": [0, 0, 0], "corner_radius": 0.06,
+         "material": _WHITE_C, "ops": [{"op": "shell", "thickness": 0.04, "open_faces": "top"}]},
+        _box("water", [0.9, 0.86, 0.01], [0, 0, 0.42], "glass:tinted"),
+        _cyl("mixer_post", [0.025, 0.06, 0.08], [0.44, 0, 0.9], "metal:chrome"),
+        _box("spout", [0.06, 0.03, 0.025], [0.415, 0, 0.955], "metal:chrome")],
     "shower_stall": lambda: [
         _box("tray", [1.0, 1.0, 0.05], [0, 0, 0], _WHITE_C),
         _box("glass_front", [1.0, 0.02, 0.95], [0, -0.49, 0.05], "glass:frosted"),
