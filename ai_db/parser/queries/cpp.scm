@@ -1,11 +1,34 @@
 ; C++ tree-sitter queries for symbols, cross-refs, and syntax errors
 
-; Function definitions
+; Function definitions (also returning pointers/references)
 (function_definition
   declarator: (function_declarator
     declarator: (identifier) @name
     parameters: (parameter_list) @params)
   body: (compound_statement) @body) @def.function
+
+(function_definition
+  declarator: [
+    (pointer_declarator
+      declarator: (function_declarator
+        declarator: (identifier) @name
+        parameters: (parameter_list) @params))
+    (reference_declarator
+      (function_declarator
+        declarator: (identifier) @name
+        parameters: (parameter_list) @params))
+  ]
+  body: (compound_statement) @body) @def.function
+
+; Methods defined in the class body (`void bar() {}`) and destructors (`~Foo() {}`)
+(function_definition
+  declarator: (function_declarator
+    declarator: [
+      (field_identifier) @name
+      (destructor_name) @name
+    ]
+    parameters: (parameter_list) @params)
+  body: (compound_statement) @body) @def.method
 
 ; Function declarations (prototypes, no body)
 (declaration
@@ -13,12 +36,15 @@
     declarator: (identifier) @name
     parameters: (parameter_list) @params)) @def.function
 
-; Method definitions in classes: Invoice::total
+; Out-of-class method definitions: Invoice::total, Foo::~Foo
 (function_definition
   declarator: (function_declarator
     declarator: (qualified_identifier
-      name: (identifier) @name
-      scope: (namespace_identifier)? @scope)
+      scope: (namespace_identifier)? @scope
+      name: [
+        (identifier) @name
+        (destructor_name) @name
+      ])
     parameters: (parameter_list) @params)
   body: (compound_statement) @body) @def.method
 

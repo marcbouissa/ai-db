@@ -99,6 +99,13 @@ def definition_name(node: Any, source: bytes, lang: str) -> str | None:
             if inner is not None:
                 return _text(source, inner).replace("::", ".")
         return None
+    if t == "type_definition" and lang in ("c", "cpp"):
+        # `typedef int t;`, `typedef struct s *sp;`, `typedef int (*cb)(int);`
+        decl = node.child_by_field_name("declarator")
+        while decl is not None and decl.type != "type_identifier":
+            nxt = decl.child_by_field_name("declarator")
+            decl = nxt if nxt is not None else (decl.named_children[0] if decl.named_children else None)
+        return _text(source, decl) if decl is not None else None
     var = bound_variable(node)
     if var is not None:
         name = var.child_by_field_name("name")

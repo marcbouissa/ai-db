@@ -310,24 +310,31 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - **Check:** `ai-db trace ServiceDispatcher.execute` on this repo returns a tree.
 
 ### G5. Per-language tree-sitter query bugs (`ai_db/parser/queries/*.scm`)
-- [ ] Python: add `aliased_import` / `dotted_name as` patterns; restrict `@def.type` to
+- [x] Python: add `aliased_import` / `dotted_name as` patterns; restrict `@def.type` to
   annotated or `TypeAlias` assignments at module/class scope (not `app = Flask()`, not
   `x = field()`); capture `attribute` bases (`abc.ABC`).
-- [ ] C: typedef pattern must match `type_definition` declarators directly; handle
+- [x] C: typedef pattern must match `type_definition` declarators directly; handle
   `pointer_declarator` for function names.
-- [ ] C++: in-class `field_identifier` methods, destructors, `template_declaration` (and the
+- [x] C++: in-class `field_identifier` methods, destructors, `template_declaration` (and the
   chunker must not put templates into `imports/globals`).
-- [ ] JS: `lexical_declaration` → `variable_declarator` with `arrow_function` value.
-- [ ] TS: `abstract_class_declaration`.
-- [ ] Go: struct emitted as both `struct` and `type` (dedupe); `selector_expression` alone is
+- [x] JS: `lexical_declaration` → `variable_declarator` with `arrow_function` value.
+- [x] TS: `abstract_class_declaration`.
+- [x] Go: struct emitted as both `struct` and `type` (dedupe); `selector_expression` alone is
   a field read, only capture it as a call under `call_expression.function`.
-- [ ] Rust: `impl Trait for Type` → caller scope is `Type`; record `Trait` as an implemented
+- [x] Rust: `impl Trait for Type` → caller scope is `Type`; record `Trait` as an implemented
   interface, not a base; generic impls.
-- [ ] Java: enum `implements` child order; `extends Base<T>` (`generic_type`);
+- [x] Java: enum `implements` child order; `extends Base<T>` (`generic_type`);
   `package_declaration` is not an import.
-- [ ] Chunker comment detection: also `line_comment`, `block_comment` (Rust/Java).
+- [x] Chunker comment detection: also `line_comment`, `block_comment` (Rust/Java).
 - **Check:** extend `tests/test_ts_graph.py` with one case per bullet. Polyglot eval
   `pack_recall` must not drop (`ai-db eval --suite polyglot` vs baseline).
+- **Done 2026-10-11:** `test_g5_*` in `tests/test_ts_graph.py`; polyglot `pack_recall` 1.0
+  (= baseline). Also: Python `from x import a` now emits one import ref per imported name
+  (the old pattern skipped single-name imports and duplicated others: 657 refs gained on
+  this repo, 0 lost), C macro calls are no longer counted twice, a Java enum's methods are
+  chunked (`Color.n`), Java supertypes match one per list entry (a quantified list captured
+  only the first). Lexical (0.8 vs 0.825) and pack (0.875 vs 0.9) evals were already below
+  baseline at `386cc81`, before this item.
 
 ### G6. `analyze_file` bodies are one line
 - [ ] **Observed:** `ai_db/analyzer/engine.py` end-line lookup compares `chunk.name == sym_name`,

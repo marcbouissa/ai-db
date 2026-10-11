@@ -34,11 +34,16 @@
   name: (type_identifier) @name
   body: (declaration_list) @body) @def.interface
 
-; `impl Trait for Type` - grammar fields are `trait:` (the trait) and
-; `type:` (the self type), in that source order.
+; `impl Trait for Type`: Type implements the trait (an interface, captured as @impl,
+; never as a base). The ref's caller is the impl's self type (`ai_db.parser.naming`),
+; generics and paths stripped: `impl<T> fmt::Display for Wrap<T>` -> Wrap implements Display.
 (impl_item
-  trait: (type_identifier) @base
-  type: (type_identifier)? @impl) @ref.inherit
+  trait: [
+    (type_identifier) @impl
+    (scoped_type_identifier name: (type_identifier) @impl)
+    (generic_type type: (type_identifier) @impl)
+    (generic_type type: (scoped_type_identifier name: (type_identifier) @impl))
+  ]) @ref.inherit
 
 ; Type aliases
 (type_item

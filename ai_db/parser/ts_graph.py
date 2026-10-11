@@ -63,7 +63,8 @@ def _python_in_class_body(func: Node) -> bool:
             and parent.parent is not None and parent.parent.type == "class_definition")
 
 
-_CLASS_NODES = ("class_definition", "class_declaration", "class_specifier", "struct_item",
+_CLASS_NODES = ("class_definition", "class_declaration", "abstract_class_declaration",
+                "class_specifier", "struct_item",
                 "struct_specifier", "interface_declaration", "enum_declaration", "impl_item",
                 "struct_declaration", "record_declaration", "clazz")
 _FUNCTION_NODES = ("function_definition", "function_declaration", "function_item",

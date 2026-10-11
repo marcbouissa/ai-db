@@ -46,6 +46,19 @@
     (implements_clause
       (type_identifier) @impl))?) @def.class @ref.inherit
 
+; Abstract classes (`abstract class Shape extends Base implements I`)
+(abstract_class_declaration
+  name: (type_identifier) @name
+  (class_heritage
+    (extends_clause
+      (identifier) @base))?) @def.class @ref.inherit
+
+(abstract_class_declaration
+  name: (type_identifier) @name
+  (class_heritage
+    (implements_clause
+      (type_identifier) @impl))?) @def.class @ref.inherit
+
 ; Interface declarations
 (interface_declaration
   name: (type_identifier) @name) @def.interface
@@ -61,6 +74,8 @@
 ; Export statements - separate patterns for each declaration type
 (export_statement
   (class_declaration) @def.class)
+(export_statement
+  (abstract_class_declaration) @def.class)
 (export_statement
   (interface_declaration) @def.interface)
 (export_statement

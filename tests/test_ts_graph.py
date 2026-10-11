@@ -539,3 +539,111 @@ def test_trace_finds_callees_in_every_polyglot_language(tmp_path):
             assert kids, entry
     finally:
         vdb.close()
+
+
+# ==============================================================================
+# G5: per-language query fixes
+# ==============================================================================
+
+def _graph(filename, code):
+    symbols, refs, _ = extract_graph(filename, code)
+    syms = {(s["symbol_type"], s["name"]) for s in symbols}
+    return syms, refs
+
+
+def _refs(refs, ref_type):
+    return [(r["caller_name"], r["callee_name"]) for r in refs if r["ref_type"] == ref_type]
+
+
+def test_g5_python_aliased_imports_types_and_attribute_bases():
+    code = ("import numpy as np\nimport os.path as osp\nfrom a import c as d, e\n"
+            "from typing import TypeAlias\n"
+            "Vec: TypeAlias = list[float]\ntype Pair = tuple[int, int]\nT = TypeVar('T')\n"
+            "app = Flask(__name__)\n\n"
+            "class Base(abc.ABC):\n    x = field(default=1)\n    y: int = field(default=2)\n"
+            "    z: int\n")
+    syms, refs = _graph("m.py", code)
+    imports = [callee for _, callee in _refs(refs, "import")]
+    assert {"numpy", "os.path", "a", "c", "e", "typing", "TypeAlias"} <= set(imports)
+    assert len(imports) == len(set(imports))  # one ref per imported module/name
+    types = {name for kind, name in syms if kind == "type"}
+    assert types == {"Vec", "Pair", "T", "y"}  # not app = Flask(), x = field(), bare z: int
+    assert ("module.Base", "ABC") in _refs(refs, "inherit")
+
+
+def test_g5_c_typedefs_and_pointer_functions():
+    code = ("typedef int myint;\ntypedef struct s *sp;\ntypedef int (*cb_t)(int);\n"
+            "static char *dup(const char *s) { return COPY(s); }\nint **grid(void) { return 0; }\n")
+    syms, refs = _graph("a.c", code)
+    assert {("type", "myint"), ("type", "sp"), ("type", "cb_t"),
+            ("function", "dup"), ("function", "grid")} <= syms
+    assert _refs(refs, "call") == [("module.dup", "COPY")]  # macro call counted once
+    names = {c["qualified_name"] for c in chunk_file("a.c", code)}
+    assert {"myint", "sp", "cb_t", "dup", "grid"} <= names
+
+
+def test_g5_cpp_in_class_methods_destructors_templates():
+    code = ("class Foo {\n public:\n  ~Foo() { cleanup(); }\n  void bar() { helper(); }\n};\n"
+            "Foo::~Foo() {}\n"
+            "template <typename T>\nT maxof(T a, T b) { return a; }\n"
+            "template <typename T>\nclass Box {\n  void put(T x) { store(x); }\n};\n")
+    syms, refs = _graph("a.cpp", code)
+    assert {("method", "~Foo"), ("method", "bar"), ("function", "maxof"), ("class", "Box"),
+            ("method", "put")} <= syms
+    chunks = {c["qualified_name"]: c for c in chunk_file("a.cpp", code)}
+    assert {"maxof", "Box", "Box.put"} <= set(chunks)
+    assert chunks["maxof"]["start_line"] == 7  # the template line belongs to it
+    assert not any(c.startswith("imports/globals") for c in chunks)
+    assert ("module.Box.put", "store") in _refs(refs, "call")
+
+
+def test_g5_js_arrow_function_bound_to_variable():
+    syms, _ = _graph("a.js", "const go = (b) => b + 1;\nlet g = function (a) { return a; };\n"
+                             "const n = 3;\n")
+    assert {("function", "go"), ("function", "g")} <= syms
+    assert not any(name == "n" for _, name in syms)
+
+
+def test_g5_ts_abstract_class():
+    code = ("export abstract class Shape extends Base implements Drawable {\n"
+            "  describe(): string { return fmt(1); }\n}\n")
+    syms, refs = _graph("a.ts", code)
+    assert ("class", "Shape") in syms
+    assert {("module.Shape", "Base"), ("module.Shape", "Drawable")} <= set(_refs(refs, "inherit"))
+
+
+def test_g5_go_struct_once_and_field_reads_are_not_calls():
+    code = ("package main\ntype S struct{ n int }\ntype ID string\n"
+            "func (s *S) M() { x := s.n; fmt.Println(x) }\n")
+    symbols, refs, _ = extract_graph("a.go", code)
+    assert [s["symbol_type"] for s in symbols if s["name"] == "S"] == ["struct"]
+    assert ("type", "ID") in {(s["symbol_type"], s["name"]) for s in symbols}
+    assert _refs(refs, "call") == [("module.S.M", "Println")]
+
+
+def test_g5_rust_impl_trait_for_type():
+    code = ("struct Wrap<T>(T);\nimpl<T> fmt::Display for Wrap<T> {\n"
+            "    fn fmt(&self) { helper(); }\n}\nfn helper() {}\n")
+    _, refs = _graph("a.rs", code)
+    assert _refs(refs, "inherit") == [("module.Wrap", "Display")]  # trait only, never the type
+    assert ("module.Wrap.fmt", "helper") in _refs(refs, "call")
+
+
+def test_g5_java_generic_supertypes_enum_implements_and_package():
+    code = ("package com.x;\nimport java.util.List;\n"
+            "class A extends Base<String> implements Runnable, Comparable<A> {}\n"
+            "enum Color implements Named { RED; String n() { return go(); } }\n")
+    _, refs = _graph("A.java", code)
+    assert set(_refs(refs, "inherit")) == {("module.A", "Base"), ("module.A", "Runnable"),
+                                           ("module.A", "Comparable"), ("module.Color", "Named")}
+    assert [c for _, c in _refs(refs, "import")] == ["java.util.List"]  # package is not an import
+    assert "Color.n" in {c["qualified_name"] for c in chunk_file("A.java", code)}
+
+
+@pytest.mark.parametrize(("filename", "code"), [
+    ("c.rs", "use std::fmt;\n\n/// Doc for helper.\n// more\nfn helper() {}\n"),
+    ("C.java", "class A {\n  int x;\n  /** Doc for m. */\n  // line\n  void m() {}\n}\n"),
+])
+def test_g5_line_and_block_comments_attach_to_the_next_definition(filename, code):
+    chunk = next(c for c in chunk_file(filename, code) if c["qualified_name"] in ("helper", "A.m"))
+    assert "Doc for" in chunk["content"]

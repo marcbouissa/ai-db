@@ -25,11 +25,27 @@
     name: (type_identifier) @name
     type: (interface_type))) @def.interface
 
-; type Alias = Other
+; Named non-struct, non-interface types (`type ID string`, `type H func()`); struct and
+; interface types are emitted once, by the patterns above
 (type_declaration
   (type_spec
     name: (type_identifier) @name
-    type: (_) @alias)) @def.type
+    type: [
+      (type_identifier)
+      (qualified_type)
+      (pointer_type)
+      (slice_type)
+      (array_type)
+      (map_type)
+      (channel_type)
+      (function_type)
+      (generic_type)
+    ])) @def.type
+
+; type Alias = Other
+(type_declaration
+  (type_alias
+    name: (type_identifier) @name)) @def.type
 
 ; Imports - the path is an interpreted_string_literal on import_spec
 (import_spec
@@ -39,16 +55,11 @@
 (call_expression
   function: (identifier) @callee) @ref.call
 
-; Calls to a package-qualified function (fmt.Println)
+; Package-qualified and method calls (fmt.Println(), obj.Method()). A selector alone
+; (obj.Field) is a field read, not a call.
 (call_expression
   function: (selector_expression
-    operand: (identifier)
     field: (field_identifier) @callee)) @ref.call
-
-; Method calls (obj.Method())
-(selector_expression
-  operand: (_)
-  field: (field_identifier) @callee) @ref.call
 
 ; Type conversions and assertions
 (type_assertion_expression

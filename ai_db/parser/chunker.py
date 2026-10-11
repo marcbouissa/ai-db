@@ -105,6 +105,8 @@ LANG_SPECS: dict[str, LangSpec] = {
         funcs=frozenset({"function_definition"}),
         containers=SCOPE_CONTAINERS["cpp"],
         leaves=frozenset({"enum_specifier", "type_definition"}),
+        # `template <...>` wraps the function/class it declares (no field: last child)
+        wrappers={"template_declaration": "declaration"},
     ),
     "java": LangSpec(
         comment="//",
@@ -276,7 +278,7 @@ class _CodeChunker:
             arrow = self._arrow_name(inner)
             if arrow:
                 return "func", inner, arrow
-        if node.type == "comment":
+        if node.type in _COMMENT_NODES:
             return "comment", node, None
         return "loose", node, None
 
@@ -348,7 +350,7 @@ class _CodeChunker:
         members: list[tuple[str, Any, Any, str, int]] = []
         if body is not None:
             pending: int | None = None
-            for child in body.named_children:
+            for child in _members(body):
                 c_kind, c_inner, c_name = self._classify(child)
                 c_start = child.start_point[0] + 1
                 if c_kind == "comment":
@@ -367,6 +369,19 @@ class _CodeChunker:
                                       _child_starts(body or inner), parent, skip=skip)
         for m_kind, m_outer, m_inner, m_name, m_start in members:
             self._emit(m_kind, m_outer, m_inner, m_name, m_start, header_idx)
+
+
+# Comment node types across grammars (Rust and Java split line and block comments).
+_COMMENT_NODES = frozenset({"comment", "line_comment", "block_comment"})
+
+
+def _members(body: Any) -> list[Any]:
+    """A container body's member nodes (a Java enum's methods sit one level down, in
+    ``enum_body_declarations``)."""
+    out: list[Any] = []
+    for child in body.named_children:
+        out.extend(child.named_children if child.type == "enum_body_declarations" else [child])
+    return out
 
 
 def _end_line(node: Any) -> int:
