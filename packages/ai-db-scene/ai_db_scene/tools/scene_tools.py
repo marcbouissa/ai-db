@@ -86,6 +86,15 @@ def _handle_restore_scene(args: dict[str, Any]) -> Any:
     return {"status": "restored" if not report["mismatches"] else "restored_with_mismatches", **report}
 
 
+def _handle_diff_scenes(args: dict[str, Any]) -> Any:
+    return get_scene_memory().diff_scenes(args["scene_a"], args["scene_b"])
+
+
+def _handle_restore_object(args: dict[str, Any]) -> Any:
+    report = get_scene_memory().restore_object(args["scene_id"], args["name"])
+    return {"status": "restored" if not report["mismatches"] else "restored_with_mismatches", **report}
+
+
 def _handle_scene_snapshot(args: dict[str, Any]) -> Any:
     """Live scene objects (read-only)."""
     client = get_scene_memory()._blender
@@ -257,6 +266,32 @@ _MEMORY_TOOLS: list[tuple[str, str, dict[str, Any]]] = [
                 },
             },
             "required": ["scene_id"],
+        },
+    ),
+    (
+        "diff_scenes",
+        ("Compare two snapshots: objects added, removed, moved (location/rotation/scale), "
+         "re-materialed or reshaped from scene_a to scene_b (matched by object name)"),
+        {
+            "type": "object",
+            "properties": {
+                "scene_a": {"type": "string", "description": "Earlier scene ID"},
+                "scene_b": {"type": "string", "description": "Later scene ID"},
+            },
+            "required": ["scene_a", "scene_b"],
+        },
+    ),
+    (
+        "restore_object",
+        ("Restore one object as a snapshot stored it (geometry from the snapshot's .blend when "
+         "present, else transform only) without touching the rest of the scene"),
+        {
+            "type": "object",
+            "properties": {
+                "scene_id": {"type": "string", "description": "Snapshot to restore from"},
+                "name": {"type": "string", "description": "Object name"},
+            },
+            "required": ["scene_id", "name"],
         },
     ),
     (
@@ -671,6 +706,8 @@ _FORWARDED_TOOLS += [
 _MEMORY_HANDLERS: dict[str, Any] = {
     "snapshot_scene": _handle_snapshot_scene,
     "restore_scene": _handle_restore_scene,
+    "diff_scenes": _handle_diff_scenes,
+    "restore_object": _handle_restore_object,
     "scene_snapshot": _handle_scene_snapshot,
     "validate_scene": lambda args: _validate(args),
     "list_scenes": _handle_list_scenes,

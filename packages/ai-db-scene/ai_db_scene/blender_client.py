@@ -194,6 +194,52 @@ class BlenderClient:
         )
         return list(self.run_code(code, timeout=120.0)["names"])
 
+    def restore_object(
+        self, path: str | None, name: str, location: list[float], rotation: list[float],
+        scale: list[float],
+    ) -> str:
+        """Put one object back: from the .blend at ``path`` when given, then set its transform.
+
+        The live object of that name (if any) is removed first so the stored one keeps the
+        exact name; nothing else in the scene changes. ``rotation`` is Euler degrees.
+        Returns ``"geometry"`` or ``"transform"`` (what was restored).
+        """
+        code = (
+            "import bpy, math\n"
+            f"path, name = {path!r}, {name!r}\n"
+            f"loc, rot, scale = {location!r}, {rotation!r}, {scale!r}\n"
+            "scene = bpy.context.scene\n"
+            "how = 'transform'\n"
+            "if path:\n"
+            "    with bpy.data.libraries.load(path, link=False) as (src, dst):\n"
+            "        if name not in src.objects:\n"
+            "            raise ValueError(f'object {name!r} is not in the stored geometry')\n"
+            "        dst.objects = [name]\n"
+            "    o = dst.objects[0]\n"
+            "    old = bpy.data.objects.get(name)\n"
+            "    if old is not None and old is not o:\n"
+            "        bpy.data.objects.remove(old, do_unlink=True)\n"
+            "    o.name = name\n"
+            "    o.use_fake_user = False\n"
+            "    cname = o.get('ai_db_collection') or ''\n"
+            "    coll = scene.collection if cname in ('', scene.collection.name) else bpy.data.collections.get(cname)\n"
+            "    if coll is None:\n"
+            "        coll = bpy.data.collections.new(cname)\n"
+            "        scene.collection.children.link(coll)\n"
+            "    elif coll is not scene.collection and coll.name not in scene.collection.children:\n"
+            "        scene.collection.children.link(coll)\n"
+            "    coll.objects.link(o)\n"
+            "    how = 'geometry'\n"
+            "o = scene.objects.get(name)\n"
+            "if o is None:\n"
+            "    raise ValueError(f'object {name!r} is not in the scene and no geometry is stored')\n"
+            "o.location = loc\n"
+            "o.rotation_euler = [math.radians(a) for a in rot]\n"
+            "o.scale = scale\n"
+            "result = {'restored': how}\n"
+        )
+        return str(self.run_code(code, timeout=60.0)["restored"])
+
     def extract_scene_state(
         self, project: str = "default", name: str = "Blender Scene"
     ) -> SceneState:

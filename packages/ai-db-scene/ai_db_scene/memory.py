@@ -125,16 +125,7 @@ class SceneMemory:
         if self._blender is None:
             raise AiDbError("Blender is not connected: start Blender with the ai-db addon server")
         scene = self.restore_scene(scene_id)
-        path: Path | None = None
-        cur: SceneState | None = scene
-        visited: set[str] = set()
-        while cur is not None and cur.scene_id not in visited:
-            visited.add(cur.scene_id)
-            candidate = self.blend_path(cur.scene_id)
-            if candidate is not None and candidate.exists():
-                path = candidate
-                break
-            cur = self.backend.load_scene(cur.parent_scene_id) if cur.parent_scene_id else None
+        path = self._geometry_path(scene)
         if path is None:
             raise AiDbError(f"snapshot {scene_id} has no stored geometry (taken before geometry "
                             f"was saved, or without Blender); take a new snapshot")
@@ -159,6 +150,95 @@ class SceneMemory:
                      scene_id, mode, len(names), len(mismatches))
         return {"scene_id": scene_id, "mode": mode, "restored": len(names),
                 "geometry_from": path.stem, "mismatches": mismatches}
+
+    def _load(self, scene_id: str) -> SceneState:
+        scene = self.backend.load_scene(scene_id)
+        if scene is None:
+            raise AiDbError(f"scene not found: {scene_id}")
+        return scene
+
+    def _geometry_path(self, scene: SceneState) -> Path | None:
+        """The .blend holding ``scene``'s geometry: its own, else the nearest ancestor's."""
+        cur: SceneState | None = scene
+        visited: set[str] = set()
+        while cur is not None and cur.scene_id not in visited:
+            visited.add(cur.scene_id)
+            candidate = self.blend_path(cur.scene_id)
+            if candidate is not None and candidate.exists():
+                return candidate
+            cur = self.backend.load_scene(cur.parent_scene_id) if cur.parent_scene_id else None
+        return None
+
+    def diff_scenes(self, scene_a: str, scene_b: str, tol: float = 1e-3) -> dict[str, Any]:
+        """What changed from snapshot ``scene_a`` to ``scene_b``, objects matched by name.
+
+        ``moved`` lists every transform field that differs by more than ``tol`` (rotation:
+        0.02 degrees, its stored precision); ``rematerialed`` objects whose material list
+        changed; ``reshaped`` objects whose vertex/face counts changed.
+        """
+        a, b = self._load(scene_a), self._load(scene_b)
+        objs_a = {o.name: o for o in a.objects.values()}
+        objs_b = {o.name: o for o in b.objects.values()}
+        moved: list[dict[str, Any]] = []
+        rematerialed: list[dict[str, Any]] = []
+        reshaped: list[dict[str, Any]] = []
+        for name in sorted(objs_a.keys() & objs_b.keys()):
+            oa, ob = objs_a[name], objs_b[name]
+            changes = {}
+            for field_name in ("location", "rotation", "scale"):
+                va, vb = getattr(oa, field_name), getattr(ob, field_name)
+                limit = 0.02 if field_name == "rotation" else tol
+                if any(not math.isclose(x, y, abs_tol=limit) for x, y in zip(va, vb)):
+                    changes[field_name] = {"from": list(va), "to": list(vb)}
+            if changes:
+                moved.append({"name": name, **changes})
+            if list(oa.materials) != list(ob.materials):
+                rematerialed.append({"name": name, "from": list(oa.materials), "to": list(ob.materials)})
+            if (oa.vertices, oa.faces) != (ob.vertices, ob.faces):
+                reshaped.append({"name": name, "from": [oa.vertices, oa.faces],
+                                 "to": [ob.vertices, ob.faces]})
+        added = sorted(objs_b.keys() - objs_a.keys())
+        removed = sorted(objs_a.keys() - objs_b.keys())
+        return {"scene_a": scene_a, "scene_b": scene_b, "added": added, "removed": removed,
+                "moved": moved, "rematerialed": rematerialed, "reshaped": reshaped,
+                "unchanged": not (added or removed or moved or rematerialed or reshaped)}
+
+    def restore_object(self, scene_id: str, name: str, tol: float = 1e-3) -> dict[str, Any]:
+        """Put one object back as snapshot ``scene_id`` stored it; the rest of the scene is untouched.
+
+        With stored geometry (the snapshot's .blend or an ancestor's) the live object is
+        replaced by the stored one (mesh, materials, modifiers); without it only the transform
+        is reset, which needs the object to still exist. The transform always comes from the
+        snapshot itself and is verified against the live scene afterwards.
+        """
+        if self._blender is None:
+            raise AiDbError("Blender is not connected: start Blender with the ai-db addon server")
+        scene = self._load(scene_id)
+        want = next((o for o in scene.objects.values() if o.name == name), None)
+        if want is None:
+            raise AiDbError(f"object {name!r} is not in snapshot {scene_id}")
+        path = self._geometry_path(scene)
+        self._blender.restore_object(
+            str(path) if path is not None else None, name, list(want.location),
+            list(want.rotation), list(want.scale),
+        )
+        live = self._blender.extract_scene_state()
+        got = next((o for o in live.objects.values() if o.name == name), None)
+        mismatches: list[dict[str, Any]] = []
+        if got is None:
+            mismatches.append({"name": name, "problem": "missing"})
+        else:
+            for field_name in ("location", "rotation", "scale"):
+                a, b = getattr(want, field_name), getattr(got, field_name)
+                limit = 0.02 if field_name == "rotation" else tol
+                if any(not math.isclose(x, y, abs_tol=limit) for x, y in zip(a, b)):
+                    mismatches.append({"name": name, "problem": field_name,
+                                       "stored": list(a), "live": list(b)})
+        _logger.info("Object %s restored from %s (%s)", name, scene_id,
+                     "geometry" if path is not None else "transform only")
+        return {"scene_id": scene_id, "name": name,
+                "geometry_from": path.stem if path is not None else None,
+                "mismatches": mismatches}
 
     def list_scenes(self, project: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         """List available scene snapshots."""

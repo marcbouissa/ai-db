@@ -362,6 +362,7 @@ class TestSceneMemory:
 SCENE_TOOLS = {
     "snapshot_scene", "restore_scene", "list_scenes", "get_scene_history",
     "search_scenes_by_prompt", "search_objects", "fork_scene", "get_scene_versions",
+    "diff_scenes", "restore_object",
 }
 
 
@@ -449,6 +450,20 @@ class _FakeBlender:
             self.scene.objects[k] = o
         return [o.name for o in stored.objects.values()]
 
+    def restore_object(self, path, name, location, rotation, scale):
+        import copy
+        live = {o.name: k for k, o in self.scene.objects.items()}
+        if path is not None:
+            stored = {o.name: (k, o) for k, o in self.files[path].objects.items()}
+            if name in live:
+                del self.scene.objects[live[name]]
+            key, obj = stored[name]
+            self.scene.objects[key] = copy.deepcopy(obj)
+            live[name] = key
+        obj = self.scene.objects[live[name]]
+        obj.location, obj.rotation, obj.scale = tuple(location), tuple(rotation), tuple(scale)
+        return "geometry" if path is not None else "transform"
+
 
 class TestApplyScene:
     def _memory(self, tmp_path, scene):
@@ -524,3 +539,109 @@ def test_snapshot_with_parent_is_the_next_version(tmp_path):
     assert chain[0].version == chain[1].version + 1
     with pytest.raises(AiDbError, match="parent scene not found"):
         memory.snapshot_scene(prompt="x", parent_scene_id="nope")
+
+
+def _two_object_scene(scene_id: str) -> SceneState:
+    scene = _sample_scene(scene_id)
+    lamp = ObjectState(uuid=f"{scene_id}-lamp", name="Lamp", location=(0.0, 0.0, 1.0), materials=["Brass"])
+    scene.objects[lamp.uuid] = lamp
+    return scene
+
+
+class TestDiffAndRestoreObject:
+    def _memory(self, tmp_path, scene):
+        from ai_db_scene.memory import SceneMemory
+        memory = SceneMemory(backend="json_file", config={"path": str(tmp_path / "t")})
+        fake = _FakeBlender(scene)
+        memory.set_blender_client(fake)
+        return memory, fake
+
+    def test_diff_reports_added_removed_moved_and_rematerialed(self, tmp_path):
+        memory, fake = self._memory(tmp_path, _two_object_scene("a"))
+        a = memory.snapshot_scene(prompt="before")
+        cube = next(o for o in fake.scene.objects.values() if o.name == "Cube")
+        cube.location = (5.0, 2.0, 3.0)
+        cube.rotation = (0.0, 0.0, 90.0)
+        lamp_key = next(k for k, o in fake.scene.objects.items() if o.name == "Lamp")
+        lamp = fake.scene.objects.pop(lamp_key)
+        fake.scene.objects["rug"] = ObjectState(uuid="rug", name="Rug", materials=["Wool"])
+        fake.scene.scene_id = "b"
+        b = memory.snapshot_scene(prompt="after")
+        diff = memory.diff_scenes(a, b)
+        assert diff["added"] == ["Rug"] and diff["removed"] == ["Lamp"]
+        assert [m["name"] for m in diff["moved"]] == ["Cube"]
+        assert set(diff["moved"][0]) == {"name", "location", "rotation"}
+        assert not diff["unchanged"]
+        fake.scene.objects[lamp_key] = lamp
+        cube.materials = ["Blue"]
+        fake.scene.scene_id = "c"
+        c = memory.snapshot_scene(prompt="re-material")
+        diff = memory.diff_scenes(b, c)
+        assert diff["added"] == ["Lamp"] and diff["moved"] == []
+        assert diff["rematerialed"] == [{"name": "Cube", "from": ["Red"], "to": ["Blue"]}]
+        assert memory.diff_scenes(a, a)["unchanged"]
+
+    def test_diff_unknown_scene_is_an_error(self, tmp_path):
+        from ai_db.errors import AiDbError
+        memory, _fake = self._memory(tmp_path, _two_object_scene("a"))
+        a = memory.snapshot_scene(prompt="p")
+        with pytest.raises(AiDbError, match="scene not found"):
+            memory.diff_scenes(a, "nope")
+
+    def test_restore_object_touches_only_that_object(self, tmp_path):
+        memory, fake = self._memory(tmp_path, _two_object_scene("a"))
+        sid = memory.snapshot_scene(prompt="p")
+        by_name = {o.name: o for o in fake.scene.objects.values()}
+        by_name["Cube"].location = (9.0, 9.0, 9.0)
+        by_name["Lamp"].location = (7.0, 7.0, 7.0)
+        report = memory.restore_object(sid, "Cube")
+        assert report["mismatches"] == [] and report["geometry_from"] == sid
+        live = {o.name: o for o in fake.scene.objects.values()}
+        assert live["Cube"].location == (1.0, 2.0, 3.0)
+        assert live["Lamp"].location == (7.0, 7.0, 7.0)
+
+    def test_restore_object_without_geometry_resets_the_transform(self, tmp_path):
+        from ai_db.errors import AiDbError
+        memory, fake = self._memory(tmp_path, _two_object_scene("a"))
+        sid = memory.snapshot_scene(prompt="p")
+        memory.blend_path(sid).unlink()
+        next(o for o in fake.scene.objects.values() if o.name == "Lamp").scale = (2.0, 2.0, 2.0)
+        report = memory.restore_object(sid, "Lamp")
+        assert report["geometry_from"] is None and report["mismatches"] == []
+        with pytest.raises(AiDbError, match="not in snapshot"):
+            memory.restore_object(sid, "Ghost")
+
+
+@pytest.mark.blender
+def test_live_restore_object_brings_back_a_deleted_object(private_blender, tmp_path):
+    from ai_db_scene.blender_client import BlenderClient
+    from ai_db_scene.memory import SceneMemory
+
+    c = BlenderClient(port=private_blender, timeout=120)
+    c.run_code(
+        "import bpy\n"
+        "for o in list(bpy.context.scene.objects):\n"
+        "    bpy.data.objects.remove(o, do_unlink=True)\n"
+        "bpy.ops.mesh.primitive_cube_add(location=(1, 2, 0.5))\n"
+        "bpy.context.active_object.name = 'box'\n"
+        "bpy.ops.mesh.primitive_uv_sphere_add(location=(-1, 0, 0.5))\n"
+        "bpy.context.active_object.name = 'ball'\n"
+        "result = 1\n"
+    )
+    memory = SceneMemory(backend="json_file", config={"path": str(tmp_path / "mem")})
+    memory.set_blender_client(c)
+    a = memory.snapshot_scene(prompt="two shapes")
+    c.run_code(
+        "import bpy\n"
+        "bpy.data.objects.remove(bpy.data.objects['box'], do_unlink=True)\n"
+        "bpy.data.objects['ball'].location = (3, 3, 0.5)\n"
+        "result = 1\n"
+    )
+    b = memory.snapshot_scene(prompt="edited")
+    diff = memory.diff_scenes(a, b)
+    assert diff["removed"] == ["box"] and [m["name"] for m in diff["moved"]] == ["ball"]
+    report = memory.restore_object(a, "box")
+    assert report["mismatches"] == [], report
+    names = c.run_code("import bpy\nresult = sorted(o.name for o in bpy.context.scene.objects)")
+    assert names == ["ball", "box"]
+    assert c.run_code("import bpy\nresult = list(bpy.data.objects['ball'].location)") == [3, 3, 0.5]
