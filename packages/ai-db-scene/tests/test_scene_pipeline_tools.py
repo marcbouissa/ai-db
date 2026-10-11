@@ -491,3 +491,56 @@ def test_live_exposure_check_brings_dark_render_into_band(private_blender, mem):
     fixed = sp.exposure_check()
     assert fixed["rounds"] >= 2 and fixed["adjusted_by"] >= 3.9, fixed
     assert BlenderClient().run_code("import bpy\nresult = bpy.context.scene.render.resolution_x") == 1234
+
+
+def test_camera_spots_stay_inside_curved_and_polygon_rooms():
+    import math
+
+    oval = dict(SPEC, setting={"kind": "indoor", "bounds_m": [10, 7, 4], "shape": "ellipse"},
+                relations=[{"a": "sofa", "rel": "against_wall", "b": "wall", "at_deg": 90}, *SPEC["relations"][1:]])
+    spec, errors = sp._parse_spec(oval)
+    assert spec, errors
+    for x, y in sp._camera_spots(spec):
+        assert ((x - 5) / 5) ** 2 + ((y - 3.5) / 3.5) ** 2 < 1  # a bbox corner is outside the oval
+    poly = dict(SPEC, setting={"kind": "indoor", "bounds_m": [6, 6, 3], "shape": "polygon",
+                               "points": [[0, 0], [6, 0], [6, 3], [3, 3], [3, 6], [0, 6]]},
+                relations=[{"a": "sofa", "rel": "against_wall", "b": "wall_1"}, *SPEC["relations"][1:]])
+    spec, errors = sp._parse_spec(poly)
+    assert spec, errors
+    assert all(sp._inside_polygon(x, y, spec.setting.points) for x, y in sp._camera_spots(spec))
+    pls = sp.parse_placements(sp._handle_solve_layout({"spec": oval})["placements"])
+    spec, _ = sp._parse_spec(oval)
+    poses = sp.camera_poses(spec, pls, sp.frame_offset(spec))
+    assert len(poses) == 8 and len({p["location"][2] for p in poses}) == 2
+    assert sp.camera_command(spec, pls, sp.frame_offset(spec))["params"] == poses[0]
+    fp = sp.footprint(spec, sp.frame_offset(spec))
+    assert all(math.isclose((x / 5) ** 2 + (y / 3.5) ** 2, 1) for x, y in fp)
+
+
+def test_camera_issue_and_targets():
+    assert sp.camera_issue({"inside": True, "targets": ["sofa"], "visible_heroes": ["sofa"], "tried": 1}) is None
+    issue = sp.camera_issue({"inside": False, "targets": ["sofa"], "visible_heroes": [], "tried": 8})
+    assert issue and issue["objects"] == ["sofa"] and "outside" in issue["message"]
+    assert sp.camera_issue({"error": "x"}) is None
+    spec, _ = sp._parse_spec(dict(SPEC, objects=[dict(o, hero=False) for o in SPEC["objects"]]))
+    pls = sp.parse_placements(sp._handle_solve_layout({"spec": spec.to_dict()})["placements"])
+    assert len(sp.coverage_targets(spec, pls)) == 3
+
+
+@pytest.mark.blender
+def test_live_camera_check_moves_off_a_blocked_view(private_blender, mem):
+    from ai_db_scene.blender_client import BlenderClient
+
+    res = sp._handle_build_scene({"spec": SPEC, "clear": True, "snapshot": False, "exposure_check": False})
+    assert res["camera"]["inside"] and res["camera"]["visible_heroes"] == ["sofa"], res["camera"]
+    # a wall-sized slab right in front of the camera hides the sofa: another spot is chosen
+    BlenderClient().run_code(
+        "import bpy\nfrom mathutils import Vector\ncam = bpy.context.scene.camera\n"
+        "fwd = cam.matrix_world.to_quaternion() @ Vector((0, 0, -1))\n"
+        "bpy.ops.mesh.primitive_cube_add(size=1, location=cam.location + fwd * 0.6)\n"
+        "b = bpy.context.active_object\nb.scale = (2.0, 2.0, 2.0)\nb.rotation_euler = cam.rotation_euler\n"
+        "result = list(cam.location)")
+    spec, _ = sp._parse_spec(SPEC)
+    pls = sp.parse_placements(sp._handle_solve_layout({"spec": SPEC})["placements"])
+    cam = sp.camera_check(spec, pls)
+    assert cam["tried"] > 1 and cam["pose"] > 0 and cam["visible_heroes"] == ["sofa"], cam

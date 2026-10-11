@@ -638,37 +638,208 @@ def lighting_commands(spec: SceneSpec, placements: list[Placement], off: tuple[f
     return cmds
 
 
-def camera_command(spec: SceneSpec, placements: list[Placement], off: tuple[float, float, float]) -> dict[str, Any]:
-    """An eye-level camera in the room corner with the clearest view, aimed at the heroes (else
-    at everything). The old camera looked in from above the walls: walls and framing were the
-    judges' most common complaints."""
+def _inside_polygon(x: float, y: float, pts: Any) -> bool:
+    inside = False
+    for i in range(len(pts)):
+        (x0, y0), (x1, y1) = pts[i - 1], pts[i]
+        if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
+            inside = not inside
+    return inside
+
+
+def footprint(spec: SceneSpec, off: tuple[float, float, float], n: int = 48) -> list[list[float]]:
+    """The room outline in the Blender frame, counter-clockwise (an ellipse as n points)."""
     import math
 
-    if spec.setting.kind in ("single_asset", "tabletop") or not placements:
-        # small subjects: a close three-quarter view that frames them, not a room corner
-        direction = [0.8, -1.0, 0.5] if spec.setting.kind == "single_asset" else [0.6, -1.0, 0.7]
-        return {"type": "frame_camera", "params": {"direction": direction, "margin": 1.2, "lens": 50}}
-    w, d, _h = spec.setting.bounds_m
+    st = spec.setting
+    w, d, _h = st.bounds_m
+    if st.shape == "polygon" and len(st.points) >= 3:
+        pts = [[float(p[0]) + off[0], float(p[1]) + off[1]] for p in st.points]
+        area = sum(pts[i - 1][0] * pts[i][1] - pts[i][0] * pts[i - 1][1] for i in range(len(pts)))
+        return pts if area > 0 else pts[::-1]
+    if st.shape == "ellipse":
+        return [[w / 2 * (1 + math.cos(2 * math.pi * k / n)) + off[0], d / 2 * (1 + math.sin(2 * math.pi * k / n)) + off[1]]
+                for k in range(n)]
+    return [[off[0], off[1]], [w + off[0], off[1]], [w + off[0], d + off[1]], [off[0], d + off[1]]]
+
+
+def _camera_spots(spec: SceneSpec) -> list[tuple[float, float]]:
+    """Candidate camera spots (layout frame), all inside the room: the bounding box's corners for a
+    rectangle (or outdoors), points on a shrunken outline for an ellipse or polygon (a corner of an
+    oval room's bounding box is outside its walls: judges saw the room from outside)."""
+    import math
+
+    st = spec.setting
+    w, d, _h = st.bounds_m
+    i = SCENE_CAMERA_INSET
+    if st.kind != "indoor" or st.shape == "rect" or (st.shape == "polygon" and len(st.points) < 3):
+        return [(fxr * w, fyr * d) for fxr in (i, 1 - i) for fyr in (i, 1 - i)]
+    if st.shape == "ellipse":
+        r = 1 - 2 * i
+        return [(w / 2 * (1 + r * math.cos(math.radians(a))), d / 2 * (1 + r * math.sin(math.radians(a))))
+                for a in (45, 135, 225, 315)]
+    pts = st.points
+    cx, cy = sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
+    spots = [(p[0] + (cx - p[0]) * 2 * i, p[1] + (cy - p[1]) * 2 * i) for p in pts]
+    return [sp for sp in spots if _inside_polygon(sp[0], sp[1], pts)] or [(cx, cy)]
+
+
+def camera_poses(spec: SceneSpec, placements: list[Placement], off: tuple[float, float, float]) -> list[dict[str, Any]]:
+    """set_camera params for every candidate (spot x eye height, then a higher one), best guess
+    first: clear of furniture, then the farthest from the focus (the widest view of it), aimed at
+    the heroes (else at everything)."""
+    import math
+
+    h = spec.setting.bounds_m[2]
     heroes = {o.id for o in spec.objects if o.hero}
     focus = [p for p in placements if _SUFFIX.sub("", p.id) in heroes or p.id in heroes] or placements
     fx = sum(p.location[0] for p in focus) / len(focus)
     fy = sum(p.location[1] for p in focus) / len(focus)
-    height = SCENE_CAMERA_HEIGHT_M if spec.setting.kind == "indoor" else 2.5
+    indoor = spec.setting.kind == "indoor"
+    eye = SCENE_CAMERA_HEIGHT_M if indoor else 2.5
+    heights = [eye, round(min(eye + 0.8, h - 0.3), 2) if indoor else eye + 2.0]
 
     def clearance(cx: float, cy: float) -> float:
         return min((max(abs(cx - p.location[0]) - p.dims[0] / 2, abs(cy - p.location[1]) - p.dims[1] / 2, 0.0)
                     for p in placements if p.dims[2] > 0.05), default=99.0)
 
-    i = SCENE_CAMERA_INSET
-    corners = [(fxr * w, fyr * d) for fxr in (i, 1 - i) for fyr in (i, 1 - i)]
-    # clear of furniture first, then the farthest from the focus (the widest view of it)
-    cx, cy = max(corners, key=lambda c: (min(clearance(*c), 0.6), math.hypot(c[0] - fx, c[1] - fy)))
-    dx, dy, dz = fx - cx, fy - cy, 0.8 - height
-    yaw = math.degrees(math.atan2(-dx, dy))  # Euler Z: [90, 0, 0] looks along +Y
-    pitch = 90.0 + math.degrees(math.atan2(dz, math.hypot(dx, dy)))
-    loc = _shift((cx, cy, height), off)
-    return {"type": "set_camera", "params": {"location": loc, "rotation": [round(pitch, 2), 0.0, round(yaw, 2)],
-                                             "name": "ai_db_camera", "lens": 16 if spec.setting.kind == "indoor" else 24}}
+    spots = sorted(_camera_spots(spec), key=lambda c: (min(clearance(*c), 0.6), math.hypot(c[0] - fx, c[1] - fy)),
+                   reverse=True)
+    poses = []
+    for height in dict.fromkeys(heights):
+        for cx, cy in spots:
+            dx, dy, dz = fx - cx, fy - cy, 0.8 - height
+            yaw = math.degrees(math.atan2(-dx, dy))  # Euler Z: [90, 0, 0] looks along +Y
+            pitch = 90.0 + math.degrees(math.atan2(dz, math.hypot(dx, dy)))
+            poses.append({"location": _shift((cx, cy, height), off), "rotation": [round(pitch, 2), 0.0, round(yaw, 2)],
+                          "name": "ai_db_camera", "lens": 16 if indoor else 24})
+    return poses
+
+
+def camera_command(spec: SceneSpec, placements: list[Placement], off: tuple[float, float, float]) -> dict[str, Any]:
+    """An eye-level camera in the room corner with the clearest view, aimed at the heroes (else
+    at everything). The old camera looked in from above the walls: walls and framing were the
+    judges' most common complaints."""
+    if spec.setting.kind in ("single_asset", "tabletop") or not placements:
+        # small subjects: a close three-quarter view that frames them, not a room corner
+        direction = [0.8, -1.0, 0.5] if spec.setting.kind == "single_asset" else [0.6, -1.0, 0.7]
+        return {"type": "frame_camera", "params": {"direction": direction, "margin": 1.2, "lens": 50}}
+    return {"type": "set_camera", "params": camera_poses(spec, placements, off)[0]}
+
+
+#: is the scene camera inside the room, and which targets does it see (in frame, not hidden behind
+#: other objects: rays from the camera to the centre and corners of each target's box)? Failing,
+#: every candidate pose is scored and the best kept.
+_COVERAGE = """
+import bpy, json, math
+from mathutils import Vector
+from bpy_extras.object_utils import world_to_camera_view
+cfg = json.loads({payload!r})
+scene = bpy.context.scene
+cam = scene.camera
+roots = {{o.get("ai_db_id"): o for o in scene.objects if o.get("ai_db_id") in cfg["targets"]}}
+
+def owner(o):
+    while o is not None and o.get("ai_db_id") is None:
+        o = o.parent
+    return o
+
+def box_points(o):
+    cs = [m.matrix_world @ Vector(c) for m in [o, *o.children_recursive] if m.type == "MESH" for c in m.bound_box]
+    if not cs:
+        return [o.matrix_world.translation.copy()]
+    lo = Vector([min(c[i] for c in cs) for i in range(3)])
+    hi = Vector([max(c[i] for c in cs) for i in range(3)])
+    mid = (lo + hi) / 2
+    return [mid] + [mid + 0.7 * (Vector((x, y, z)) - mid) for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]
+
+points = {{t: box_points(o) for t, o in roots.items()}}
+
+def inside(loc):
+    fp = cfg["footprint"]
+    if fp is None:
+        return True
+    x, y, ok = loc[0], loc[1], False
+    for i in range(len(fp)):
+        (x0, y0), (x1, y1) = fp[i - 1], fp[i]
+        if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
+            ok = not ok
+    return ok and 0.0 < loc[2] < cfg["height"]
+
+def score():
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    origin = cam.matrix_world.translation.copy()
+    seen = []
+    for t, pts in points.items():
+        n = 0
+        for p in pts:
+            co = world_to_camera_view(scene, cam, p)
+            if not (0.0 <= co.x <= 1.0 and 0.0 <= co.y <= 1.0 and co.z > 0.0):
+                continue
+            v = p - origin
+            hit, _l, _n, _i, obj, _m = scene.ray_cast(dg, origin, v.normalized(), distance=max(v.length - 0.02, 0.0))
+            if not hit or owner(obj) is roots[t]:
+                n += 1
+        if n * 3 >= len(pts):
+            seen.append(t)
+    return inside(origin), seen
+
+def pose(p):
+    cam.location = p["location"]
+    cam.rotation_euler = [math.radians(a) for a in p["rotation"]]
+    cam.data.lens = p["lens"]
+
+if cam is None:
+    result = {{"skipped": "no scene camera"}}
+else:
+    best = (*score(), 0)
+    tried = 1
+    if not (best[0] and len(best[1]) == len(points)):
+        for k, p in enumerate(cfg["poses"][1:], 1):
+            pose(p)
+            got = (*score(), k)
+            tried += 1
+            if (got[0], len(got[1])) > (best[0], len(best[1])):
+                best = got
+            if got[0] and len(got[1]) == len(points):
+                break
+        pose(cfg["poses"][best[2]])
+    result = {{"inside": best[0], "visible_heroes": best[1], "targets": sorted(points), "tried": tried, "pose": best[2]}}
+"""
+
+
+def coverage_targets(spec: SceneSpec, placements: list[Placement], n: int = 3) -> list[str]:
+    """Hero placement ids, or the n largest objects (openings and lamps' lights aside)."""
+    heroes = {o.id for o in spec.objects if o.hero}
+    hero_ids = [p.id for p in placements if p.id in heroes or _SUFFIX.sub("", p.id) in heroes]
+    if hero_ids:
+        return hero_ids
+    solid = [p for p in placements if p.category not in _OPENING_KINDS]
+    return [p.id for p in sorted(solid, key=lambda p: -(p.dims[0] * p.dims[1] * p.dims[2]))[:n]]
+
+
+def camera_check(spec: SceneSpec, placements: list[Placement]) -> dict[str, Any] | None:
+    """Run _COVERAGE for a room build (None for close-up kinds framed by frame_camera)."""
+    if spec.setting.kind in ("single_asset", "tabletop") or not placements:
+        return None
+    off = frame_offset(spec)
+    payload = json.dumps({
+        "poses": camera_poses(spec, placements, off), "targets": coverage_targets(spec, placements),
+        "footprint": footprint(spec, off) if spec.setting.kind == "indoor" else None,
+        "height": spec.setting.bounds_m[2]})
+    return dict(BlenderClient().run_code(_COVERAGE.format(payload=payload), timeout=120.0))
+
+
+def camera_issue(cam: dict[str, Any]) -> dict[str, Any] | None:
+    if "inside" not in cam:
+        return None
+    missing = sorted(set(cam.get("targets", [])) - set(cam.get("visible_heroes", [])))
+    if cam["inside"] and not missing:
+        return None
+    where = "" if cam["inside"] else "camera outside the room; "
+    return {"check": "camera", "severity": "warning", "objects": missing, "fix": None,
+            "message": f"{where}not visible from any of {cam.get('tried')} camera spots: {', '.join(missing) or '-'}"}
 
 
 # --- handlers ------------------------------------------------------------------
@@ -912,6 +1083,14 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
     left = _issues(report)
     from ai_db_scene import constants as _c
 
+    camera: dict[str, Any] | None = None
+    try:
+        camera = camera_check(spec, placements)
+    except Exception as e:  # noqa: BLE001 - a check must never fail a finished build
+        camera = {"error": str(e)}
+    cam_issue = camera_issue(camera) if camera else None
+    if cam_issue:
+        left.append(cam_issue)
     exposure: dict[str, Any] | None = None
     if args.get("exposure_check", _c.BUILD_EXPOSURE_CHECK):
         try:
@@ -925,6 +1104,8 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
            "objects": len(placements), "created": built.get("created"), "failed_commands": built.get("failed"),
            "repairs": repairs, "fixes_applied": applied, "issues_found": len(first),
            "issues_left": left[:20], "spec": data if repairs else None}
+    if camera is not None:
+        out["camera"] = camera
     if exposure is not None:
         out["exposure"] = exposure
     from ai_db_scene.constants import BUILD_POLY_BUDGET
@@ -1073,6 +1254,8 @@ _CRITIQUE_FIX: dict[str, str] = {
     "facing": "remove_relation against_wall that fixes its yaw, or move the target (add_relation in_front_of)",
     "scale": "update_object {set: {category: the right one}}",
     "door_clearance": "remove_relation against_wall near the door, or update_setting {set: {bounds_m: larger}}",
+    "camera": ("hidden from every camera spot: add_relation against_wall for the tall object in front of it, "
+               "or update_setting {set: {bounds_m: larger}}"),
     "exposure": ("a black render: the camera may sit in a wall or behind furniture (move it, or add lamps); "
                  "blown out: fewer lights or an outdoor kind without sky"),
 }

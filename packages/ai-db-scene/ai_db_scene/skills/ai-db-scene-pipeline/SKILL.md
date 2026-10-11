@@ -32,6 +32,10 @@ Every build also probes its exposure: a tiny render from the camera, the view ex
 (at most 3 rounds) until the image is neither black nor blown out. The report's `exposure` gives
 `rounds, mean, dark_frac, bright_frac, adjusted_by`; still out of band, an `exposure` issue is
 left (usually the camera sits in a wall or behind furniture). `exposure_check: false` skips it.
+The camera is checked first: inside the room, and the heroes (else the 3 largest objects) in
+frame and not hidden (rays to their boxes). Failing, the other corners and a higher eye height
+are tried and the best kept: `camera: {inside, visible_heroes, targets, tried, pose}`; a `camera`
+issue names what no spot sees.
 
 Optional `build_scene` arguments:
 - `poly_budget` (total faces): the report's `polys` lists faces per object; over the budget the
