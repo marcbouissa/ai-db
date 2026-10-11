@@ -426,7 +426,8 @@ class VectorDB:
         abs_path = _os.path.abspath(_os.path.expanduser(filepath))
         with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
-        return self.analyzer_engine.ref_store.diff_spans(abs_path, content, since=since)
+        from ai_db.analysis.diff import file_diff
+        return file_diff(abs_path, since, self.backend, self.config.index.languages, content)
 
     # F10: Annotations / TODOs
     def query_annotations(self, kind: str | None = None,

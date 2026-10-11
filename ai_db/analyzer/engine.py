@@ -5,6 +5,7 @@ import os
 import time
 from typing import Any
 
+from ai_db.analysis.diff import file_diff
 from ai_db.analyzer.references import ReferenceStore
 from ai_db.errors import AiDbConfigError
 from ai_db.parser.chunker import chunk_file
@@ -123,7 +124,8 @@ class AnalyzerEngine:
                 return dict(cached_res)
 
         # F8 Diff Mode check
-        diff_info = self.ref_store.diff_spans(abs_path, content, since) if since else None
+        diff_info = (file_diff(abs_path, since, self.backend, self.languages, content)
+                     if since else None)
 
         # F2 Range Target extraction
         if span:

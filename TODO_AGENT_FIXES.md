@@ -354,16 +354,21 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   sections included; the `extract_graph` + name-matching path is gone. `tests/test_analyze.py`.
 
 ### G7. Diff spans are wrong
-- [ ] `ai_db/analyzer/references.py` `_diff_spans(since="db")` rebuilds old text from
+- [x] `ai_db/analyzer/references.py` `_diff_spans(since="db")` rebuilds old text from
   bloat-stripped chunk contents → unchanged files report added spans. Store/compare the file
   `sha256` first (unchanged → no spans); for changed files diff against git or the stored raw
   text, not chunks.
-- [ ] A file new since `since` raises `AiDbConfigError` from `git show`; treat it as fully added.
-- [ ] `investigate._git_changed_spans` ignores pure-deletion hunks (`+N,0`); seed the
+- [x] A file new since `since` raises `AiDbConfigError` from `git show`; treat it as fully added.
+- [x] `investigate._git_changed_spans` ignores pure-deletion hunks (`+N,0`); seed the
   enclosing chunk at line N.
 - **Fix also:** there must be **one** diff module (see K1); do G7 inside it if K1 lands first.
 - **Check:** tests for unchanged file (no spans), new file (all added), deletion-only hunk
   (seed present).
+- **Done 2026-10-11:** inside K1's `ai_db/analysis/diff.py` (one engine: `git diff
+  --unified=0` hunks; `changed_lines` for investigate, `file_diff` for analyze/diff).
+  Bullet 1 had landed with G12 (hash first, then chunk hashes; now `index_diff`); a file
+  untracked or absent at `since` is entirely added (no `git show`); a `+N,0` hunk seeds
+  line N. `tests/test_diff.py`.
 
 ### G8. Untracked new files are listed but not indexed
 - [ ] **Observed (hands-on):** create `new.py` in a git repo; `ai-db symbol gamma` → not found;

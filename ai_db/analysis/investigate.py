@@ -25,6 +25,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
+from ai_db.analysis.diff import changed_lines
 from ai_db.analysis.pack import EntryPoint, Evidence, InvestigationPack
 from ai_db.analysis.resolve import Resolver, scope_of
 from ai_db.constants import (
@@ -33,7 +34,6 @@ from ai_db.constants import (
     DIFF_QUERY_BOOST,
     DIFF_SEEDS_PER_FILE,
     EXPLAIN_CALLER_SEEDS,
-    GIT_TIMEOUT_S,
     IMPACT_DEPTH,
     INVESTIGATE_BODY_SHARE,
     INVESTIGATE_MIN_BUDGET,
@@ -46,7 +46,6 @@ from ai_db.constants import (
     TRACE_DEPTH,
     TRACE_MAX_NODES,
 )
-from ai_db.errors import AiDbConfigError
 from ai_db.parser.chunker import count_tokens
 from ai_db.search.ranking import last_component
 from ai_db.search.retriever import SNIPPET_CHARS
@@ -74,83 +73,6 @@ def is_test_path(path: str) -> bool:
     base = parts[-1]
     return "tests" in parts[:-1] or "test" in parts[:-1] or base.startswith("test_") \
         or base.endswith(("_test.py", ".test.ts", ".test.js", ".spec.ts", ".spec.js", "_test.go"))
-
-
-def _git_changed_spans(since: str, root: str) -> dict[str, list[int]]:
-    """Return {absolute_filepath: [changed line numbers]} for `git diff <since>`.
-
-    `--unified=0` drops context lines, so the hunk headers carry the whole
-    signal. Raises AiDbConfigError when git cannot answer: a diff-mode
-    investigation with no diff would silently return an empty pack, which
-    reads as "nothing to review" rather than "I could not look".
-    """
-    try:
-        toplevel = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=GIT_TIMEOUT_S, cwd=root, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as err:
-        raise AiDbConfigError(f"mode 'diff' needs a git repository: {err}") from err
-    if toplevel.returncode != 0:
-        raise AiDbConfigError(f"mode 'diff' needs a git repository: {root} is not in one")
-
-    repo_root = toplevel.stdout.strip()
-    try:
-        diff = subprocess.run(
-            ["git", "diff", "--unified=0", "--no-color", since, "--"],
-            capture_output=True, text=True, timeout=GIT_TIMEOUT_S, cwd=repo_root, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as err:
-        raise AiDbConfigError(f"git diff against {since!r} failed: {err}") from err
-    if diff.returncode != 0:
-        raise AiDbConfigError(f"git diff against {since!r} failed: {diff.stderr.strip()}")
-
-    spans: dict[str, list[int]] = {}
-    current: str | None = None
-    hunk = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-    for line in diff.stdout.splitlines():
-        if line.startswith("+++ "):
-            # "+++ b/path" for a change, "+++ /dev/null" for a deletion
-            target = line[4:].strip()
-            if target == "/dev/null":
-                current = None
-            elif target.startswith("b/"):
-                current = os.path.join(repo_root, target[2:])
-            else:
-                current = os.path.join(repo_root, target)
-            continue
-        if current is None:
-            continue
-        m = hunk.match(line)
-        if m is None:
-            continue
-        start = int(m.group(1))
-        count = int(m.group(2) or 1)
-        spans.setdefault(current, []).extend(range(start, start + count))
-
-    # `git diff` never lists untracked files; a new file is a change that is
-    # entirely additions, so every line of it counts as changed.
-    try:
-        untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-            capture_output=True, text=True, timeout=GIT_TIMEOUT_S, cwd=repo_root, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as err:
-        raise AiDbConfigError(f"git ls-files failed: {err}") from err
-    if untracked.returncode != 0:
-        raise AiDbConfigError(f"git ls-files failed: {untracked.stderr.strip()}")
-    for rel in untracked.stdout.split("\0"):
-        if not rel:
-            continue
-        path = os.path.join(repo_root, rel)
-        try:
-            with open(path, encoding="utf-8") as fh:
-                count = sum(1 for _ in fh)
-        except (OSError, UnicodeDecodeError):
-            continue  # unreadable or binary: nothing line-based to report
-        if count:
-            spans[path] = list(range(1, count + 1))
-    return spans
 
 
 def _query_tokens(query: str) -> set[str]:
@@ -230,7 +152,7 @@ class Investigator:
 
         if mode == "diff":
             # Seeds come from the diff, not from retrieval.
-            spans = _git_changed_spans(since or "", root or ".")
+            spans = changed_lines(since or "", root or ".")
             seeds = self._diff_seeds(spans, query, allowed)
             changes = [{"filepath": path,
                         "lines": _line_ranges(lines),
