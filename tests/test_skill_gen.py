@@ -139,3 +139,23 @@ def test_mcp_allowlist_hides_skill_tools(disp, monkeypatch):
     assert names == ["draft_skill"]
     res = srv.handle_request({"id": 2, "method": "tools/call", "params": {"name": "create_skill", "arguments": {}}})
     assert res["result"]["isError"]
+
+
+def test_html_definition_lists_become_options():
+    """Reference manuals (Blender's) document options as <dl>; heading anchors (¶) are dropped."""
+    from ai_db.skill_sources import extract_text_sections, html_to_text
+
+    html = ("<h1>Bevel Modifier<a class='headerlink'>¶</a></h1><dl><dt>Affect</dt><dd><dl>"
+            "<dt>Edges</dt><dd><p>Bevel the edges.</p></dd></dl></dd>"
+            "<dt>Segments</dt><dd><p>The number of edge loops.</p></dd></dl>")
+    sections, facts = extract_text_sections(html_to_text(html))
+    assert facts["title"] == "Bevel Modifier"
+    opts = [e for e in sections["examples"] if e.startswith("Option")]
+    assert opts == ["Option - Edges: Bevel the edges.", "Option - Segments: The number of edge loops."]
+
+
+def test_unrelated_top_skill_is_not_a_duplicate():
+    assert sg._same_topic("bevel modifier for hard surface edges",
+                          {"name": "bevel-hard-surface", "description": "Bevel modifier settings"})
+    assert not sg._same_topic("bevel modifier for hard surface edges",
+                              {"name": "high-end-visual-design", "description": "Design websites like an agency."})

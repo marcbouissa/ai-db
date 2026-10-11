@@ -120,6 +120,10 @@ class _Html2Text(HTMLParser):
                 self.out.append(f"\n{self.lists[-1][1]}. ")
             else:
                 self.out.append("\n- ")
+        elif tag == "dt":  # definition lists: how reference manuals document options
+            self.out.append("\n" + _OPTION_MARK)
+        elif tag == "dd":
+            self.out.append(" :: ")
         elif tag in self._BLOCK:
             self.out.append("\n")
 
@@ -140,6 +144,7 @@ class _Html2Text(HTMLParser):
     def handle_data(self, data: str) -> None:
         if self.skip:
             return
+        data = data.replace("\u00b6", "")  # Sphinx/MkDocs heading anchors
         self.out.append(data if self.pre else re.sub(r"\s+", " ", data))
 
 
@@ -153,6 +158,10 @@ def html_to_text(html: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
+_OPTION_MARK = "\u2063opt "  # invisible separator: marks a <dt> line for extract_text_sections
+# the definition is on the same or the next line; a <dt> right after (a nested list) is not one
+_OPTION = re.compile("^" + _OPTION_MARK + r"(.{1,60}?)\s*::[ \t]*(?:\n[ \t]*)?(?!" + _OPTION_MARK[0] + r")(\S.*)$",
+                     re.MULTILINE)
 _STEP = re.compile(r"^\s*(?:step\s*)?(\d{1,2})\s*[.):]\s+(.{3,})$", re.IGNORECASE | re.MULTILINE)
 _HEAD = re.compile(r"^(#{1,6})\s+(.+?)\s*#*$", re.MULTILINE)
 _FENCE = re.compile(r"```[\w+-]*\n(.*?)```", re.DOTALL)
@@ -167,6 +176,9 @@ def extract_text_sections(text: str) -> tuple[dict[str, list[str]], dict[str, st
     text = text[:SOURCE_TEXT_MAX_CHARS]
     code = [c.strip() for c in _FENCE.findall(text) if c.strip()]
     prose = _FENCE.sub("\n", text)
+    options = [f"Option - {' '.join(t.split()).rstrip(':')}: {' '.join(d.split()).lstrip(': ')[:200]}"
+               for t, d in _OPTION.findall(prose) if d.strip(": ")]
+    prose = prose.replace(_OPTION_MARK, "")
     heads = [h[1].strip() for h in _HEAD.findall(prose)]
     steps = [f"{num}. {' '.join(step.split())[:240]}" for num, step in _STEP.findall(prose)]
     params: list[str] = []
@@ -176,6 +188,7 @@ def extract_text_sections(text: str) -> tuple[dict[str, list[str]], dict[str, st
             params.append(item)
     workflow = steps[:MAX_STEPS] or [f"(section) {h}" for h in heads[:MAX_HEADINGS]]
     examples = [f"```\n{c[:CODE_BLOCK_MAX_CHARS]}\n```" for c in code[:MAX_CODE_BLOCKS]]
+    examples += options[:MAX_PARAMS]
     if params:
         examples.append("Parameter values from the source: " + "; ".join(params[:MAX_PARAMS]))
     facts: dict[str, str] = {}

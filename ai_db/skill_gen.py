@@ -43,6 +43,9 @@ SKILL_TRIGGERS_MAX = 40
 SKILL_TRIGGER_MAX_CHARS = 80
 SKILL_DRAFT_TOP = 5  # existing skills / contexts shown by draft_skill
 SKILL_DUPLICATE_CONFIDENCE = 0.5  # draft_skill warns at or above this route confidence
+# ... and when this share of the topic's words appear in the skill's name/description: route
+# confidence is relative to the best BM25 hit, so an unrelated skill can top a weak result set.
+SKILL_DUPLICATE_WORD_SHARE = 0.5
 _HEADING = re.compile(r"^#{1,6}\s+\S", re.MULTILINE)
 _BAD_TRIGGER = re.compile(r"[\n:#|,\"]")
 _DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
@@ -230,6 +233,15 @@ def plugin_contributions(topic: str, config: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
+
+def _same_topic(topic: str, skill: dict[str, Any]) -> bool:
+    """Whether a routed skill is about the topic, not just its best lexical neighbour."""
+    words = {w for w in re.findall(r"[a-z0-9]+", topic.lower()) if len(w) > 3}
+    if not words:
+        return True
+    text = f"{skill.get('name', '')} {skill.get('description', '')}".lower().replace("-", " ")
+    return sum(1 for w in words if w in text) / len(words) >= SKILL_DUPLICATE_WORD_SHARE
+
 def draft_skill(db: Any, topic: str, config: Any = None, sources: Any = None,
                 fetch: Any = None) -> dict[str, Any]:
     if not isinstance(topic, str) or not topic.strip():
@@ -281,7 +293,7 @@ def draft_skill(db: Any, topic: str, config: Any = None, sources: Any = None,
     name = _slug(topic)
     triggers = [t for t in dict.fromkeys([" ".join(re.findall(r"[a-z0-9]+", topic.lower()))[:SKILL_TRIGGER_MAX_CHARS]]) if t]
     description = f"TODO: one line saying what this skill does for {topic} and when to use it."
-    dupes = [s for s in existing if s.get("confidence", 0) >= SKILL_DUPLICATE_CONFIDENCE]
+    dupes = [s for s in existing if s.get("confidence", 0) >= SKILL_DUPLICATE_CONFIDENCE and _same_topic(topic, s)]
     return {
         "name": name,
         "description": description,
