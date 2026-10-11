@@ -151,7 +151,7 @@ class TestIntegration:
         assert "token_savings" not in out and out["window"]["calls"] == 0
 
     def test_mcp_tool(self, telemetry_db):
-        from mcp_server import StdioMCPServer
+        from ai_db.transports.mcp import StdioMCPServer
         server = StdioMCPServer(telemetry_db["db_file"])
         resp = server.handle_request({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
                                       "params": {"name": "telemetry", "arguments": {}}})

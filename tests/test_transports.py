@@ -16,7 +16,7 @@ import sys
 import pytest
 
 from ai_db import VectorDB
-from mcp_server import StdioMCPServer
+from ai_db.transports.mcp import StdioMCPServer
 
 try:
     from ai_db.dispatcher import ServiceDispatcher
@@ -446,8 +446,8 @@ class TestTransportsDaemonBackedMCP:
     """
 
     def test_run_stdio_does_not_register_local_tools_on_daemon_client(self, monkeypatch):
-        import mcp_server
         from ai_db.daemon.client import DaemonClient
+        from ai_db.transports import mcp as mcp_server
 
         dispatcher = DaemonClient("http://127.0.0.1:59999", default_project="test")
         monkeypatch.setattr(mcp_server.sys, "stdin", io.StringIO(""))
@@ -465,7 +465,7 @@ class TestTransportsDaemonBackedMCP:
         """
         import json
 
-        import mcp_server
+        from ai_db.transports import mcp as mcp_server
 
         dispatcher = ServiceDispatcher(db_path=str(tmp_path / "json.db"))
         requests = "".join(
@@ -491,7 +491,7 @@ class TestTransportsDaemonBackedMCP:
         Regression: tools/list had no error handling, so an httpx.ConnectError
         unwound run_stdio and the client saw only "EOF" with no cause.
         """
-        import mcp_server
+        from ai_db.transports import mcp as mcp_server
 
         class BrokenDispatcher(ServiceDispatcher):
             def list_tools(self):
@@ -510,7 +510,7 @@ class TestTransportsDaemonBackedMCP:
     def test_run_stdio_outer_guard_reports_escaping_error(self, monkeypatch, tmp_path):
         """An error raised *outside* handle_request's own handling must not kill the
         transport, and must name the real method rather than raising NameError."""
-        import mcp_server
+        from ai_db.transports import mcp as mcp_server
 
         class BadShapeDispatcher(ServiceDispatcher):
             def list_tools(self):
@@ -541,7 +541,7 @@ class TestTransportsDaemonBackedMCP:
 
     def test_run_stdio_survives_handler_exception(self, monkeypatch, tmp_path):
         """run_stdio must keep serving after a handler raises."""
-        import mcp_server
+        from ai_db.transports import mcp as mcp_server
 
         class ExplodingDispatcher(ServiceDispatcher):
             def list_tools(self):
@@ -597,7 +597,7 @@ class TestTransportsDaemonBackedMCP:
             ServiceDispatcher(db_path=str(tmp_path / "local.db"))
 
     def test_run_stdio_daemon_url_fails_fast_on_unreachable_daemon(self, monkeypatch):
-        import mcp_server
+        from ai_db.transports import mcp as mcp_server
 
         # When daemon_url is passed and daemon is unreachable, it must exit immediately
         monkeypatch.setattr(mcp_server.sys, "stdin", io.StringIO(""))
@@ -611,8 +611,8 @@ class TestTransportsDaemonBackedMCP:
         assert "failed to connect to daemon" in errors.getvalue()
 
     def test_run_stdio_daemon_url_succeeds_on_healthy_daemon(self, monkeypatch):
-        import mcp_server
         from ai_db.daemon.client import DaemonClient
+        from ai_db.transports import mcp as mcp_server
 
         monkeypatch.setattr(mcp_server.sys, "stdin", io.StringIO(""))
         monkeypatch.setattr(DaemonClient, "health", lambda self: {"status": "ok"})
@@ -624,7 +624,7 @@ class TestTransportsDaemonBackedMCP:
 
 def test_mcp_tool_allowlist(monkeypatch, tmp_path):
     """AI_DB_MCP_TOOLS limits what an MCP client sees and may call."""
-    from mcp_server import StdioMCPServer
+    from ai_db.transports.mcp import StdioMCPServer
 
     monkeypatch.setenv("AI_DB_MCP_TOOLS", "status,query")
     server = StdioMCPServer(db_path=str(tmp_path / "a.db"))
@@ -633,3 +633,17 @@ def test_mcp_tool_allowlist(monkeypatch, tmp_path):
     denied = server.handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                                     "params": {"name": "symbol", "arguments": {"name": "x"}}})
     assert "Unknown tool: symbol" in json.dumps(denied)
+
+
+def test_root_shim_runs_the_packaged_server():
+    """K4: the server is ai_db.transports.mcp; `python mcp_server.py` (README, existing
+    client configs) still works, and the CLI imports no root module."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run([sys.executable, str(root / "mcp_server.py"), "--help"],
+                          capture_output=True, text=True, check=False)
+    assert proc.returncode == 0 and "ai-db mcp" in proc.stdout
+    assert "import mcp_server" not in (root / "ai_db" / "cli.py").read_text()

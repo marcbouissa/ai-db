@@ -40,6 +40,18 @@ class ToolDefinition:
         }
 
 
+def _parse_span(raw: Any) -> tuple[int, int] | None:
+    """A ``span`` tool argument (``"12:40"`` or ``[12, 40]``) as a line range, or None."""
+    if isinstance(raw, str) and ":" in raw:
+        parts = raw.split(":")
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            return int(parts[0]), int(parts[1])
+        return None
+    if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+        return int(raw[0]), int(raw[1])
+    return None
+
+
 class ServiceDispatcher:
     """
     Central tool registry and execution dispatcher.
@@ -833,14 +845,7 @@ class ServiceDispatcher:
         depth = args.get("depth", "structure")
         q = args.get("q") or args.get("question")
         focus = args.get("focus")
-        raw_span = args.get("span")
-        if isinstance(raw_span, str) and ":" in raw_span:
-            parts = raw_span.split(":")
-            span_tuple = (int(parts[0]), int(parts[1])) if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit() else None
-        elif isinstance(raw_span, (list, tuple)) and len(raw_span) >= 2:
-            span_tuple = (int(raw_span[0]), int(raw_span[1]))
-        else:
-            span_tuple = None
+        span_tuple = _parse_span(args.get("span"))
 
         since = args.get("since")
         ctx_lines = int(args.get("ctx_lines") or args.get("ctx") or ANALYZE_CTX_LINES)
@@ -889,14 +894,7 @@ class ServiceDispatcher:
         db = self._get_db(args)
         ref = args.get("ref", "")
         depth = args.get("depth", "full")
-        raw_span = args.get("span")
-        if isinstance(raw_span, str) and ":" in raw_span:
-            parts = raw_span.split(":")
-            span_tuple = (int(parts[0]), int(parts[1])) if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit() else None
-        elif isinstance(raw_span, (list, tuple)) and len(raw_span) >= 2:
-            span_tuple = (int(raw_span[0]), int(raw_span[1]))
-        else:
-            span_tuple = None
+        span_tuple = _parse_span(args.get("span"))
 
         exp, stale = freshness.resolve(db, lambda: db.expand_ref(ref, depth=depth, span=span_tuple))
         if not exp:

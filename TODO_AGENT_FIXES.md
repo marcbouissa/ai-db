@@ -591,10 +591,14 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   tracker from `db.conn`. No production code outside `sqlite_backend.py` touches `.conn`.
 
 ### K4. Transport layout
-- [ ] Move root `mcp_server.py` to `ai_db/transports/mcp.py` (keep a 3-line root shim only if
+- [x] Move root `mcp_server.py` to `ai_db/transports/mcp.py` (keep a 3-line root shim only if
   an external config references it; `ai-db mcp` is the documented entry). `cli.py` must not
   import a root module.
-- [ ] Deduplicate span parsing in `dispatcher.py` (`_handle_expand` and the next handler).
+- [x] Deduplicate span parsing in `dispatcher.py` (`_handle_expand` and the next handler).
+- **Done 2026-10-11:** `ai_db/transports/mcp.py` (with `main()`); the root `mcp_server.py`
+  is a shim, kept because README documents `python mcp_server.py` and MCP client configs
+  pointing at it; `ai-db mcp` imports the package module. `_parse_span()` serves `analyze`
+  and `expand`. Test: `tests/test_transports.py::test_root_shim_runs_the_packaged_server`.
 
 ### K5. Telemetry
 - [x] `TelemetryTracker.record_query` rewrites a JSON blob of ≤1000 samples and commits on every

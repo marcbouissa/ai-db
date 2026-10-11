@@ -23,7 +23,7 @@ from ai_db.analysis.investigate import MODES, Investigator
 from ai_db.errors import AiDbConfigError
 from ai_db.parser.ts_graph import extract_graph
 from ai_db.storage.models import ChunkRecord, FileRecord
-from mcp_server import StdioMCPServer
+from ai_db.transports.mcp import StdioMCPServer
 
 # ==============================================================================
 # helpers

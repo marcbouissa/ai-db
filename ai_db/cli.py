@@ -710,7 +710,7 @@ def _main(argv: list[str] | None = None) -> int:
 
     # Transport and long-running server/daemon commands
     if args.command == "mcp":
-        import mcp_server
+        from ai_db.transports import mcp as mcp_server
         mcp_daemon_url = getattr(args, "daemon_url", None) or os.environ.get("AI_DB_DAEMON_URL")
         mcp_proj = getattr(args, "mcp_project", None) or getattr(args, "daemon_project", None)
         mcp_server.run_stdio(args.db, config=cfg, daemon_url=mcp_daemon_url, project=mcp_proj)
