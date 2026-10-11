@@ -420,14 +420,132 @@ _RECIPES["kitchen_counter"] = lambda: [
     _box("top", [1.0, 1.0, 0.06], [0, 0, 0.94], "color:#d8d6d0")]
 
 
+# --- seeded variation -----------------------------------------------------------------------
+# The idea (one generator per category, its proportions drawn from ranges by a seed so two
+# instances differ) follows Infinigen Indoors (Princeton VL, BSD-3-Clause,
+# github.com/princeton-vl/infinigen, infinigen/assets/objects). The ranges below are ours.
+# Every variant keeps the [0, 1] relative extents (bbox_m scaling is unchanged) and keeps its
+# parts touching: each one connects to the ground through a chain of touching parts.
+
+_FRONT = -0.46  # front face of a variant carcass (body y in [-0.46, 0.5])
+
+
+def _leg(pid: str, w: float, h: float, x: float, y: float, material: str, rnd: bool) -> dict[str, Any]:
+    return (_cyl if rnd else _box)(pid, [w, w, h], [x, y, 0], material)
+
+
+def _cabinet_v(rng: Any, doors: tuple[int, int], drawers: tuple[int, int], legs: bool,
+               wood: str) -> list[dict[str, Any]]:
+    n_doors, n_drawers = rng.randint(*doors), rng.randint(*drawers)
+    if n_doors + n_drawers == 0:
+        n_drawers = 1
+    z0 = rng.uniform(0.05, 0.15) if legs else 0.0
+    leg_w, rnd = rng.uniform(0.03, 0.07), rng.random() < 0.4
+    parts = [_box("body", [1.0, 0.96, 1.0 - z0], [0, 0.02, z0], wood)]
+    if legs:
+        lx, ly = 0.5 - leg_w / 2 - 0.03, 0.46 - leg_w / 2 - 0.03
+        parts += [_leg(f"leg_{i}", leg_w, z0, sx * lx, 0.02 + sy * ly, _DARK, rnd)
+                  for i, (sx, sy) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))]
+    h = 1.0 - z0
+    # drawers stacked at the top, doors below them (a dresser has no doors, a wardrobe few drawers)
+    drawer_h = h * (n_drawers / (n_drawers + 2 * n_doors))
+    door_top = z0 + h - drawer_h
+    line, pull_y = _FRONT - 0.005, _FRONT - 0.015
+    for k in range(n_drawers):
+        top = z0 + h - drawer_h * k / n_drawers
+        bottom = z0 + h - drawer_h * (k + 1) / n_drawers
+        if k < n_drawers - 1 or n_doors:
+            parts.append(_box(f"drawer_line_{k}", [0.94, 0.01, 0.006], [0, line, bottom], _DARK))
+        parts.append(_box(f"drawer_pull_{k}", [0.16, 0.03, 0.02], [0, pull_y, (top + bottom) / 2 - 0.01], _STEEL))
+    door_h = door_top - z0
+    for k in range(n_doors):
+        x = -0.5 + (k + 0.5) / n_doors
+        if k < n_doors - 1:
+            parts.append(_box(f"door_line_{k}", [0.006, 0.01, door_h * 0.9],
+                              [x + 0.5 / n_doors, line, z0 + door_h * 0.05], _DARK))
+        hx = x + 0.4 / n_doors * (1 if k % 2 else -1) if n_doors > 1 else 0.35
+        parts.append(_box(f"handle_{k}", [0.02, 0.03, min(0.14, door_h * 0.5)],
+                          [hx, pull_y, z0 + door_h * 0.45], _STEEL))
+    return parts
+
+
+def _stool_v(rng: Any) -> list[dict[str, Any]]:
+    w, inset, rnd = rng.uniform(0.05, 0.1), rng.uniform(0.25, 0.35), rng.random() < 0.5
+    seat = (_cyl if rng.random() < 0.6 else _box)("seat", [1.0, 1.0, rng.uniform(0.05, 0.09)], [0, 0, 0.0], _WOOD)
+    seat["at"] = [0, 0, 1.0 - seat["size"][2]]
+    top = seat["at"][2]
+    parts = [seat, *[_leg(f"leg_{i}", w, top, sx * inset, sy * inset, _WOOD, rnd)
+                     for i, (sx, sy) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))]]
+    if rng.random() < 0.7:
+        parts.append(_box("rung", [2 * inset, 0.05, 0.04], [0, -inset, rng.uniform(0.2, 0.4)], _WOOD))
+    return parts
+
+
+def _office_chair_v(rng: Any) -> list[dict[str, Any]]:
+    back_h, back_w = rng.uniform(0.3, 0.5), rng.uniform(0.6, 0.85)
+    n = rng.choice((4, 5))
+    import math
+
+    casters = [_sphere(f"caster_{i}", [0.08, 0.08, 0.08],
+                       [round(0.4 * math.cos(2 * math.pi * i / n), 4), round(0.4 * math.sin(2 * math.pi * i / n), 4), 0],
+                       _DARK) for i in range(n)]
+    return [_cyl("base", [0.9, 0.9, 0.05], [0, 0, 0.04], _DARK), *casters,
+            _cyl("gas_lift", [0.08, 0.08, 0.3], [0, 0, 0.09], "metal:chrome"),
+            _box("seat", [0.85, 0.8, 0.09], [0, -0.02, 0.39], "fabric:weave"),
+            _box("back_post", [0.08, 0.06, 1.0 - back_h - 0.45], [0, 0.4, 0.45], _DARK),
+            _box("back", [back_w, 0.08, back_h], [0, 0.42, 1.0 - back_h], "fabric:weave")]
+
+
+def _shelving_v(rng: Any) -> list[dict[str, Any]]:
+    n, w = rng.randint(3, 6), rng.uniform(0.03, 0.06)
+    zs = [round(0.05 + (0.93 * k / (n - 1)), 4) for k in range(n)]
+    parts = [_box(f"post_{i}", [w, w, 1.0], [sx * (0.5 - w / 2), sy * (0.5 - w / 2), 0], _STEEL)
+             for i, (sx, sy) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))]
+    parts += [_box(f"shelf_{k}", [1.0, 1.0, 0.02], [0, 0, z], _STEEL) for k, z in enumerate(zs)]
+    for k, z in enumerate(zs[:-1]):
+        gap = zs[k + 1] - z - 0.02
+        if rng.random() < 0.6:
+            parts.append(_box(f"box_{k}", [rng.uniform(0.2, 0.35), 0.6, min(0.15, gap * 0.8)],
+                              [rng.uniform(-0.3, 0.3), 0, z + 0.02], "color:#b08a5a"))
+    return parts
+
+
+_VARIANTS: dict[str, Any] = {
+    "dresser": lambda r: _cabinet_v(r, (0, 0), (3, 6), True, _WOOD),
+    "nightstand": lambda r: _cabinet_v(r, (0, 1), (1, 3), True, _WALNUT),
+    "cabinet": lambda r: _cabinet_v(r, (1, 3), (0, 2), r.random() < 0.3, _WOOD),
+    "wardrobe": lambda r: _cabinet_v(r, (2, 3), (0, 2), False, _WOOD),
+    "filing_cabinet": lambda r: _cabinet_v(r, (0, 0), (2, 5), False, _STEEL),
+    "stool": _stool_v,
+    "office_chair": _office_chair_v,
+    "shelving_unit": _shelving_v,
+}
+
+
 def has_recipe(category: str) -> bool:
     return category in _RECIPES
 
 
-def recipe_spec(category: str, name: str, dims: tuple[float, float, float] | list[float]) -> dict[str, Any]:
-    """The build_asset spec of ``category``, named ``name``, scaled to exactly ``dims``."""
+def variant_categories() -> list[str]:
+    """Categories whose recipe varies with ``recipe_spec(..., seed=...)``."""
+    return sorted(_VARIANTS)
+
+
+def recipe_spec(category: str, name: str, dims: tuple[float, float, float] | list[float],
+                seed: int | str | None = None) -> dict[str, Any]:
+    """The build_asset spec of ``category``, named ``name``, scaled to exactly ``dims``.
+
+    ``seed`` (None: the fixed recipe) draws a variant for the categories in
+    ``variant_categories()``: leg style/thickness, drawer/door/shelf counts, back height.
+    The same seed always gives the same parts; other categories ignore it."""
+    if seed is not None and category in _VARIANTS:
+        import random
+
+        parts = _VARIANTS[category](random.Random(f"{category}:{seed}"))
+    else:
+        parts = _RECIPES[category]()
     return {"asset": name, "category": category, "style": "ai-db recipe",
-            "bbox_m": [float(dims[0]), float(dims[1]), float(dims[2])], "parts": _RECIPES[category]()}
+            "bbox_m": [float(dims[0]), float(dims[1]), float(dims[2])], "parts": parts}
 
 
 def recipe_categories() -> list[str]:

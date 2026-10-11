@@ -230,3 +230,31 @@ def test_live_outdoor_recipes_build_with_exact_bbox(private_blender):
         got = c.run_code(_BBOX.format(name=cat))
         assert got["size"] == pytest.approx(list(dims), abs=2e-3), cat
         assert abs(got["min_z"]) < 1e-3 and got["parts"] >= 2, cat
+
+
+def _extent(parts):
+    boxes = [_part_box(p) for p in parts]
+    return [min(b[0][i] for b in boxes) for i in range(3)], [max(b[1][i] for b in boxes) for i in range(3)]
+
+
+def test_seeded_recipe_variants_stay_connected_and_deterministic():
+    from ai_db_scene.priors import load_priors
+    from ai_db_scene.recipes import recipe_spec, variant_categories
+
+    priors = load_priors()
+    assert set(variant_categories()) >= {"dresser", "cabinet", "stool", "office_chair", "shelving_unit"}
+    for cat in variant_categories():
+        dims = priors[cat].typical_m
+        assert recipe_spec(cat, "x", dims) == recipe_spec(cat, "x", dims, seed=None)  # unchanged default
+        seen = set()
+        for seed in range(25):
+            spec = recipe_spec(cat, "x", dims, seed=seed)
+            parts = spec["parts"]
+            ids = [p["id"] for p in parts]
+            assert len(ids) == len(set(ids)) and spec["bbox_m"] == list(dims), (cat, seed)
+            assert _floating_parts(parts) == [], (cat, seed)
+            lo, hi = _extent(parts)
+            assert lo[2] >= -1e-9 and hi[2] <= 1.0 + 1e-6 and all(-0.52 <= v <= 0.52 for v in lo[:2] + hi[:2]), (cat, seed)
+            assert recipe_spec(cat, "x", dims, seed=seed) == spec  # same seed, same parts
+            seen.add(repr(parts))
+        assert len(seen) >= 3, cat
