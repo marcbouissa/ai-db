@@ -290,9 +290,11 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   rows.
 
 ### G3. Readiness message inverted
-- [ ] **Observed:** `trace.py` `_generate_readiness`: an ancestor with `await_kind == "await"`
+- [x] **Observed:** `trace.py` `_generate_readiness`: an ancestor with `await_kind == "await"`
   prints "(not awaited)".
 - **Fix:** invert the condition. **Check:** test asserting both branches.
+- **Done 2026-10-11:** an awaited ancestor now reads "(awaited, file:line)"; both branches
+  tested in `tests/test_trace.py`.
 
 ### G4. Trace entry by qualified name fails
 - [x] **Observed:** `_find_entry` passes `"A.m"` to `find_chunks_by_symbol`, which matches

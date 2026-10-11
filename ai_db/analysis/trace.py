@@ -328,11 +328,12 @@ class TraceEngine:
                         )
                         wait_found = True
                         break
-                    # Also check if ancestor awaits something
+                    # An awaited ancestor finishes before its caller continues
                     if ancestor.await_kind == "await":
                         summary.append(
                             f"`{node.qualified_name}` spawned by "
-                            f"`{ancestor.qualified_name}` (not awaited)"
+                            f"`{ancestor.qualified_name}` (awaited, "
+                            f"{os.path.basename(ancestor.filepath)}:{ancestor.call_line or ancestor.start_line})"
                         )
                         wait_found = True
                         break
