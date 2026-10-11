@@ -10,6 +10,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from ai_db_scene.constants import (
+    RECIPE_EDGE_BEVEL_M,
+    RECIPE_EDGE_BEVEL_MAX_SHARE,
+    RECIPE_EDGE_BEVEL_SEGMENTS,
+)
+
 _DARK = "color:#141414"
 _STONE = "color:#b7b1a6"
 _GREEN = "color:#3f6b33"
@@ -571,7 +577,30 @@ def recipe_spec(category: str, name: str, dims: tuple[float, float, float] | lis
     else:
         parts, style = _RECIPES[category](), "ai-db recipe"
     return {"asset": name, "category": category, "style": style,
-            "bbox_m": [float(dims[0]), float(dims[1]), float(dims[2])], "parts": parts}
+            "bbox_m": [float(dims[0]), float(dims[1]), float(dims[2])], "parts": soften_edges(parts, dims)}
+
+
+def soften_edges(parts: list[dict[str, Any]], dims: tuple[float, float, float] | list[float],
+                 radius_m: float = RECIPE_EDGE_BEVEL_M) -> list[dict[str, Any]]:
+    """Round the edges of every box part by about ``radius_m`` on the built object.
+
+    Parts are authored in unit space and the asset is then scaled to ``dims`` per axis, so a
+    unit-space radius r becomes r * dims[i] along axis i: r = radius / max(dims) keeps every
+    axis at or under ``radius_m``. Thin parts get at most RECIPE_EDGE_BEVEL_MAX_SHARE of their
+    thinnest real side (a 2 cm shelf is not turned into a tube). Parts that set ``bevel``
+    themselves are left alone."""
+    if radius_m <= 0:
+        return parts
+    scale = max(float(d) for d in dims)
+    out = []
+    for p in parts:
+        if p.get("shape") == "box" and "bevel" not in p and isinstance(p.get("size"), list):
+            thinnest_m = min(float(s) * float(d) for s, d in zip(p["size"], dims))
+            r_m = min(radius_m, RECIPE_EDGE_BEVEL_MAX_SHARE * thinnest_m)
+            if r_m >= 0.001:
+                p = {**p, "bevel": round(r_m / scale, 5), "bevel_segments": RECIPE_EDGE_BEVEL_SEGMENTS}
+        out.append(p)
+    return out
 
 
 def recipe_categories() -> list[str]:

@@ -69,6 +69,13 @@ SCENE_EXPORT_DIR = "~/ai-db-exports"  # export_scene's folder; override: plugins
 SCENE_EXPORT_FORMATS = {"glb": ".glb", "gltf": ".gltf", "usd": ".usd", "usdz": ".usdz"}
 SCENE_EXPORT_TIMEOUT_S = 300.0
 
+# --- Recipe realism (ai_db_scene/recipes.py) ---
+# Real furniture has no knife-sharp edges: a small rounded edge catches light (the most cited
+# fix for "CG-looking" models). Radius in metres on the built object; 0 turns it off.
+RECIPE_EDGE_BEVEL_M = 0.006
+RECIPE_EDGE_BEVEL_SEGMENTS = 2
+RECIPE_EDGE_BEVEL_MAX_SHARE = 0.25  # never more than this share of the part's thinnest side
+
 # --- Blender (addon socket server) ---
 BLENDER_OX_HOST = "127.0.0.1"
 BLENDER_OX_PORT = 9877  # override: AI_DB_BLENDER_PORT

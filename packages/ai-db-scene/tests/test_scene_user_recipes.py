@@ -15,6 +15,11 @@ def test_recipes_dir_is_isolated(tmp_path):
     assert ur.recipes_dir().startswith(str(tmp_path))
 
 
+def _unbevelled(parts):
+    """recipe_spec rounds box edges (soften_edges); compare the authored parts."""
+    return [{k: v for k, v in p.items() if k not in ("bevel", "bevel_segments")} for p in parts]
+
+
 def test_create_recipe_used_by_recipe_spec(tmp_path):
     assert not has_recipe("dining_table")
     out = ur.create_recipe("dining_table", "trestle", TABLE, dims=[1.8, 0.9, 0.75],
@@ -22,7 +27,7 @@ def test_create_recipe_used_by_recipe_spec(tmp_path):
     assert out["status"] == "created" and "warning" not in out
     assert has_recipe("dining_table")
     spec = recipe_spec("dining_table", "t1", [1.8, 0.9, 0.75])
-    assert spec["parts"] == TABLE and spec["style"] == "ai-db user recipe" and spec["bbox_m"] == [1.8, 0.9, 0.75]
+    assert _unbevelled(spec["parts"]) == TABLE and spec["style"] == "ai-db user recipe" and spec["bbox_m"] == [1.8, 0.9, 0.75]
     with pytest.raises(ValueError, match="overwrite"):
         ur.create_recipe("dining_table", "other", TABLE)
     assert ur.list_user_recipes()[0]["source"]["license"] == "CC0"
@@ -33,7 +38,7 @@ def test_builtin_wins_unless_overwrite():
     with pytest.raises(ValueError, match="built-in"):
         ur.create_recipe("stool", "mine", TABLE)
     ur.create_recipe("stool", "mine", TABLE, overwrite=True)
-    assert recipe_spec("stool", "s", [0.4, 0.4, 0.7])["parts"] == TABLE != builtin
+    assert _unbevelled(recipe_spec("stool", "s", [0.4, 0.4, 0.7])["parts"]) == TABLE != _unbevelled(builtin)
 
 
 @pytest.mark.parametrize("parts, msg", [
@@ -130,3 +135,18 @@ def test_case_goods_skeleton_has_every_front_and_stays_valid():
     assert sum(i.startswith("drawer_") and not i.endswith("handle") for i in ids) == 2
     assert sum(i.startswith("leg_") for i in ids) == 4 and sum(i.endswith("_handle") for i in ids) == 5
     assert recipe_errors(r["parts"]) == []
+
+
+def test_soften_edges_rounds_boxes_in_real_metres():
+    from ai_db_scene.recipes import soften_edges
+
+    parts = [{"id": "top", "shape": "box", "size": [1.0, 1.0, 0.05], "at": [0, 0, 0.95]},
+             {"id": "shelf", "shape": "box", "size": [1.0, 1.0, 0.01], "at": [0, 0, 0.5]},
+             {"id": "pole", "shape": "cylinder", "size": [0.1, 0.1, 1.0], "at": [0, 0, 0]},
+             {"id": "own", "shape": "box", "size": [1, 1, 1], "at": [0, 0, 0], "bevel": 0.1}]
+    dims = [2.0, 1.0, 0.8]
+    top, shelf, pole, own = soften_edges(parts, dims, radius_m=0.006)
+    assert top["bevel"] * max(dims) == pytest.approx(0.006)        # 6 mm on the largest axis
+    assert shelf["bevel"] * max(dims) == pytest.approx(0.25 * 0.008)  # thin part: 1/4 of 8 mm
+    assert "bevel" not in pole and own["bevel"] == 0.1
+    assert soften_edges(parts, dims, radius_m=0) == parts
