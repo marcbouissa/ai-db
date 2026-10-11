@@ -10,6 +10,12 @@ Each language fixture contains:
 - An inheritance
 """
 
+import json
+from pathlib import Path
+
+import pytest
+
+from ai_db.parser.chunker import chunk_file
 from ai_db.parser.ts_graph import extract_graph, language_for
 
 # ==============================================================================
@@ -475,3 +481,61 @@ def test_unknown_language_raises():
     assert symbols == []
     assert refs == []
     assert errors == []
+
+
+# ==============================================================================
+# G1: caller scopes agree with chunk names in every language
+# ==============================================================================
+
+# (file, source, the method's chunk qualified name)
+_METHOD_CALLS = [
+    ("a.js", "class Svc {\n  run(a) { return helper(a); }\n}\nfunction helper(c) { return c; }\n",
+     "Svc.run"),
+    ("b.js", "const go = (b) => { return helper(b); };\nfunction helper(c) { return c; }\n", "go"),
+    ("a.ts", ("abstract class Base {\n  describe(): string { return fmt(1); }\n}\n"
+              "function fmt(n: number) { return String(n); }\n"), "Base.describe"),
+    ("b.ts", "export const go = (b: number) => fmt(b);\nfunction fmt(n: number) { return String(n); }\n",
+     "go"),
+    ("A.java", "class A {\n  A() { init(); }\n  void init() {}\n}\n", "A.A"),
+    ("a.c", "static int helper(int x) { return x; }\nint *make(void) { helper(1); return 0; }\n", "make"),
+    ("a.cpp", ("namespace ns {\nclass Foo {\n public:\n  void bar() { helper(); }\n};\n}\n"
+               "void helper() {}\n"), "ns.Foo.bar"),
+    ("b.cpp", "namespace ns {\nclass Foo {};\nvoid Foo::baz() { helper(); }\n}\nvoid helper() {}\n",
+     "ns.Foo.baz"),
+    ("a.go", "package main\ntype S struct{ n int }\nfunc (s *S) M() { helper() }\nfunc helper() {}\n", "S.M"),
+    ("a.rs", "struct Foo;\nimpl fmt::Display for Foo {\n    fn fmt(&self) { helper(); }\n}\nfn helper() {}\n",
+     "Foo.fmt"),
+    ("b.rs", "struct Wrap<T>(T);\nimpl<T> Wrap<T> {\n    fn get(&self) { helper(); }\n}\nfn helper() {}\n",
+     "Wrap.get"),
+]
+
+
+@pytest.mark.parametrize(("filename", "code", "method"), _METHOD_CALLS,
+                         ids=[c[0] for c in _METHOD_CALLS])
+def test_call_caller_matches_method_chunk(filename, code, method):
+    chunks = {c["qualified_name"] for c in chunk_file(filename, code)}
+    assert method in chunks
+    _, refs, _ = extract_graph(filename, code)
+    callers = {r["caller_name"] for r in refs if r["ref_type"] == "call"}
+    assert f"module.{method}" in callers
+    # every named caller is some chunk
+    assert {c for c in callers if c != "module"} <= {f"module.{q}" for q in chunks}
+
+
+def test_trace_finds_callees_in_every_polyglot_language(tmp_path):
+    from ai_db import VectorDB
+    from ai_db.dispatcher import ServiceDispatcher
+
+    root = Path(__file__).parent / "fixtures" / "polyglot"
+    vdb = VectorDB(str(tmp_path / "t.db"))
+    try:
+        vdb.sync(str(root), project="poly", verbose=False)
+        disp = ServiceDispatcher(db=vdb)
+        for entry in ("TaxCalculator.totalWithTax", "TaxCalculator.TotalWithTax",
+                      "TaxCalculator.total_with_tax"):
+            out = json.loads(disp.execute("trace", {"entry": entry, "format": "json", "depth": 1,
+                                                   "cwd": str(root), "project": "poly"}))
+            kids = [c["qualified_name"] for c in out["root"]["children"]]
+            assert kids, entry
+    finally:
+        vdb.close()

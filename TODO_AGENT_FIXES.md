@@ -230,7 +230,7 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 ## P1: Call graph, trace, analysis
 
 ### G1. Call graph is empty outside Python
-- [ ] **Observed:** in `ai_db/parser/ts_graph.py` the caller walk recognises only
+- [x] **Observed:** in `ai_db/parser/ts_graph.py` the caller walk recognises only
   `function_definition`, `function_declaration`, `function_item`, `method_declaration`,
   `async_item`. JS/TS methods, arrow functions and Java constructors get caller `module`;
   C/C++ `function_definition` has no `name` field → `module.module`; Go methods become
@@ -245,6 +245,11 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - **Check:** `tests/test_ts_graph.py`: per language, a method calling a function yields a ref
   whose caller equals the method chunk's `qualified_name`; `trace` on the polyglot fixture
   returns ≥1 callee for each language.
+- **Done 2026-10-11:** `ai_db/parser/naming.py` (`SCOPE_CONTAINERS`, `definition_name`,
+  `qualified_name`) names both chunks and caller scopes; JS/TS methods and bound arrow
+  functions are callers, C/C++ names come from the declarator chain, Go methods are
+  `Recv.m`, Rust impl methods are `Type.m` (trait/generics stripped; was `Trait for Type`).
+  Python refs on the repo are byte-identical. Tests in `tests/test_ts_graph.py`.
 
 ### G12. Run-through 2026-10-08: fixes and performance (done)
 - [x] `trace`: dotted entries (`Class.method`) resolve; `file:line` takes the innermost
