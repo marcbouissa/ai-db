@@ -43,7 +43,7 @@ ISSUES: dict[str, tuple[tuple[str, ...], tuple[str, ...], str]] = {
     "facing": (("facing", "backwards", "turned away", "wrong way", "faces the wall"), ("facing", "faces_wall"),
                "check which way it faces"),
     "stiff": (("stiff", "rigid", "not draping", "doesn't drape", "does not drape", "hard looking", "like cardboard"),
-              (), "soft goods must drape: cloth simulation or more subdivisions, folds, no straight edges"),
+              (), "soft goods must drape: see the cloth-and-textiles skill (cloth sim, low stiffness, pinned edge)"),
     "material": (("fake", "plastic look", "flat colour", "flat color", "untextured", "no texture", "cg look"),
                  ("materials",), "give it a material kind with variation, not a flat colour"),
     "identical": (("identical", "all the same", "repetitive", "same every time", "look the same"), (),
