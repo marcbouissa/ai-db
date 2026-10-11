@@ -1,7 +1,9 @@
+from pathlib import Path
+
 from ai_db.parser.ts_graph import extract_graph
 
-with open("tests/fixtures/callflow/stage_manager.py") as f:
-    STAGE_MANAGER = f.read()
+# next to this file, not relative to the process cwd (which other tests may change)
+STAGE_MANAGER = (Path(__file__).with_name("stage_manager.py")).read_text(encoding="utf-8")
 
 
 def test_extract_cross_refs_stage_manager():

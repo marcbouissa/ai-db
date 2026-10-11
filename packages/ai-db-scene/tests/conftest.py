@@ -1,9 +1,19 @@
 """Hermetic environment for ai-db-scene tests: never touch the user's DBs or config."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
+
+# tree-sitter-language-pack resolves its grammar cache from XDG_CACHE_HOME/HOME when a parser is
+# first needed, and downloads any grammar it does not find there. isolated_env points
+# XDG_CACHE_HOME (and HOME here) at each test's tmp dir, so the first test that parsed
+# code (alphabetically tests/fixtures/callflow) downloaded the grammar over the network into a
+# throwaway dir: slow, and failing under load or without network. Pin the cache for the whole
+# session (and CLI subprocesses) to where it was before any test touched the environment.
+os.environ.setdefault("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR",
+                      os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache"))
 
 
 @pytest.fixture(autouse=True)

@@ -168,40 +168,47 @@ _BLENDER = Path.home() / "bin" / "blender"
 # Checkout of the blender_ox addon; the live test is skipped when it is not set.
 _ADDON = Path(os.environ.get("AI_DB_BLENDER_ADDON", "~/GitRepos/blender_mcp")).expanduser()
 
+# The server picks its own free port (start(0)) and reports it in a ready file once it listens:
+# reserving a port in the test and handing it over raced with other processes under load, and
+# polling with 1 s requests mistook a slow Blender start for a dead one. It stops on the stop
+# file or when the test process goes away; a fixed 60 s lifetime used to cut slow runs short.
 _LIVE_SCRIPT = """
 import os, sys, time
 sys.path.insert(0, os.environ["OX_ROOT"])
 from blender_ox.socket_server import MCPServerState
-MCPServerState.start(int(os.environ["OX_PORT"]))
-stop = os.environ["OX_STOP"]
-end = time.time() + 60
-while time.time() < end and not os.path.exists(stop):
+port = MCPServerState.start(0)
+ready = os.environ["OX_READY"]
+with open(ready + ".tmp", "w") as f:
+    f.write(str(port))
+os.replace(ready + ".tmp", ready)  # atomic: the test never reads half a port number
+stop, parent = os.environ["OX_STOP"], int(os.environ["OX_PARENT"])
+while not os.path.exists(stop) and os.getppid() == parent:
     MCPServerState.itc.process_pending()
     time.sleep(0.01)
 MCPServerState.stop()
 os._exit(0)
 """
+_LIVE_START_S = 180.0  # upper bound for Blender to start and listen (seconds under heavy load)
 
 
 @pytest.mark.blender
 @pytest.mark.skipif(not (_BLENDER.exists() or shutil.which("blender")) or not _ADDON.exists(), reason="Blender/addon not available")
 def test_live_blender(tmp_path):
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    stop = tmp_path / "stop"
+    ready, stop = tmp_path / "ready", tmp_path / "stop"
     script = tmp_path / "serve.py"
     script.write_text(_LIVE_SCRIPT)
     exe = str(_BLENDER) if _BLENDER.exists() else "blender"
-    env = {**os.environ, "OX_ROOT": str(_ADDON), "OX_PORT": str(port), "OX_STOP": str(stop)}
+    env = {**os.environ, "OX_ROOT": str(_ADDON), "OX_READY": str(ready), "OX_STOP": str(stop),
+           "OX_PARENT": str(os.getpid())}
     proc = subprocess.Popen([exe, "-b", "--factory-startup", "--python", str(script)], env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        c = BlenderClient(port=port, timeout=20)
-        deadline = time.time() + 30
-        while time.time() < deadline and not c.is_available(timeout=1):
-            time.sleep(0.3)
-        assert c.is_available(timeout=1)
+        deadline = time.monotonic() + _LIVE_START_S
+        while not ready.exists():  # wait for the server's own signal, not a guessed delay
+            assert proc.poll() is None, f"Blender exited early (rc={proc.returncode})"
+            assert time.monotonic() < deadline, "Blender did not start listening"
+            time.sleep(0.05)
+        c = BlenderClient(port=int(ready.read_text()), timeout=60)
         info = c.get_scene_info()
         assert info is not None
         res = c.batch([
@@ -213,6 +220,6 @@ def test_live_blender(tmp_path):
     finally:
         stop.write_text("1")
         try:
-            proc.wait(timeout=15)
+            proc.wait(timeout=30)
         except subprocess.TimeoutExpired:
             proc.kill()
