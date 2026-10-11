@@ -7,8 +7,8 @@ inside the unit box (``bbox_m`` scales it to the placement), and every part conn
 ground through a chain of touching parts.
 
 One recipe per category, in ``<recipes_dir>/<category>.json`` (``plugins.scene.recipes_dir``,
-default ``$XDG_DATA_HOME/ai-db/scene_recipes``). A built-in recipe wins unless the user
-recipe was saved with ``overwrite=true``.
+default ``$XDG_DATA_HOME/ai-db/scene_recipes``). A built-in recipe, and the addon's furniture
+generator for its categories, win unless the user recipe was saved with ``overwrite=true``.
 
 - ``parse_shapeassembly``: the Cuboid/attach/squeeze/reflect/translate subset of
   ShapeAssembly (Jones et al. 2020) to parts; other statements are skipped with a warning.
@@ -238,7 +238,8 @@ def create_recipe(category: str, name: str, parts: Any, dims: Any = None, source
         raise ValueError(f"a user recipe for {category!r} exists ({existing.get('name')}); pass overwrite=true")
     data = {"category": category, "name": name, "parts": parts,
             "dims_m": [float(x) for x in dims] if dims is not None else None,
-            "source": _source(source), "overrides_builtin": builtin, "created_at": time.time()}
+            "source": _source(source), "overrides_builtin": builtin,
+            "overwrite": bool(overwrite), "created_at": time.time()}
     os.makedirs(folder, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:

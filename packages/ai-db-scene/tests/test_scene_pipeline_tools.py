@@ -418,3 +418,27 @@ def test_live_multi_room_builds(private_blender, mem):
     assert res["status"] in ("built", "built_with_issues") and not res["failed_commands"], res
     assert "wall_living_east_2" in res["created"]
     assert not [i for i in res["issues_left"] if i.get("check") in ("missing_objects", "out_of_bounds")], res["issues_left"]
+
+
+def test_user_recipe_with_overwrite_beats_generator():
+    from ai_db_scene import user_recipes as ur
+
+    legs = [{"id": f"leg_{i}", "shape": "box", "size": [0.06, 0.06, 0.94], "at": [x, y, 0], "material": "wood:oak"}
+            for i, (x, y) in enumerate(((-0.45, -0.45), (0.45, -0.45), (-0.45, 0.45), (0.45, 0.45)))]
+    parts = legs + [{"id": "top", "shape": "box", "size": [1.0, 1.0, 0.06], "at": [0, 0, 0.94], "material": "wood:oak"}]
+    spec, _ = sp._parse_spec(SPEC)
+    pls = sp.parse_placements(sp._handle_solve_layout({"spec": SPEC})["placements"])
+    table = next(p for p in pls if p.id == "table")
+
+    def kinds() -> tuple[set[str], set[str]]:
+        cmds, _ = sp.build_layout_commands(spec, pls)
+        gen = {c["params"]["name"] for c in cmds if c["type"] == "generate_asset"}
+        built = {c["params"]["spec"]["asset"] for c in cmds if c["type"] == "build_asset"}
+        return gen, built
+
+    ur.create_recipe(table.category, "plain", parts)  # no overwrite: the generator still wins
+    gen, built = kinds()
+    assert gen == {"sofa", "table"} and "table" not in built
+    ur.create_recipe(table.category, "plain", parts, overwrite=True)
+    gen, built = kinds()
+    assert gen == {"sofa"} and "table" in built

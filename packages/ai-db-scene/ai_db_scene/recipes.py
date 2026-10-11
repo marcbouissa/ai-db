@@ -533,6 +533,15 @@ def _user_parts(category: str) -> list[dict[str, Any]] | None:
     return [dict(p) for p in r["parts"]]
 
 
+def user_overrides(category: str) -> bool:
+    """True if a user recipe for ``category`` was saved with overwrite=true: it then wins over
+    the built-in recipe and over the addon's furniture generator."""
+    from ai_db_scene.user_recipes import load_user_recipe
+
+    r = load_user_recipe(category)
+    return bool(r and (r.get("overwrite") or r.get("overrides_builtin")))
+
+
 def has_recipe(category: str) -> bool:
     return category in _RECIPES or _user_parts(category) is not None
 

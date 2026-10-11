@@ -39,7 +39,7 @@ from ai_db_scene.materials import (
 )
 from ai_db_scene.models import RUN_OUTCOMES, RunRecord
 from ai_db_scene.priors import load_priors
-from ai_db_scene.recipes import has_recipe, recipe_spec
+from ai_db_scene.recipes import has_recipe, recipe_spec, user_overrides
 from ai_db_scene.spec import RELATIONS, SETTING_KINDS, SceneSpec, spec_schema, validate_spec
 
 WALL_THICKNESS_M = 0.1
@@ -409,7 +409,8 @@ def build_layout_commands(
 
     Per placement, the first that applies: an ``asset_map`` entry; with ``geometry="generated"``
     a model file from an asset provider (see providers.py; none unless configured), parametric
-    furniture for the categories in ``_GENERATED``, a part recipe; else a textured box.
+    furniture for the categories in ``_GENERATED`` (unless a user recipe was saved for it with
+    overwrite=true), a part recipe; else a textured box.
     """
     import math
 
@@ -478,7 +479,7 @@ def build_layout_commands(
                 "filepath": asset["filepath"], "asset_name": asset["asset_name"], "location": _shift(pl.location, off)}})
             tag.append({"name": pl.id, "asset_name": asset["asset_name"], "location": _shift(pl.location, off),
                         "rot_z": math.radians(pl.rotation_deg_z), "props": props})
-        elif geometry == "generated" and pl.category in _GENERATED:
+        elif geometry == "generated" and pl.category in _GENERATED and not user_overrides(pl.category):
             family, params = _GENERATED[pl.category]
             loc = _shift(pl.location, off)
             cmds.append({"type": "generate_asset", "params": {
