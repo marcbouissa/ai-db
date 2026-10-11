@@ -1,0 +1,100 @@
+{
+ "setting": {
+  "kind": "indoor",
+  "bounds_m": [
+   5.0,
+   4.0,
+   2.6
+  ],
+  "style": "cozy living room",
+  "shape": "rect"
+ },
+ "objects": [
+  {
+   "id": "sofa",
+   "category": "sofa",
+   "hero": true,
+   "detail": "standard"
+  },
+  {
+   "id": "tv_stand",
+   "category": "tv_stand",
+   "detail": "standard"
+  },
+  {
+   "id": "coffee_table",
+   "category": "coffee_table",
+   "detail": "standard"
+  },
+  {
+   "id": "rug",
+   "category": "rug",
+   "detail": "standard"
+  },
+  {
+   "id": "armchair_left",
+   "category": "armchair",
+   "detail": "standard"
+  },
+  {
+   "id": "armchair_right",
+   "category": "armchair",
+   "detail": "standard"
+  }
+ ],
+ "relations": [
+  {
+   "a": "sofa",
+   "rel": "against_wall",
+   "b": "wall_south",
+   "gap_m": 0.05
+  },
+  {
+   "a": "tv_stand",
+   "rel": "against_wall",
+   "b": "wall_north",
+   "gap_m": 0.05
+  },
+  {
+   "a": "sofa",
+   "rel": "facing",
+   "b": "tv_stand"
+  },
+  {
+   "a": "coffee_table",
+   "rel": "in_front_of",
+   "b": "sofa",
+   "gap_m": 0.45
+  },
+  {
+   "a": "rug",
+   "rel": "centered_in",
+   "b": "room"
+  },
+  {
+   "a": "armchair_left",
+   "rel": "against_wall",
+   "b": "wall_west",
+   "gap_m": 0.05
+  },
+  {
+   "a": "armchair_right",
+   "rel": "against_wall",
+   "b": "wall_east",
+   "gap_m": 0.05
+  },
+  {
+   "a": "armchair_left",
+   "rel": "facing",
+   "b": "coffee_table"
+  },
+  {
+   "a": "armchair_right",
+   "rel": "facing",
+   "b": "coffee_table"
+  }
+ ],
+ "camera": {
+  "focus": "sofa"
+ }
+}

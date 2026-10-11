@@ -1,0 +1,774 @@
+"""MCP tools for the spec -> layout -> build pipeline (docs/3D_PIPELINE.md stages 1, 3, 4, 7).
+
+Table-driven like scene_tools: (name, description, schema) rows plus handlers. Command
+construction is pure (``build_layout_commands``) so it is testable without Blender.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+from ai_db_scene.blender_client import BlenderClient, BlenderError
+from ai_db_scene.constants import (
+    SCENE_CAMERA_HEIGHT_M,
+    SCENE_CAMERA_INSET,
+    SCENE_LAMP_W,
+    SCENE_SUN_ENERGY,
+)
+from ai_db_scene.layout import LayoutError, Placement, solve_layout
+from ai_db_scene.materials import FLOOR_MATERIALS, WALL_MATERIAL, material_for
+from ai_db_scene.models import RUN_OUTCOMES, RunRecord
+from ai_db_scene.priors import load_priors
+from ai_db_scene.recipes import has_recipe, recipe_spec
+from ai_db_scene.spec import RELATIONS, SETTING_KINDS, SceneSpec, spec_schema, validate_spec
+
+WALL_THICKNESS_M = 0.1
+_WALLS = ("wall_north", "wall_south", "wall_east", "wall_west")
+_SUFFIX = re.compile(r"_\d+$")
+_MAX_EXEMPLARS = 3
+
+
+def _memory() -> Any:
+    from ai_db_scene.tools.scene_tools import get_scene_memory
+
+    return get_scene_memory()
+
+
+def _err(message: str, **extra: Any) -> dict[str, Any]:
+    return {"status": "error", "message": message, **extra}
+
+
+def _parse_spec(raw: Any) -> tuple[SceneSpec | None, list[str]]:
+    return validate_spec(raw)
+
+
+def parse_placements(raw: Any) -> list[Placement]:
+    out = []
+    for p in raw or []:
+        out.append(
+            Placement(
+                id=str(p["id"]),
+                location=tuple(float(v) for v in p["location"]),  # type: ignore[arg-type]
+                rotation_deg_z=float(p.get("rotation_deg_z", 0.0)),
+                dims=tuple(float(v) for v in p["dims"]),  # type: ignore[arg-type]
+                category=str(p.get("category", "")),
+                facing_target=p.get("facing_target"),
+            )
+        )
+    return out
+
+
+def placement_to_dict(p: Placement) -> dict[str, Any]:
+    return {
+        "id": p.id,
+        "location": list(p.location),
+        "rotation_deg_z": p.rotation_deg_z,
+        "dims": list(p.dims),
+        "category": p.category,
+        "yaw_deg": p.rotation_deg_z,
+        **({"facing_target": p.facing_target} if p.facing_target else {}),
+    }
+
+
+# --- pure command construction -------------------------------------------------
+
+
+_OPENING_KINDS = ("window", "door", "niche")
+
+
+def frame_offset(spec: SceneSpec) -> tuple[float, float, float]:
+    """Layout frame -> Blender frame.
+
+    solve_layout places objects in ``[0, w] x [0, d]``; the Blender addon's ``room_shell`` (and
+    its validator's ``room_bounds``) centre a sized room on the origin. Without this shift
+    every indoor object sat half a room away from its walls. Polygon rooms are drawn at
+    their given points, so they keep the layout frame.
+    """
+    if spec.setting.kind == "single_asset" or spec.setting.shape == "polygon":
+        return (0.0, 0.0, 0.0)
+    w, d, _h = spec.setting.bounds_m
+    return (-w / 2, -d / 2, 0.0)
+
+
+def _shift(loc: Any, off: tuple[float, float, float]) -> list[float]:
+    return [float(loc[0]) + off[0], float(loc[1]) + off[1], float(loc[2]) + off[2]]
+
+
+def _openings(spec: SceneSpec, placements: list[Placement]) -> list[dict[str, Any]]:
+    """Wall openings from window/door/niche objects that have an against_wall relation."""
+    base_wall = {r.a: r for r in spec.relations if r.rel == "against_wall"}
+    ids = {o.id for o in spec.objects}
+    out = []
+    for pl in placements:
+        if pl.category not in _OPENING_KINDS:
+            continue
+        base = pl.id if pl.id in ids else _SUFFIX.sub("", pl.id)
+        r = base_wall.get(base)
+        if r is None:
+            continue
+        w, d, h = pl.dims
+        # room_shell takes the opening's point ("at": snapped to the nearest wall) and its
+        # sill; the solver already put the window/door object exactly there.
+        out.append({
+            "id": pl.id, "kind": pl.category, "wall": r.b,
+            "at": _shift(pl.location, frame_offset(spec))[:2],
+            "width": w, "height": h, "depth": d, "sill": max(pl.location[2] - h / 2, 0.0),
+        })
+    return out
+
+
+def _room_commands(spec: SceneSpec, placements: list[Placement] | None = None) -> list[dict[str, Any]]:
+    kind = spec.setting.kind
+    if kind == "single_asset":
+        return []
+    w, d, h = spec.setting.bounds_m
+    t = WALL_THICKNESS_M
+    if kind == "indoor":
+        st = spec.setting
+        params: dict[str, Any] = {
+            "shape": st.shape, "height": h, "wall_thickness": t,
+            "openings": _openings(spec, placements or []),
+            "floor": True, "ceiling": False, "trim": False,
+        }
+        if st.shape == "polygon":
+            params["points"] = [list(p) for p in st.points]
+        else:
+            params["size"] = [w, d]
+        return [{"type": "room_shell", "params": params}]
+    shp = spec.setting.shape
+    return [{
+        "type": "create_primitive",
+        "params": {"primitive": "cube", "name": "floor", "location": [0.0, 0.0, -t / 2], "scale": [w / 2, d / 2, t / 2]},
+    }] if shp == "rect" else [{"type": "room_shell", "params": {
+        "shape": shp, "height": 0.0, "wall_thickness": t, "openings": [], "floor": True, "ceiling": False, "trim": False,
+        **({"points": [list(p) for p in spec.setting.points]} if shp == "polygon" else {"size": [w, d]})}}]
+
+
+def _lookup_asset(asset_map: dict[str, Any], pl: Placement, base_id: str) -> dict[str, Any] | None:
+    for key in (pl.id, base_id, pl.category):
+        v = asset_map.get(key)
+        if isinstance(v, dict) and v.get("filepath") and v.get("asset_name"):
+            return v
+    return None
+
+
+_FINALIZE = """
+import bpy, json
+for ent in json.loads({payload!r}):
+    obj = bpy.data.objects.get(ent["name"])
+    if obj is None and ent.get("asset_name"):
+        for o in bpy.data.objects:
+            if o.get("ai_db_id") is None and (o.name == ent["asset_name"] or o.name.startswith(ent["asset_name"] + ".")):
+                obj = o
+                break
+        if obj is not None:
+            obj.name = ent["name"]
+    if obj is None:
+        continue
+    if ent.get("asset_name"):
+        obj.location = ent["location"]
+        obj.rotation_euler[2] = ent["rot_z"]
+    for k, v in ent["props"].items():
+        obj[k] = v
+result = {{"tagged": len(json.loads({payload!r}))}}
+"""
+
+
+_ROOM_MATERIAL = """
+import bpy
+mat = bpy.data.materials.get("ai_db_room") or bpy.data.materials.new("ai_db_room")
+mat.diffuse_color = (0.82, 0.8, 0.76, 1.0)
+if mat.use_nodes and mat.node_tree.nodes.get("Principled BSDF"):
+    mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.82, 0.8, 0.76, 1.0)
+n = 0
+for o in bpy.context.scene.objects:
+    if o.type == "MESH" and (o.name.startswith("Room_") or o.name == "floor") and not any(o.data.materials):
+        o.data.materials.append(mat)
+        n += 1
+result = {"room_surfaces": n}
+"""
+
+
+#: category -> (generator family, params from the placement's [w, d, h]). Parametric furniture
+#: with its own part materials (fabric seat, wooden legs) instead of a textured box.
+_GENERATED: dict[str, tuple[str, Any]] = {
+    "sofa": ("sofa", lambda w, d, h: {"width": w, "depth": d}),
+    "armchair": ("armchair", lambda w, d, h: {"width": w, "depth": d}),
+    "dining_chair": ("dining_chair", lambda w, d, h: {"seat_width": w * 0.9, "seat_depth": d * 0.85}),
+    "chair": ("dining_chair", lambda w, d, h: {"seat_width": w * 0.9, "seat_depth": d * 0.85}),
+    "dining_table": ("table", lambda w, d, h: {"width": w, "depth": d, "height": h}),
+    "coffee_table": ("table", lambda w, d, h: {"width": w, "depth": d, "height": h}),
+    "side_table": ("table", lambda w, d, h: {"width": w, "depth": d, "height": h}),
+    "conference_table": ("table", lambda w, d, h: {"width": w, "depth": d, "height": h}),
+    "desk": ("desk", lambda w, d, h: {"width": w, "depth": d, "height": h}),
+    "bookshelf": ("bookshelf", lambda w, d, h: {"width": w, "depth": d, "height": h}),
+}
+GEOMETRY_MODES = ("generated", "boxes")
+#: parts a spec material must not repaint on generated furniture (wooden legs, the books)
+_KEEP_PARTS = {"sofa": ("leg",), "armchair": ("leg",), "bookshelf": ("book",)}
+
+_RESKIN = """
+import bpy, sys, json
+mod = next(m for n, m in sys.modules.items() if n.endswith(".materials") and hasattr(m, "resolve_material"))
+done = {{}}
+for ent in json.loads({payload!r}):
+    root = bpy.data.objects.get(ent["name"])
+    if root is None:
+        continue
+    mat = mod.resolve_material(ent["material"])
+    parts = [o for o in [root, *root.children_recursive] if o.type == "MESH"
+             and not any(k in o.name.lower() for k in ent["keep"])]
+    for o in parts:
+        o.data.materials.clear()
+        o.data.materials.append(mat)
+    done[ent["name"]] = len(parts)
+result = {{"reskinned": done}}
+"""
+
+
+def build_layout_commands(
+    spec: SceneSpec, placements: list[Placement], asset_map: dict[str, Any] | None = None,
+    geometry: str = "generated",
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Blender batch for room shell + one object per placement. Returns (commands, created names).
+
+    ``geometry="generated"`` builds parametric furniture for the categories in ``_GENERATED``
+    (sized to the placement); everything else, or ``"boxes"``, is a textured placeholder box.
+    """
+    import math
+
+    asset_map = asset_map or {}
+    priors = load_priors()
+    heroes = {o.id for o in spec.objects if o.hero}
+    materials = {o.id: o.material for o in spec.objects}
+    details = {o.id: o.detail for o in spec.objects}
+    cmds = _room_commands(spec, placements)
+    names = [c["params"].get("name", "room_shell") for c in cmds]
+    off = frame_offset(spec)
+    reskin: list[dict[str, Any]] = []
+    tag: list[dict[str, Any]] = []
+    for pl in placements:
+        base = _SUFFIX.sub("", pl.id) if pl.id not in {o.id for o in spec.objects} else pl.id
+        prior = priors.get(pl.category)
+        props = {
+            "ai_db_id": pl.id,
+            "category": pl.category,
+            "hero": base in heroes,
+            "support": prior.support if prior else "floor",
+            "detail": details.get(base, "standard"),
+        }
+        if pl.facing_target:
+            props["facing_target"] = pl.facing_target
+        asset = _lookup_asset(asset_map, pl, base)
+        if asset:
+            cmds.append({"type": "append_asset", "params": {
+                "filepath": asset["filepath"], "asset_name": asset["asset_name"], "location": _shift(pl.location, off)}})
+            tag.append({"name": pl.id, "asset_name": asset["asset_name"], "location": _shift(pl.location, off),
+                        "rot_z": math.radians(pl.rotation_deg_z), "props": props})
+        elif geometry == "generated" and pl.category in _GENERATED:
+            family, params = _GENERATED[pl.category]
+            loc = _shift(pl.location, off)
+            cmds.append({"type": "generate_asset", "params": {
+                "family": family, "params": params(*pl.dims), "name": pl.id,
+                "location": [loc[0], loc[1], loc[2] - pl.dims[2] / 2],  # base centre
+                "rotation": [0.0, 0.0, pl.rotation_deg_z]}})
+            tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
+            if materials.get(base):  # the spec chose a material: it wins over the generator's
+                reskin.append({"name": pl.id, "material": material_for(pl.category, materials[base]),
+                               "keep": list(_KEEP_PARTS.get(pl.category, ()))})
+        elif geometry == "generated" and has_recipe(pl.category):
+            loc = _shift(pl.location, off)
+            cmds.append({"type": "build_asset", "params": {"spec": recipe_spec(pl.category, pl.id, pl.dims)}})
+            cmds.append({"type": "modify_object", "params": {
+                "name": pl.id, "location": [loc[0], loc[1], loc[2] - pl.dims[2] / 2],
+                "rotation": [0.0, 0.0, pl.rotation_deg_z]}})
+            tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
+            if materials.get(base):
+                reskin.append({"name": pl.id, "material": material_for(pl.category, materials[base]), "keep": []})
+        else:
+            cmds.append({"type": "create_primitive", "params": {
+                "primitive": "cube", "name": pl.id, "location": _shift(pl.location, off),
+                "scale": [pl.dims[0] / 2, pl.dims[1] / 2, pl.dims[2] / 2]}})
+            if pl.rotation_deg_z:
+                cmds.append({"type": "modify_object", "params": {
+                    "name": pl.id, "rotation": [0.0, 0.0, pl.rotation_deg_z]}})
+            tag.append({"name": pl.id, "location": _shift(pl.location, off), "rot_z": 0.0, "props": props})
+            cmds.append({"type": "apply_material", "params": {
+                "name": pl.id, "material": material_for(pl.category, materials.get(base))}})
+        names.append(pl.id)
+    if tag:
+        cmds.append({"type": "run_code", "params": {"code": _FINALIZE.format(payload=json.dumps(tag))}})
+    if reskin:
+        cmds.append({"type": "run_code", "params": {"code": _RESKIN.format(payload=json.dumps(reskin))}})
+    if spec.setting.kind != "single_asset":
+        st = spec.setting
+        floor = st.floor_material or FLOOR_MATERIALS.get(st.kind, "plaster")
+        surfaces = [("floor" if st.kind == "outdoor" and st.shape == "rect" else "Room_Floor", floor)]
+        if st.kind == "indoor":
+            surfaces.append(("Room_Walls", st.wall_material or WALL_MATERIAL))
+        for obj, mat in surfaces:
+            cmds.append({"type": "apply_material", "params": {"name": obj, "material": material_for("", mat)}})
+        # anything else of the shell (ceiling, trim) gets the neutral room material
+        cmds.append({"type": "run_code", "params": {"code": _ROOM_MATERIAL}})
+    cmds += lighting_commands(spec, placements, off)
+    cmds.append(camera_command(spec, placements, off))
+    return cmds, names
+
+
+def lighting_commands(spec: SceneSpec, placements: list[Placement], off: tuple[float, float, float]) -> list[dict[str, Any]]:
+    """Daylight (sky world, sun, a portal per window) plus a warm point light in every lamp.
+    A lone sun left interiors flat and dark (judges' second most common complaint)."""
+    cmds: list[dict[str, Any]] = [{"type": "daylight_rig", "params": {
+        "sun_elevation": 40.0, "sun_azimuth": 135.0, "strength": SCENE_SUN_ENERGY, "sky": "nishita",
+        "window_portals": spec.setting.kind == "indoor", "sky_strength": 0.8, "name": "ai_db_daylight",
+        # open air gets the full sun and sky: +1 stop (the rig's default) washed outdoor scenes out
+        "exposure": 0.5 if spec.setting.kind == "indoor" else -0.7}}]
+    for pl in placements:
+        watts = SCENE_LAMP_W.get(pl.category)
+        if watts is None:
+            continue
+        x, y, z = _shift(pl.location, off)
+        cmds.append({"type": "add_light", "params": {
+            "light_type": "POINT", "name": f"{pl.id}_light", "energy": watts, "color": [1.0, 0.82, 0.62],
+            "location": [x, y, z + pl.dims[2] / 2 - 0.15]}})
+    return cmds
+
+
+def camera_command(spec: SceneSpec, placements: list[Placement], off: tuple[float, float, float]) -> dict[str, Any]:
+    """An eye-level camera in the room corner with the clearest view, aimed at the heroes (else
+    at everything). The old camera looked in from above the walls: walls and framing were the
+    judges' most common complaints."""
+    import math
+
+    if spec.setting.kind in ("single_asset", "tabletop") or not placements:
+        # small subjects: a close three-quarter view that frames them, not a room corner
+        direction = [0.8, -1.0, 0.5] if spec.setting.kind == "single_asset" else [0.6, -1.0, 0.7]
+        return {"type": "frame_camera", "params": {"direction": direction, "margin": 1.2, "lens": 50}}
+    w, d, _h = spec.setting.bounds_m
+    heroes = {o.id for o in spec.objects if o.hero}
+    focus = [p for p in placements if _SUFFIX.sub("", p.id) in heroes or p.id in heroes] or placements
+    fx = sum(p.location[0] for p in focus) / len(focus)
+    fy = sum(p.location[1] for p in focus) / len(focus)
+    height = SCENE_CAMERA_HEIGHT_M if spec.setting.kind == "indoor" else 2.5
+
+    def clearance(cx: float, cy: float) -> float:
+        return min((max(abs(cx - p.location[0]) - p.dims[0] / 2, abs(cy - p.location[1]) - p.dims[1] / 2, 0.0)
+                    for p in placements if p.dims[2] > 0.05), default=99.0)
+
+    i = SCENE_CAMERA_INSET
+    corners = [(fxr * w, fyr * d) for fxr in (i, 1 - i) for fyr in (i, 1 - i)]
+    # clear of furniture first, then the farthest from the focus (the widest view of it)
+    cx, cy = max(corners, key=lambda c: (min(clearance(*c), 0.6), math.hypot(c[0] - fx, c[1] - fy)))
+    dx, dy, dz = fx - cx, fy - cy, 0.8 - height
+    yaw = math.degrees(math.atan2(-dx, dy))  # Euler Z: [90, 0, 0] looks along +Y
+    pitch = 90.0 + math.degrees(math.atan2(dz, math.hypot(dx, dy)))
+    loc = _shift((cx, cy, height), off)
+    return {"type": "set_camera", "params": {"location": loc, "rotation": [round(pitch, 2), 0.0, round(yaw, 2)],
+                                             "name": "ai_db_camera", "lens": 16 if spec.setting.kind == "indoor" else 24}}
+
+
+# --- handlers ------------------------------------------------------------------
+
+
+def validator_args(spec: SceneSpec) -> dict[str, Any]:
+    """A SceneSpec in the shape the Blender addon's validate_scene reads.
+
+    The validator knows nothing of SceneSpec: given one directly it found no room bounds,
+    priors or usable relations, so out_of_bounds/scale never ran.
+    """
+    priors = load_priors()
+    out: dict[str, Any] = {
+        "relations": [{"a": r.a, "rel": r.rel, "b": r.b} for r in spec.relations
+                      if r.rel in ("facing", "in_front_of")],
+        "priors": {o.category: {"min": list(priors[o.category].min_m), "max": list(priors[o.category].max_m)}
+                   for o in spec.objects if o.category in priors},
+    }
+    if spec.setting.kind in ("indoor", "outdoor") and spec.setting.shape != "polygon":
+        out["room_bounds"] = list(spec.setting.bounds_m)  # centred: see frame_offset
+    return out
+
+
+_LIST_IDS = """
+import bpy
+result = [{"name": o.name, "ai_db_id": o.get("ai_db_id")} for o in bpy.context.scene.objects]
+"""
+
+
+def missing_objects(spec: SceneSpec, present_ids: list[str]) -> list[dict[str, Any]]:
+    """Spec objects with fewer instances in the scene than ``count`` (by ai_db_id tag)."""
+    have: dict[str, int] = {}
+    ids = {o.id for o in spec.objects}
+    for pid in present_ids:
+        base = pid if pid in ids else _SUFFIX.sub("", pid)
+        have[base] = have.get(base, 0) + 1
+    issues = []
+    for o in spec.objects:
+        n = have.get(o.id, 0)
+        if n < o.count:
+            issues.append({"check": "missing_objects", "severity": "blocking", "objects": [o.id],
+                           "message": f"{o.id}: {n} of {o.count} in the scene", "fix": None})
+    return issues
+
+
+def _handle_validate_scene(args: dict[str, Any]) -> Any:
+    from ai_db_scene.tools.scene_tools import _forward
+
+    raw = args.get("spec")
+    if not (isinstance(raw, dict) and "setting" in raw):
+        return _forward("validate_scene", args)  # validator-native spec or none
+    spec, errors = _parse_spec(raw)
+    if spec is None:
+        return {"status": "invalid", "errors": errors}
+    # Explicit args (checks, room_bounds, priors, ...) win over the spec, as in the validator.
+    res = _forward("validate_scene", {**{k: v for k, v in args.items() if k != "spec"},
+                                      "spec": validator_args(spec)})
+    if res.get("status") != "success":
+        return res
+    from ai_db_scene.blender_client import BlenderClient, BlenderError
+    try:
+        objs = BlenderClient().run_code(_LIST_IDS)
+    except BlenderError as e:
+        return {"status": "error", "message": str(e)}
+    extra = missing_objects(spec, [o["ai_db_id"] for o in objs if o.get("ai_db_id")])
+    result = res["result"]
+    if extra:
+        result["issues"] = list(result.get("issues", [])) + extra
+        result["ok"] = False
+        stats = result.setdefault("stats", {})
+        stats["blocking"] = stats.get("blocking", 0) + len(extra)
+    return res
+
+
+
+def _handle_get_scene_spec_schema(args: dict[str, Any]) -> Any:
+    priors = load_priors()
+    exemplars: list[dict[str, Any]] = []
+    try:
+        runs = _memory().search_exemplars(args.get("brief", ""), min_score=4.0, top_k=_MAX_EXEMPLARS)
+        exemplars = [{"brief": r.brief, "spec": r.spec, "score": r.score} for r in runs if r.spec]
+    except Exception:  # noqa: BLE001  memory unavailable must not block schema discovery
+        exemplars = []
+    # Sizes only for the categories the brief is likely to need; every name stays listed, so the
+    # vocabulary is complete but the reply is ~60% smaller (ai-db runs spent the most tokens here).
+    brief_words = {w.rstrip("s") for w in re.findall(r"[a-z]+", str(args.get("brief", "")).lower())}
+    relevant = {n for n in priors if any(part.rstrip("s") in brief_words for part in n.split("_"))}
+    if not relevant:
+        relevant = set(priors)  # no brief: everything, as before
+    return {
+        "schema": spec_schema(),
+        "categories": {
+            n: {"typical_m": list(p.typical_m), "support": p.support, "can_support_others": p.can_support_others}
+            for n, p in sorted(priors.items()) if n in relevant
+        },
+        "other_categories": sorted(set(priors) - relevant),
+        "relations": list(RELATIONS),
+        "setting_kinds": list(SETTING_KINDS),
+        "exemplars": exemplars[:_MAX_EXEMPLARS] or [{"brief": "a small reading corner", "spec": _EXAMPLE_SPEC}],
+        "next": "submit_scene_spec(spec) to check it, then build_scene(spec)",
+    }
+
+
+_EXAMPLE_SPEC: dict[str, Any] = {
+    "setting": {"kind": "indoor", "bounds_m": [4.0, 3.5, 2.7], "floor_material": "wood:oak"},
+    "objects": [{"id": "armchair", "category": "armchair", "hero": True, "material": "velvet:#3d5a80"},
+                {"id": "lamp", "category": "floor_lamp"}, {"id": "shelf", "category": "bookshelf"},
+                {"id": "rug", "category": "rug"}],
+    "relations": [{"a": "shelf", "rel": "against_wall", "b": "wall_north"},
+                  {"a": "armchair", "rel": "facing", "b": "shelf"},
+                  {"a": "lamp", "rel": "beside", "b": "armchair"},
+                  {"a": "rug", "rel": "centered_in", "b": "room"}]}
+
+
+def _handle_submit_scene_spec(args: dict[str, Any]) -> Any:
+    spec, errors = _parse_spec(args.get("spec"))
+    if spec is None:
+        return {"status": "invalid", "errors": errors}
+    return {"status": "ok", "spec": spec.to_dict()}
+
+
+def _handle_solve_layout(args: dict[str, Any]) -> Any:
+    spec, errors = _parse_spec(args.get("spec"))
+    if spec is None:
+        return {"status": "invalid", "errors": errors}
+    kw: dict[str, Any] = {}
+    if args.get("seed") is not None:
+        kw["seed"] = int(args["seed"])
+    try:
+        pls = solve_layout(spec, **kw)
+    except LayoutError as e:
+        return {"status": "conflict", "message": str(e), "conflicts": e.conflicts}
+    return {"status": "ok", "placements": [placement_to_dict(p) for p in pls]}
+
+
+def _handle_apply_layout(args: dict[str, Any]) -> Any:
+    spec, errors = _parse_spec(args.get("spec"))
+    if spec is None:
+        return {"status": "invalid", "errors": errors}
+    try:
+        pls = parse_placements(args.get("placements"))
+    except (KeyError, TypeError, ValueError) as e:
+        return _err(f"bad placements: {e!r}")
+    geometry = args.get("geometry", "generated")
+    if geometry not in GEOMETRY_MODES:
+        return _err(f"geometry must be one of {list(GEOMETRY_MODES)}")
+    cmds, names = build_layout_commands(spec, pls, args.get("asset_map"), geometry)
+    try:
+        results = BlenderClient().batch(cmds)
+    except BlenderError as e:
+        return {"status": "error", "message": str(e), "error_type": e.error_type or type(e).__name__, "hint": e.hint}
+    failed = [{"index": i, "type": cmds[i]["type"], "message": r.get("message")}
+              for i, r in enumerate(results) if not r.get("ok", r.get("status") == "success")]
+    return {"status": "partial" if failed else "success", "created": names, "commands": len(cmds), "failed": failed}
+
+
+def _handle_record_run(args: dict[str, Any]) -> Any:
+    outcome = args.get("outcome", "success")
+    if outcome not in RUN_OUTCOMES:
+        return _err(f"outcome must be one of {list(RUN_OUTCOMES)}")
+    fields = {k: args[k] for k in (
+        "brief", "spec", "placements", "actions", "validation_reports", "judge_scores",
+        "token_cost", "wall_time_s", "project") if k in args}
+    run = RunRecord(outcome=outcome, **fields)
+    return {"status": "saved", "run_id": _memory().record_run(run)}
+
+
+def _handle_search_exemplars(args: dict[str, Any]) -> Any:
+    runs = _memory().search_exemplars(
+        args["brief"], min_score=float(args.get("min_score", 4.0)),
+        top_k=int(args.get("top_k", 3)), project=args.get("project"))
+    return {"count": len(runs), "exemplars": [r.to_dict() | {"score": r.score} for r in runs]}
+
+
+_SPEC = {"type": "object", "description": "SceneSpec (see get_scene_spec_schema)"}
+
+def _issues(res: dict[str, Any]) -> list[dict[str, Any]]:
+    return list(((res or {}).get("result") or {}).get("issues", []))
+
+
+def _handle_build_scene(args: dict[str, Any]) -> Any:
+    """spec -> layout (repairing conflicts) -> build -> validate -> apply the validator's fixes."""
+    from ai_db_scene.constants import BUILD_FIX_ROUNDS, BUILD_MAX_REPAIRS
+    from ai_db_scene.repair import relax
+
+    spec, errors = _parse_spec(args.get("spec"))
+    if spec is None:
+        return {"status": "invalid", "errors": errors}
+    data = spec.to_dict()
+    original = list(spec.setting.bounds_m)
+    repairs: list[str] = []
+    seed = int(args.get("seed", 0))
+    while True:
+        spec, errors = _parse_spec(data)
+        if spec is None:  # a repair must never produce an invalid spec; report it if it does
+            return {"status": "invalid", "errors": errors, "repairs": repairs}
+        try:
+            placements = solve_layout(spec, seed=seed)
+            break
+        except LayoutError as e:
+            fix = relax(data, e, original) if len(repairs) < BUILD_MAX_REPAIRS else None
+            if fix is None:
+                return {"status": "conflict", "message": str(e), "conflicts": e.conflicts, "repairs": repairs,
+                        "spec": data}
+            data, note = fix
+            repairs.append(note)
+    if args.get("clear"):
+        try:
+            BlenderClient().request("clear_scene", {"keep_camera": False, "purge_orphans": True})
+        except BlenderError as e:
+            return {"status": "error", "message": f"clear_scene failed: {e}", "repairs": repairs}
+    built = _handle_apply_layout({"spec": data, "placements": [placement_to_dict(p) for p in placements],
+                                  "asset_map": args.get("asset_map"), "geometry": args.get("geometry", "generated")})
+    if built.get("status") not in ("success", "partial"):
+        return {**built, "repairs": repairs, "spec": data}
+    report = _handle_validate_scene({"spec": data})
+    first = _issues(report)
+    applied: list[str] = []
+    for _ in range(BUILD_FIX_ROUNDS):
+        fixes = [i for i in _issues(report) if isinstance(i.get("fix"), dict) and i["fix"].get("handler")]
+        if not fixes:
+            break
+        for issue in fixes:
+            try:
+                BlenderClient().request(issue["fix"]["handler"], issue["fix"].get("params") or {})
+                applied.append(f"{issue.get('check')}: {issue.get('message')}")
+            except BlenderError as e:
+                applied.append(f"fix failed for {issue.get('check')}: {e}")
+        report = _handle_validate_scene({"spec": data})
+    left = _issues(report)
+    out = {"status": "built" if not any(i.get("severity") == "blocking" for i in left) else "built_with_issues",
+           "objects": len(placements), "created": built.get("created"), "failed_commands": built.get("failed"),
+           "repairs": repairs, "fixes_applied": applied, "issues_found": len(first),
+           "issues_left": left[:20], "spec": data if repairs else None}
+    # every build is a run: exemplar search (get_scene_spec_schema, search_exemplars) learns
+    # from successes without anyone calling record_run (4 calls in 23 benchmark runs)
+    blocking = sum(1 for i in left if i.get("severity") == "blocking")
+    try:
+        out["run_id"] = _memory().record_run(RunRecord(
+            brief=str(args.get("prompt") or ""), spec=data, placements=[placement_to_dict(p) for p in placements],
+            validation_reports=[{"issues_found": len(first), "issues_left": left[:20], "fixes": applied,
+                                 "repairs": repairs}],
+            judge_scores=[{"overall": max(1.0, 5.0 - blocking), "source": "validator"}],
+            outcome="success" if not blocking else "partial", project=args.get("project", "default")))
+    except Exception as e:  # noqa: BLE001 - recording must not fail a finished build
+        out["record_error"] = str(e)
+    if args.get("snapshot", True):
+        # the spec travels with the version: edit_scene starts from it
+        try:
+            out["scene_id"] = _memory().snapshot_scene(
+                prompt=str(args.get("prompt") or "build_scene"), project=args.get("project", "default"),
+                operation_type=args.get("operation_type", "build"),
+                metadata={"spec": data, "repairs": repairs, **(args.get("metadata") or {})},
+                tags=["build_scene"], parent_scene_id=args.get("parent_scene_id"))
+        except Exception as e:  # noqa: BLE001 - the scene is built; say why it was not saved
+            out["snapshot_error"] = str(e)
+    return out
+
+
+def _stored_spec(scene_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    scene = _memory().restore_scene(scene_id)
+    meta = scene.prompt_context.metadata if scene.prompt_context else {}
+    spec = meta.get("spec") if isinstance(meta, dict) else None
+    if not isinstance(spec, dict):
+        return None, (f"scene {scene_id} has no stored spec (it was not made by build_scene/edit_scene); "
+                      "pass the spec to build_scene first")
+    return spec, None
+
+
+def _handle_edit_scene(args: dict[str, Any]) -> Any:
+    """Apply ordered edit steps to a built scene's spec, rebuild it, save the next version."""
+    from ai_db_scene.edits import apply_steps
+
+    scene_id = args.get("scene_id")
+    if not scene_id:
+        return _err("scene_id is required")
+    try:
+        spec, why = _stored_spec(scene_id)
+    except ValueError as e:
+        return _err(str(e))
+    if spec is None:
+        return _err(why or "no stored spec")
+    data, done, errors = apply_steps(spec, args.get("steps"))
+    if data is None:
+        return {"status": "invalid", "errors": errors, "applied_before_error": done}
+    parsed, errors = _parse_spec(data)
+    if parsed is None:
+        return {"status": "invalid", "errors": errors, "steps_applied": done}
+    safety = None
+    try:  # keep manual Blender edits made since the last version before the scene is cleared
+        safety = _memory().snapshot_scene(prompt=f"before edit of {scene_id}", project=args.get("project", "default"),
+                                          operation_type="pre_edit", tags=["pre_edit"])
+    except Exception:  # noqa: BLE001 - no Blender or empty scene: nothing to keep
+        safety = None
+    out = _handle_build_scene({"spec": data, "seed": args.get("seed", 0), "geometry": args.get("geometry", "generated"),
+                               "asset_map": args.get("asset_map"), "clear": True, "snapshot": True,
+                               "prompt": args.get("prompt") or "; ".join(done), "project": args.get("project", "default"),
+                               "operation_type": "edit", "parent_scene_id": scene_id,
+                               "metadata": {"steps": args.get("steps")}})
+    return {**out, "steps_applied": done, "previous_scene_id": scene_id, "safety_snapshot": safety}
+
+
+PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
+    ("get_scene_spec_schema",
+     "SceneSpec JSON schema + category vocabulary with typical dims + relations + up to 3 exemplar specs from past successful runs",
+     {"type": "object", "properties": {"brief": {"type": "string", "description": "Brief, to retrieve similar exemplars"}}},
+     _handle_get_scene_spec_schema),
+    ("submit_scene_spec",
+     "Validate a SceneSpec; returns exact errors, or ok + the normalized spec",
+     {"type": "object", "properties": {"spec": _SPEC}, "required": ["spec"]},
+     _handle_submit_scene_spec),
+    ("solve_layout",
+     "Deterministically place every object of a SceneSpec; returns placements or the conflicting relations",
+     {"type": "object", "properties": {"spec": _SPEC, "seed": {"type": "integer"}}, "required": ["spec"]},
+     _handle_solve_layout),
+    ("build_scene",
+     ("One call from SceneSpec to finished scene: validates the spec, lays it out (repairing conflicts by "
+      "dropping the conflicting relation, enlarging the setting or placing fewer copies, each change reported), "
+      "builds it with real furniture, materials, daylight, lamp lights and an eye-level camera, validates it and "
+      "applies the validator's own fixes. Prefer this to solve_layout + apply_layout"),
+     {"type": "object",
+      "properties": {
+          "spec": _SPEC,
+          "seed": {"type": "integer"},
+          "geometry": {"enum": list(GEOMETRY_MODES)},
+          "asset_map": {"type": "object", "description": "id|category -> {filepath, asset_name}"},
+          "clear": {"type": "boolean", "description": "empty the Blender scene first (default false)"},
+          "snapshot": {"type": "boolean", "description": "save the result as a scene version with its spec (default true)"},
+          "prompt": {"type": "string", "description": "what this build is, for the scene history"},
+          "project": {"type": "string"}},
+      "required": ["spec"]},
+     _handle_build_scene),
+    ("edit_scene",
+     ("Refactor a scene made by build_scene in ordered steps: add_object, remove_object, update_object "
+      "{set: count|material|hero|grid|category|detail}, add_relation, remove_relation, update_setting "
+      "{set: bounds_m|style|floor_material|wall_material|shape|points|kind}. Applies them to the scene's stored "
+      "spec, rebuilds the scene (same seed: untouched objects mostly stay), validates, and saves the result as the "
+      "next version (restore_scene on an earlier id undoes it). The current Blender scene is snapshotted first"),
+     {"type": "object",
+      "properties": {
+          "scene_id": {"type": "string", "description": "a version saved by build_scene or edit_scene"},
+          "steps": {"type": "array", "items": {"type": "object"},
+                    "description": "e.g. [{op: add_object, object: {id: lamp, category: floor_lamp}, relations: [{a: lamp, rel: beside, b: sofa}]}, {op: update_object, id: sofa, set: {material: velvet:#5b2a4a}}]"},
+          "seed": {"type": "integer"}, "geometry": {"enum": list(GEOMETRY_MODES)},
+          "prompt": {"type": "string"}, "project": {"type": "string"}},
+      "required": ["scene_id", "steps"]},
+     _handle_edit_scene),
+    ("apply_layout",
+     ("Create the room shell (floor + walls if indoor) and one object per placement in Blender as one batch; "
+      "placeholder cubes unless asset_map maps an object id / category to {filepath, asset_name}. "
+      "Tags custom props category/hero/support"),
+     {"type": "object",
+      "properties": {
+          "spec": _SPEC,
+          "placements": {"type": "array", "items": {"type": "object"}, "description": "From solve_layout"},
+          "asset_map": {"type": "object", "description": "id|category -> {filepath, asset_name}"},
+          "geometry": {"enum": list(GEOMETRY_MODES),
+                       "description": "generated (default): parametric furniture where a generator exists; boxes: placeholders only"}},
+      "required": ["spec", "placements"]},
+     _handle_apply_layout),
+    ("record_run",
+     "Persist a pipeline run record (brief, spec, placements, actions, validation reports, judge scores, cost, outcome)",
+     {"type": "object",
+      "properties": {
+          "brief": {"type": "string"}, "spec": {"type": "object"},
+          "placements": {"type": "array"}, "actions": {"type": "array"},
+          "validation_reports": {"type": "array"}, "judge_scores": {"type": "array"},
+          "token_cost": {"type": "number"}, "wall_time_s": {"type": "number"},
+          "outcome": {"type": "string", "enum": list(RUN_OUTCOMES)}, "project": {"type": "string"}},
+      "required": ["brief"]},
+     _handle_record_run),
+    ("search_exemplars",
+     "Find past successful, judge-approved runs similar to a brief (never returns failed or low-score runs)",
+     {"type": "object",
+      "properties": {"brief": {"type": "string"}, "min_score": {"type": "number", "default": 4.0},
+                     "top_k": {"type": "integer", "default": 3}, "project": {"type": "string"}},
+      "required": ["brief"]},
+     _handle_search_exemplars),
+]
+
+
+def _handle_resolve_asset(args: dict[str, Any]) -> Any:
+    from ai_db_scene.assets import AssetResolver
+    from ai_db_scene.blender_client import try_get_blender_client
+
+    client = try_get_blender_client()
+    if client is None:
+        return _err("Blender is not running or its socket server is not started.")
+    try:
+        cands = AssetResolver(client).resolve_asset(args["category"], args.get("style"), int(args.get("top_k", 3)))
+    except BlenderError as e:
+        return {"status": "error", "message": str(e), "error_type": e.error_type or type(e).__name__, "hint": e.hint}
+    return {"status": "success", "candidates": [c.to_dict() for c in cands]}
+
+
+PIPELINE_TOOLS.append(
+    ("resolve_asset",
+     ("Find Blender library assets for a category/style, ranked by name/tag match, with measured dimensions "
+      "(appends candidates to measure them). Pass the result to apply_layout's asset_map"),
+     {"type": "object",
+      "properties": {"category": {"type": "string"}, "style": {"type": "string"},
+                     "top_k": {"type": "integer", "default": 3}},
+      "required": ["category"]},
+     _handle_resolve_asset)
+)

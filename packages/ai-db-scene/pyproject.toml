@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-db-scene"
+version = "0.1.0"
+description = "3D scene and video tools for ai-db (scene memory, spec->layout->Blender pipeline, video extraction)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "ai-db",
+    "sqlite-vec>=0.1.6",
+]
+
+[project.optional-dependencies]
+judge = ["anthropic>=0.40"]
+ext = ["opencv-python>=4.8"]
+video-base = ["opencv-python-headless>=4.8", "pillow>=10.0"]
+video-vlm = ["openai>=1.0", "anthropic>=0.7"]
+video-depth = ["torch>=2.0", "transformers>=4.30", "accelerate>=0.20"]
+video-sfm = ["pycolmap>=0.6"]
+video-gs = ["torch>=2.0", "gsplat>=0.1"]
+video-full = ["ai-db-scene[video-base,video-vlm,video-depth,video-sfm,video-gs]"]
+
+# Registers the scene and video tools in every ai-db ServiceDispatcher.
+[project.entry-points."ai_db.tools"]
+scene = "ai_db_scene.tools:register"
+
+[project.entry-points."ai_db.skills"]
+scene = "ai_db_scene:skills_dir"
+
+[project.entry-points."ai_db.chunkers"]
+usd = "ai_db_scene.chunkers.usd:USDChunker"
+segmentation = "ai_db_scene.chunkers.segmentation:SegmentationChunker"
+
+[project.entry-points."ai_db_scene.video_processors"]
+frame_extractor = "ai_db_scene.video.processors.frame_extractor:FrameExtractor"
+vlm_analyzer = "ai_db_scene.video.processors.vlm_analyzer:VLMAnalyzer"
+depth_estimator = "ai_db_scene.video.processors.depth_estimator:DepthEstimator"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ai_db_scene*"]
+
+[tool.setuptools.package-data]
+ai_db_scene = ["priors.json", "skills/*/SKILL.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "blender: needs a local Blender with the socket addon running",
+]

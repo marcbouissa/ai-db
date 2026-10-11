@@ -1,0 +1,221 @@
+"""A small, general tool-using agent for the Strata model (OpenAI-compatible server).
+
+New for this benchmark (the robot agent in stage_ov is not used or changed). It speaks
+MCP over stdio to the same servers the Claude arms get, exposes their tools as OpenAI
+function tools, and records per-call tokens/latency and per-tool calls/seconds/errors.
+The model's context is 32k tokens, so old tool results are shortened as the history grows.
+"""
+
+from __future__ import annotations
+
+import http.client
+import json
+import os
+import queue
+import subprocess
+import threading
+import time
+import urllib.request
+from typing import Any
+
+BASE_URL = os.environ.get("STRATA_BASE_URL", "http://10.160.30.12:20000/v1")
+MODEL = os.environ.get("STRATA_MODEL", "qwen3.8-flash-next-iq3_s")
+RESULT_CHARS = 2500  # a tool result as the model first sees it
+OLD_RESULT_CHARS = 300  # tool results older than the last KEEP_FULL turns
+KEEP_FULL = 4
+TOOL_TIMEOUT_S = 180.0  # a single MCP tool call (Blender can hang on a bad request)
+SERVER_WAIT_S = 3 * 3600  # how long to wait out a Strata server outage before giving up
+MAX_TURNS = 400  # effectively unbounded: the 30 min wall-clock cap applies to every arm
+
+
+class ServerUnavailable(RuntimeError):
+    """The model server stayed down: the scene has no result and must be run again."""
+
+
+class MCPClient:
+    """Minimal MCP stdio client: initialize, tools/list, tools/call (line-delimited JSON-RPC)."""
+
+    def __init__(self, command: str, args: list[str], env: dict[str, str]) -> None:
+        self.proc = subprocess.Popen([command, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL, text=True, bufsize=1,
+                                     env={**os.environ, **env})
+        self._id = 0
+        self._lines: queue.Queue[str | None] = queue.Queue()
+        threading.Thread(target=self._pump, daemon=True).start()
+        self._rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                 "clientInfo": {"name": "strata-bench", "version": "1"}})
+        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def _send(self, msg: dict[str, Any]) -> None:
+        assert self.proc.stdin is not None
+        self.proc.stdin.write(json.dumps(msg) + "\n")
+        self.proc.stdin.flush()
+
+    def _pump(self) -> None:
+        assert self.proc.stdout is not None
+        for line in self.proc.stdout:
+            self._lines.put(line)
+        self._lines.put(None)
+
+    def _rpc(self, method: str, params: dict[str, Any], timeout: float = TOOL_TIMEOUT_S) -> Any:
+        """One request; never waits longer than ``timeout`` (a late reply is ignored by id)."""
+        self._id += 1
+        rid = self._id
+        self._send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
+        deadline = time.monotonic() + timeout
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError(f"{method} gave no reply within {timeout:.0f} s")
+            try:
+                line = self._lines.get(timeout=left)
+            except queue.Empty:
+                continue
+            if line is None:
+                raise RuntimeError(f"MCP server closed during {method}")
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if msg.get("id") == rid:
+                if "error" in msg:
+                    raise RuntimeError(msg["error"].get("message", str(msg["error"])))
+                return msg.get("result")
+
+    def tools(self) -> list[dict[str, Any]]:
+        return self._rpc("tools/list", {}).get("tools", [])
+
+    def call(self, name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
+        res = self._rpc("tools/call", {"name": name, "arguments": arguments})
+        text = "\n".join(c.get("text", "") for c in res.get("content", []) if c.get("type") == "text")
+        return text, bool(res.get("isError"))
+
+    def close(self) -> None:
+        self.proc.terminate()
+
+
+def _chat(messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
+    body = json.dumps({"model": MODEL, "messages": messages, "tools": tools, "tool_choice": "auto",
+                       "temperature": 0.2, "max_tokens": 4096}).encode()
+    req = urllib.request.Request(f"{BASE_URL}/chat/completions", data=body,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=600) as resp:
+        data = json.load(resp)
+    return data["choices"][0]["message"], data.get("usage", {})
+
+
+def _trim(messages: list[dict[str, Any]]) -> None:
+    tool_idx = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+    for i in tool_idx[:-KEEP_FULL]:
+        c = messages[i]["content"]
+        if len(c) > OLD_RESULT_CHARS:
+            messages[i]["content"] = c[:OLD_RESULT_CHARS] + " …[trimmed]"
+
+
+def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, timeout_s: float) -> dict[str, Any]:
+    clients = {name: MCPClient(s["command"], s["args"], s.get("env", {})) for name, s in servers.items()}
+    route: dict[str, tuple[str, str]] = {}
+    tools: list[dict[str, Any]] = []
+    for sname, cl in clients.items():
+        for t in cl.tools():
+            fname = f"{sname}__{t['name']}"[:64]
+            route[fname] = (sname, t["name"])
+            tools.append({"type": "function", "function": {
+                "name": fname, "description": (t.get("description") or "")[:1024],
+                "parameters": t.get("inputSchema") or {"type": "object", "properties": {}}}})
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": "You are a Blender scene-building agent. Use the tools; call them, do not describe them."},
+        {"role": "user", "content": prompt}]
+    per_call: list[dict[str, Any]] = []
+    stats: dict[str, dict[str, float]] = {}
+    t0 = time.monotonic()
+    llm_s = tool_s = outage_s = 0.0
+    outages = 0
+    final, ok, timed_out = "", False, False
+    with open(transcript_path, "w", encoding="utf-8") as tr:
+        for _turn in range(MAX_TURNS):
+            if time.monotonic() - t0 > timeout_s:
+                timed_out = True
+                break
+            _trim(messages)
+            msg = usage = None
+            delay = 10.0
+            while msg is None:
+                a = time.monotonic()
+                try:
+                    msg, usage = _chat(messages, tools)
+                except (OSError, http.client.HTTPException) as e:
+                    # Server outage (refused, reset, 5xx): wait it out, and keep the waiting out
+                    # of every timing, so an outage pauses the scene instead of failing it.
+                    if outage_s > SERVER_WAIT_S:
+                        # Not a result of the model: the harness must retry this scene later.
+                        for cl in clients.values():
+                            cl.close()
+                        raise ServerUnavailable(f"LLM server unavailable for {outage_s:.0f} s: {e}") from e
+                    tr.write(json.dumps({"t": round(a - t0, 2), "outage": str(e)[:200], "wait_s": delay}) + "\n")
+                    time.sleep(delay)
+                    outage_s += time.monotonic() - a
+                    t0 += time.monotonic() - a
+                    outages += 1
+                    delay = min(delay * 2, 120.0)
+            if msg is None:
+                break
+            dt = time.monotonic() - a
+            llm_s += dt
+            per_call.append({"t": round(a - t0, 2), "seconds": round(dt, 2),
+                             "input": usage.get("prompt_tokens", 0), "output": usage.get("completion_tokens", 0)})
+            tr.write(json.dumps({"t": round(a - t0, 2), "assistant": msg, "usage": usage}) + "\n")
+            calls = msg.get("tool_calls") or []
+            messages.append({"role": "assistant", "content": msg.get("content") or "",
+                             **({"tool_calls": calls} if calls else {})})
+            if not calls:
+                final = msg.get("content") or ""
+                ok = "DONE" in final.upper()
+                break
+            for call in calls:
+                if time.monotonic() - t0 > timeout_s:  # the cap holds inside a turn too
+                    timed_out = True
+                    messages.append({"role": "tool", "tool_call_id": call.get("id", "?"),
+                                     "content": "not run: the time limit was reached"})
+                    continue
+                fname = call["function"]["name"]
+                try:
+                    args = json.loads(call["function"].get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                sname, tname = route.get(fname, ("?", fname))
+                label = f"{sname}:{tname}"
+                inner = args.get("tool") or args.get("name")
+                if tname == "invoke_tool" and isinstance(inner, str):
+                    label = f"blender:{inner}"
+                b = time.monotonic()
+                if sname == "?":
+                    text, err = f"unknown tool {fname}", True
+                else:
+                    try:
+                        text, err = clients[sname].call(tname, args)
+                    except Exception as e:  # noqa: BLE001 - tool failures go back to the model
+                        text, err = f"tool error: {e}", True
+                dt = time.monotonic() - b
+                tool_s += dt
+                st = stats.setdefault(label, {"calls": 0, "seconds": 0.0, "errors": 0})
+                st["calls"] += 1
+                st["seconds"] += dt
+                st["errors"] += int(err)
+                tr.write(json.dumps({"t": round(b - t0, 2), "tool": label, "seconds": round(dt, 2),
+                                     "error": err, "result": text[:2000]}) + "\n")
+                messages.append({"role": "tool", "tool_call_id": call.get("id", fname),
+                                 "content": text[:RESULT_CHARS]})
+    for cl in clients.values():
+        cl.close()
+    wall = time.monotonic() - t0
+    return {
+        "ok": ok, "timed_out": timed_out, "wall_s": round(wall, 1), "tool_s": round(tool_s, 1),
+        "model_s": round(llm_s, 1), "api_s": round(llm_s, 1), "turns": len(per_call), "cost_usd": 0.0,
+        "tokens": {"input": sum(c["input"] for c in per_call), "output": sum(c["output"] for c in per_call),
+                   "cache_write": 0, "cache_read": 0},
+        "per_call": per_call, "server_outages": outages, "outage_s_excluded": round(outage_s, 1),
+        "tools": {k: {"calls": int(v["calls"]), "seconds": round(v["seconds"], 1), "errors": int(v["errors"])}
+                  for k, v in sorted(stats.items(), key=lambda kv: -kv[1]["seconds"])},
+        "final_text": final[-1500:],
+    }

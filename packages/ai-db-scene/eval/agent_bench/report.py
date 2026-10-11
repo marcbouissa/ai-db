@@ -1,0 +1,163 @@
+"""bench/REPORT.md from every run's metrics.json and judge.json."""
+
+from __future__ import annotations
+
+import json
+import os
+from statistics import mean
+from typing import Any
+
+import briefs
+
+def _arms(out: str) -> list[str]:
+    """Every arm folder with at least one finished scene, raw and aidb of a model side by side."""
+    found = [d for d in os.listdir(out) if os.path.isdir(os.path.join(out, d)) and not d.startswith(".")
+             and any(os.path.exists(os.path.join(out, d, b, "metrics.json")) for b in briefs.BRIEFS)]
+    return sorted(found, key=lambda a: (a.rsplit("-", 1)[0], a.endswith("-raw")))
+
+
+def _load(out: str) -> list[dict[str, Any]]:
+    rows = []
+    for arm in _arms(out):
+        for brief in briefs.BRIEFS:
+            rd = os.path.join(out, arm, brief)
+            mp = os.path.join(rd, "metrics.json")
+            if not os.path.exists(mp):
+                continue
+            with open(mp, encoding="utf-8") as f:
+                m = json.load(f)
+            jp = os.path.join(rd, "judge.json")
+            if os.path.exists(jp):
+                with open(jp, encoding="utf-8") as f:
+                    m["judge"] = json.load(f)
+            m["dir"] = rd
+            rows.append(m)
+    return rows
+
+
+def _j(m: dict[str, Any], mode: str) -> float | None:
+    v = ((m.get("judge") or {}).get(mode) or {}).get("parsed", {}).get("overall")
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def _tok(t: dict[str, Any]) -> int:
+    return sum(int(t.get(k, 0) or 0) for k in ("input", "output", "cache_write", "cache_read"))
+
+
+def _fmt(x: float | None, nd: int = 1) -> str:
+    return "–" if x is None else f"{x:.{nd}f}"
+
+
+def write(out: str) -> str:
+    rows = _load(out)
+    ARMS = _arms(out)
+    judges = ", ".join(sorted({(r.get("judge") or {}).get(m, {}).get("model", "?") for r in rows
+                               for m in ("aidb", "plain") if (r.get("judge") or {}).get(m)})) or "none yet"
+    L: list[str] = ["# Agent benchmark: with vs without ai-db", ""]
+    L += ["Arms: every free OpenCode model that was available (OpenCode headless, isolated home, file/web tools "
+          "off; the shell has to stay for OpenCode's free tier, the prompt forbids it, see Shell use) and the "
+          "Strata model (qwen3.8-flash, new generic agent), each with blender-ox only (raw) or blender-ox + "
+          "ai-db scene tools (aidb). Same briefs, same Blender build, a fresh Blender per scene, 30 min cap.",
+          "Quality = 50% brief checklist + 30% validator (100 - 8/blocking - 2/warning) + 20% basics "
+          f"(camera, lights, materials). Judges: {judges}; blind (scenes anonymised, one judge per brief and "
+          "mode, comparing all scenes of the brief). `aidb` = ai-db rubric + ai-db measurements, `plain` = "
+          "renders + brief only.", ""]
+    L += ["## Summary per arm", "",
+          "| arm | scenes | quality | judge aidb | judge plain | wall min | model min | tool min | tokens (k) | cost $ |",
+          "|---|---|---|---|---|---|---|---|---|---|"]
+    for arm in ARMS:
+        rs = [r for r in rows if r["arm"] == arm]
+        if not rs:
+            continue
+        ja = [x for x in (_j(r, "aidb") for r in rs) if x is not None]
+        jp = [x for x in (_j(r, "plain") for r in rs) if x is not None]
+        L.append(f"| {arm} | {len(rs)} | {mean(r['quality']['score'] for r in rs):.1f} | "
+                 f"{_fmt(mean(ja) if ja else None)} | {_fmt(mean(jp) if jp else None)} | "
+                 f"{mean(r['agent']['wall_s'] for r in rs) / 60:.1f} | {mean(r['agent']['model_s'] for r in rs) / 60:.1f} | "
+                 f"{mean(r['agent']['tool_s'] for r in rs) / 60:.1f} | {mean(_tok(r['agent']['tokens']) for r in rs) / 1000:.0f} | "
+                 f"{sum((r['agent'].get('cost_usd') or 0) for r in rs):.2f} |")
+    L += ["", "## With vs without ai-db, paired (same model, same brief: ai-db arm minus raw arm)", "",
+          "Arm averages above mix different brief sets (rate-limited models finished only the first briefs); "
+          "this table compares like with like.", "",
+          "| model | pairs | judge aidb Δ | judge plain Δ | quality Δ | wall min Δ | tokens k Δ |", "|---|---|---|---|---|---|---|"]
+    by = {(r["arm"], r["brief"]): r for r in rows}
+    for model, mode in sorted({(a.rsplit("-", 1)[0], m) for a in ARMS for m in ("aidb", "aidb2")}):
+        prs = [(by[(f"{model}-{mode}", b)], by[(f"{model}-raw", b)]) for b in briefs.BRIEFS
+               if (f"{model}-{mode}", b) in by and (f"{model}-raw", b) in by]
+        if not prs:
+            continue
+        def d(f):
+            vals = [f(a) - f(r) for a, r in prs if f(a) is not None and f(r) is not None]
+            return mean(vals) if vals else None
+        ja, jp = d(lambda x: _j(x, "aidb")), d(lambda x: _j(x, "plain"))
+        dq, dw = d(lambda x: x["quality"]["score"]), d(lambda x: x["agent"]["wall_s"] / 60)
+        dt = d(lambda x: _tok(x["agent"]["tokens"]) / 1000)
+        L.append(f"| {model} ({mode}) | {len(prs)} | {_fmt(ja, 2)} | {_fmt(jp, 2)} | {_fmt(dq)} | {_fmt(dw)} | {_fmt(dt, 0)} |")
+    L += ["", "## Best scene per brief (judge aidb, then plain, then quality)", "",
+          "| brief | best arm | judge aidb | judge plain | quality | blend |", "|---|---|---|---|---|---|"]
+    for brief in briefs.BRIEFS:
+        rs = [r for r in rows if r["brief"] == brief]
+        if not rs:
+            continue
+        best = max(rs, key=lambda r: (_j(r, "aidb") or 0, _j(r, "plain") or 0, r["quality"]["score"]))
+        L.append(f"| {brief} | **{best['arm']}** | {_fmt(_j(best, 'aidb'))} | {_fmt(_j(best, 'plain'))} | "
+                 f"{best['quality']['score']} | `{os.path.relpath(best['dir'], out)}/scene.blend` |")
+    L += ["", "## Every scene", "",
+          "| arm | brief | done | quality | checklist | blocking | judge aidb | judge plain | wall s | model s | tool s | turns | in | out | cache w | cache r | cost $ |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        a, q, t = r["agent"], r["quality"], r["agent"]["tokens"]
+        L.append(f"| {r['arm']} | {r['brief']} | {'yes' if a['ok'] else ('timeout' if a.get('timed_out') else 'no')} | "
+                 f"{q['score']} | {q['checklist_pct']}% | {q['blocking']} | {_fmt(_j(r, 'aidb'))} | {_fmt(_j(r, 'plain'))} | "
+                 f"{a['wall_s']:.0f} | {a['model_s']:.0f} | {a['tool_s']:.0f} | {a.get('turns')} | {t['input']} | {t['output']} | "
+                 f"{t['cache_write']} | {t['cache_read']} | {_fmt(a.get('cost_usd'), 3)} |")
+    L += ["", "## Where the time went (per arm, all scenes)", ""]
+    for arm in ARMS:
+        rs = [r for r in rows if r["arm"] == arm]
+        if not rs:
+            continue
+        agg: dict[str, list[float]] = {}
+        for r in rs:
+            for name, v in r["agent"]["tools"].items():
+                s = agg.setdefault(name, [0, 0.0, 0])
+                s[0] += v["calls"]
+                s[1] += v["seconds"]
+                s[2] += v["errors"]
+        setup = sum(((r.get("setup") or {}).get("seconds") or 0) for r in rs)
+        L += [f"### {arm}", "",
+              f"model {sum(r['agent']['model_s'] for r in rs) / 60:.1f} min, tools {sum(r['agent']['tool_s'] for r in rs) / 60:.1f} min, "
+              f"harness (save + renders + validation, not counted) {sum(r['harness_s'] for r in rs) / 60:.1f} min"
+              + (f", ai-db setup (skill index, not counted) {setup:.0f} s" if setup else ""), "",
+              "| tool | calls | seconds | errors |", "|---|---|---|---|"]
+        for name, (c, sec, e) in sorted(agg.items(), key=lambda kv: -kv[1][1])[:15]:
+            L.append(f"| {name} | {c} | {sec:.0f} | {e} |")
+        L.append("")
+    flagged = [(r["arm"], r["brief"], c["command"]) for r in rows
+               for c in r["agent"].get("shell_commands", []) if c.get("flagged")]
+    shells = sum(len(r["agent"].get("shell_commands", [])) for r in rows)
+    L += ["## Shell use (forbidden by the prompt; OpenCode's free tier cannot run without the tool)", "",
+          f"{shells} shell commands in all runs; {len(flagged)} touched Blender, ai-db or Python and are listed:", ""]
+    L += [f"- {a}/{b}: `{c[:160]}`" for a, b, c in flagged] or ["- none"]
+    L.append("")
+    L += ["## Judging cost (per mode; one judge per brief, cost split evenly over its scenes)", "",
+          "| mode | scenes judged | input | output | cache w | cache r | total |", "|---|---|---|---|---|---|---|"]
+    for mode in ("aidb", "plain"):
+        js = [r["judge"][mode] for r in rows if r.get("judge") and r["judge"].get(mode)]
+        if not js:
+            continue
+        sums = [sum(int(j['tokens'].get(k, 0) or 0) for j in js) for k in ("input", "output", "cache_write", "cache_read")]
+        L.append(f"| {mode} | {len(js)} | " + " | ".join(str(x) for x in sums) + f" | {sum(sums)} |")
+    L += ["", "## Judge vs judge", ""]
+    pairs = [(_j(r, "aidb"), _j(r, "plain")) for r in rows if _j(r, "aidb") is not None and _j(r, "plain") is not None]
+    if pairs:
+        diff = mean(abs(a - b) for a, b in pairs)
+        agree = sum(1 for a, b in pairs if abs(a - b) <= 1)
+        L.append(f"{len(pairs)} scenes judged both ways: mean |aidb - plain| = {diff:.2f} points; within 1 point on "
+                 f"{agree}/{len(pairs)}. Mean aidb {mean(a for a, _ in pairs):.2f}, mean plain {mean(b for _, b in pairs):.2f}.")
+    L += ["", "## Files", "", "Each scene folder holds `scene.blend` (saved before any probe camera was added), "
+          "`agent_camera.png` (the agent's own camera, if any), `probe_interior.png` (eye height from a corner), `probe_plan.png` (top view cut at 2.5 m), "
+          "`metrics.json`, `transcript.jsonl` and `judge.json`.", ""]
+    path = os.path.join(out, "REPORT.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(L) + "\n")
+    return path
