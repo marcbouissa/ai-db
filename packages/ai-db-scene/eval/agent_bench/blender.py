@@ -47,12 +47,28 @@ def client(port: int) -> Any:
 
 _INVENTORY = """
 import bpy
+from mathutils import Vector
+
+def _meshes(o):
+    return ([o] if o.type == "MESH" else []) + [c for c in o.children_recursive if c.type == "MESH"]
+
+def _size(o):
+    # extent of the object and all its mesh descendants in the root's own (yaw) frame, in metres:
+    # comparable with the category priors (width, depth, height) whatever the rotation
+    rot = o.matrix_world.to_quaternion().inverted()
+    pts = [rot @ (m.matrix_world @ Vector(c)) for m in _meshes(o) for c in m.bound_box]
+    if not pts:
+        return None
+    return [round(max(p[i] for p in pts) - min(p[i] for p in pts), 4) for i in range(3)]
+
 objs = []
 for o in bpy.context.scene.objects:
     objs.append({"name": o.name, "type": o.type, "category": str(o.get("category") or ""),
                  "parent": o.parent.name if o.parent else None,
                  "mats": len([m for m in getattr(o.data, "materials", []) if m]) if o.data is not None and hasattr(o.data, "materials") else 0,
-                 "tris": sum(len(p.vertices) - 2 for p in o.data.polygons) if o.type == "MESH" else 0})
+                 "tris": sum(len(p.vertices) - 2 for p in o.data.polygons) if o.type == "MESH" else 0,
+                 "faces": len(o.data.polygons) if o.type == "MESH" else 0,
+                 "size_m": _size(o) if o.parent is None else None})
 result = {"objects": objs, "camera": bpy.context.scene.camera.name if bpy.context.scene.camera else None,
           "lights": sum(1 for o in bpy.context.scene.objects if o.type == "LIGHT")}
 """

@@ -56,10 +56,18 @@ def write(out: str) -> str:
     L: list[str] = ["# Agent benchmark: with vs without ai-db", ""]
     L += ["Arms: every free OpenCode model that was available (OpenCode headless, isolated home, file/web tools "
           "off; the shell has to stay for OpenCode's free tier, the prompt forbids it, see Shell use) and the "
-          "Strata model (qwen3.8-flash, new generic agent), each with blender-ox only (raw) or blender-ox + "
+          "Strata model (qwen3.8-flash, new generic agent), each with the Blender addon's tools only (raw) or those + "
           "ai-db scene tools (aidb). Same briefs, same Blender build, a fresh Blender per scene, 30 min cap.",
-          "Quality = 50% brief checklist + 30% validator (100 - 8/blocking - 2/warning) + 20% basics "
-          f"(camera, lights, materials). Judges: {judges}; blind (scenes anonymised, one judge per brief and "
+          "Quality (formula v2) = 40% brief checklist + 15% size plausibility + 10% mesh coverage + 25% "
+          "validator (100 - 8/blocking - 2/warning) + 10% basics (camera, lights, materials). The checklist "
+          "counts an object matched by name or category only for real geometry: an asset root with >= 2 mesh "
+          "parts or one mesh with > 12 faces counts 1, a lone box 0.5, an empty 0. Size = share of matched "
+          "objects with a known `category` whose extent (yaw frame) lies within the category prior "
+          "(min..max, 10% slack, footprint either way round); no categorised object -> its weight goes to "
+          "the checklist. Coverage = meshes / (2 x objects the brief needs), capped at 1. Scenes scored "
+          "before v2 (no `formula` field) used 50% name-only checklist + 30% validator + 20% basics: "
+          "run `bench.py rescore` to put every scene on v2. "
+          f"Judges: {judges}; blind (scenes anonymised, one judge per brief and "
           "mode, comparing all scenes of the brief). `aidb` = ai-db rubric + ai-db measurements, `plain` = "
           "renders + brief only.", ""]
     L += ["## Summary per arm", "",

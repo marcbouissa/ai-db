@@ -4,7 +4,7 @@ Per brief: spec (model, with up to REPAIR_ROUNDS error-feedback rounds) -> valid
 solve_layout -> apply in Blender -> validate_scene -> snapshot -> clear -> restore ->
 round-trip diff -> prompt search -> record_run -> exemplar search. One JSON line per brief.
 
-Run (Blender with blender_ox listening on :9877, scratch DBs only):
+Run (Blender with the Blender addon listening on :9877, scratch DBs only):
     python packages/ai-db-scene/eval/scene_bench.py --out /tmp/bench.jsonl \
         --base-url http://10.160.30.12:20000/v1 [--briefs eval/briefs.txt] [--only N]
 """
@@ -80,7 +80,7 @@ def call(d: Any, tool: str, /, **args: Any) -> Any:
 def transforms(info: Any) -> dict[str, tuple[float, ...]]:
     out: dict[str, tuple[float, ...]] = {}
     if isinstance(info, dict) and isinstance(info.get("result"), dict):
-        info = info["result"]  # blender_ox replies {"status", "result": {...}}
+        info = info["result"]  # the Blender addon replies {"status", "result": {...}}
     for o in (info or {}).get("objects", []):
         loc = o.get("location") or [0, 0, 0]
         rot = o.get("rotation") or o.get("rotation_euler") or [0, 0, 0]

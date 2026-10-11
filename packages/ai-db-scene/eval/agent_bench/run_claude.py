@@ -23,10 +23,22 @@ _BUILTIN = ["Bash", "Edit", "Write", "Read", "Glob", "Grep", "WebFetch", "WebSea
             "NotebookEdit", "TodoWrite", "Skill"]
 
 
+def blender_mcp_module() -> str:
+    """The addon checkout's MCP server package (the one ``*_mcp`` package with a ``__main__``),
+    overridable with BENCH_BLENDER_MCP_MODULE: the name is not hard-coded in this repo."""
+    if os.environ.get("BENCH_BLENDER_MCP_MODULE"):
+        return os.environ["BENCH_BLENDER_MCP_MODULE"]
+    found = sorted(d for d in os.listdir(BLENDER_MCP) if d.endswith("_mcp")
+                   and os.path.isfile(os.path.join(BLENDER_MCP, d, "__main__.py")))
+    if len(found) != 1:
+        raise RuntimeError(f"cannot pick the MCP package in {BLENDER_MCP}: {found}; set BENCH_BLENDER_MCP_MODULE")
+    return found[0]
+
+
 def mcp_servers(port: int, run_dir: str, with_aidb: bool, aidb_tools: str) -> dict[str, Any]:
     servers: dict[str, Any] = {"blender": {
         "command": os.path.join(BLENDER_MCP, ".venv", "bin", "python"),
-        "args": ["-m", "blender_ox_mcp", "--transport", "stdio", "--mode", "omni", "--blender-port", str(port)],
+        "args": ["-m", blender_mcp_module(), "--transport", "stdio", "--mode", "omni", "--blender-port", str(port)],
         "env": {"PYTHONPATH": BLENDER_MCP},
     }}
     if with_aidb:

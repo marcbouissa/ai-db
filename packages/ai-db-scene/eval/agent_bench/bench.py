@@ -2,6 +2,7 @@
 
     python bench.py run <arm> <brief>      one scene: fresh Blender, agent, save + renders, quality
     python bench.py judge <arm> <brief>    both judge modes (Opus, with and without ai-db context)
+    python bench.py rescore                quality of every finished scene with the current score()
     python bench.py report                 bench/REPORT.md
 
 Arms: <model>-aidb / <model>-raw, model = strata, one of OPENCODE_FREE, or opus/sonnet (Claude CLI).
@@ -189,33 +190,119 @@ def _roots(inv: dict[str, Any]) -> list[dict[str, Any]]:
     return [o for o in inv["objects"] if o["parent"] is None and o["name"] != "bench_probe"]
 
 
+#: score weights (sum 1.0); see score() and the report header
+W_CHECKLIST, W_SIZE, W_COVERAGE, W_VALID, W_BASICS = 0.40, 0.15, 0.10, 0.25, 0.10
+SIZE_SLACK = 0.10  # a size within 10% outside the prior's min..max still counts as plausible
+BOX_FACES = 12  # at most this many faces: a box (6) or a box-like slab, not a modelled object
+PARTS_PER_ITEM = 2  # coverage: a real object has at least two mesh parts
+
+
+def _mesh_parts(inv: dict[str, Any], root: dict[str, Any]) -> list[dict[str, Any]]:
+    """The root's own mesh plus every mesh below it (parent links; works for old inventories)."""
+    kids: dict[str, list[dict[str, Any]]] = {}
+    for o in inv["objects"]:
+        if o["parent"] is not None:
+            kids.setdefault(o["parent"], []).append(o)
+    out, todo = [], [root]
+    while todo:
+        o = todo.pop()
+        if o["type"] == "MESH":
+            out.append(o)
+        todo.extend(kids.get(o["name"], []))
+    return out
+
+
+def geometry_weight(inv: dict[str, Any], root: dict[str, Any]) -> float:
+    """1 for a modelled object (an asset root with >= 2 mesh parts, or one mesh with more than
+    BOX_FACES faces), 0.5 for a lone box, 0 for an empty or a non-mesh: a name on a placeholder
+    must not score like the real thing."""
+    parts = _mesh_parts(inv, root)
+    if len(parts) >= 2:
+        return 1.0
+    if not parts:
+        return 0.0
+    p = parts[0]
+    faces = p.get("faces", p.get("tris", 0) // 2)  # old inventories: a box is 12 triangles
+    return 1.0 if faces > BOX_FACES else 0.5
+
+
+def size_plausible(size: list[float], prior: Any) -> bool:
+    """Height within the prior's range, footprint within it in either orientation (an object
+    may be turned 90 degrees), with SIZE_SLACK."""
+    lo, hi = prior.min_m, prior.max_m
+
+    def within(v: float, a: float, b: float) -> bool:
+        return a * (1 - SIZE_SLACK) <= v <= b * (1 + SIZE_SLACK)
+
+    if not within(size[2], lo[2], hi[2]):
+        return False
+    w, d = size[0], size[1]
+    return (within(w, lo[0], hi[0]) and within(d, lo[1], hi[1])) or \
+        (within(d, lo[0], hi[0]) and within(w, lo[1], hi[1]))
+
+
 def checklist(brief: str, inv: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per item: ``found`` = objects matching by name/category (the old count), ``real`` = the same
+    weighted by geometry_weight, and the matching root names (for the size check)."""
     roots = _roots(inv)
     out = []
     for label, need, tokens in briefs.BRIEFS[brief]["checklist"]:
-        hay = [f"{o['name']} {o['category']}".lower() for o in roots]
-        found = sum(1 for h in hay if any(re.search(re.escape(t), h) for t in tokens))
-        out.append({"item": label, "need": need, "found": found})
+        hits = [o for o in roots if any(re.search(re.escape(t), f"{o['name']} {o['category']}".lower())
+                                        for t in tokens)]
+        out.append({"item": label, "need": need, "found": len(hits),
+                    "real": round(sum(geometry_weight(inv, o) for o in hits), 2),
+                    "objects": [o["name"] for o in hits]})
     return out
 
 
 def score(brief: str, inv: dict[str, Any], validation: dict[str, Any]) -> dict[str, Any]:
-    """0..100: 50% checklist coverage, 30% validator, 20% basics (camera, light, materials)."""
+    """0..100 = 40% checklist (geometry-weighted) + 15% size plausibility + 10% mesh coverage
+    + 25% validator + 10% basics.
+
+    - checklist: per item min(real / need, 1), real counting an object by geometry_weight
+    - size: share of checklist objects with a known ``category`` whose size is within the
+      category prior; no such object -> the weight goes to the checklist term
+    - coverage: min(meshes / (PARTS_PER_ITEM * total need), 1)
+    - validator: 100 - 8 per blocking issue - 2 per warning
+    - basics: camera, lights, share of meshes with a material
+    """
+    from ai_db_scene.priors import load_priors
+
+    priors = load_priors()
     items = checklist(brief, inv)
-    cover = 100 * sum(min(i["found"] / i["need"], 1.0) for i in items) / len(items)
+    by_name = {o["name"]: o for o in inv["objects"]}
+    cover_name = 100 * sum(min(i["found"] / i["need"], 1.0) for i in items) / len(items)
+    cover = 100 * sum(min(i["real"] / i["need"], 1.0) for i in items) / len(items)
+    sized = plausible = 0
+    for name in sorted({n for i in items for n in i["objects"]}):  # once, even if two items match it
+        o = by_name[name]
+        prior = priors.get(o.get("category") or "")
+        if prior is None or not o.get("size_m") or geometry_weight(inv, o) == 0:
+            continue
+        sized += 1
+        plausible += size_plausible(o["size_m"], prior)
+    size_pct = 100 * plausible / sized if sized else None
     issues = validation.get("issues", []) if isinstance(validation, dict) else []
     blocking = sum(1 for i in issues if i.get("severity") == "blocking")
     warnings = len(issues) - blocking
     valid = max(0.0, 100 - 8 * blocking - 2 * warnings)
     meshes = [o for o in inv["objects"] if o["type"] == "MESH"]
+    need = sum(i["need"] for i in items)
+    coverage = 100 * min(len(meshes) / (PARTS_PER_ITEM * need), 1.0) if need else 100.0
     mat_ratio = sum(1 for o in meshes if o["mats"]) / len(meshes) if meshes else 0.0
     basics = 100 * ((inv.get("camera") is not None) + (inv.get("lights", 0) > 0) + mat_ratio) / 3
     kinds: dict[str, int] = {}
     for i in issues:
         kinds[i.get("check", "?")] = kinds.get(i.get("check", "?"), 0) + 1
-    return {"score": round(0.5 * cover + 0.3 * valid + 0.2 * basics, 1), "checklist_pct": round(cover, 1),
-            "validator_pct": round(valid, 1), "basics_pct": round(basics, 1), "blocking": blocking,
-            "warnings": warnings, "issue_kinds": kinds, "checklist": items, "meshes": len(meshes),
+    w_check, w_size = (W_CHECKLIST, W_SIZE) if size_pct is not None else (W_CHECKLIST + W_SIZE, 0.0)
+    total = (w_check * cover + w_size * (size_pct or 0.0) + W_COVERAGE * coverage + W_VALID * valid
+             + W_BASICS * basics)
+    return {"score": round(total, 1), "formula": "v2", "checklist_pct": round(cover, 1),
+            "checklist_name_pct": round(cover_name, 1),
+            "size_pct": None if size_pct is None else round(size_pct, 1), "sized_objects": sized,
+            "coverage_pct": round(coverage, 1), "validator_pct": round(valid, 1),
+            "basics_pct": round(basics, 1), "blocking": blocking, "warnings": warnings,
+            "issue_kinds": kinds, "checklist": items, "meshes": len(meshes),
             "triangles": sum(o["tris"] for o in inv["objects"])}
 
 
@@ -247,6 +334,15 @@ def main() -> int:
     if cmd == "judge":
         import judge
         print(json.dumps(judge.judge_both(run_dir(sys.argv[2], sys.argv[3]), sys.argv[3])))
+        return 0
+    if cmd == "rescore":  # recompute quality of every finished scene with the current formula
+        import glob
+        for mp in sorted(glob.glob(os.path.join(OUT, "*", "*", "metrics.json"))):
+            with open(mp, encoding="utf-8") as f:
+                m = json.load(f)
+            m["quality"] = score(m["brief"], m["inventory"], m["validation"])
+            with open(mp, "w", encoding="utf-8") as f:
+                json.dump(m, f, indent=1)
         return 0
     if cmd == "report":
         import report
