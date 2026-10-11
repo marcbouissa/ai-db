@@ -297,6 +297,17 @@ class SQLiteBackend(ChunkRepository, VectorRepository, GraphRepository, MemoryRe
                 tokenize = 'porter unicode61'
             )
         """)
+        # Old rows written with an explicit NULL project: the PRIMARY KEY lets them sit beside the
+        # 'global' copy, and skill_vectors.project is NOT NULL, so the vector backfill failed on them.
+        # Only when needed, committed at once: DML here would otherwise leave a write transaction
+        # open on this connection after initialize().
+        if cur.execute("SELECT 1 FROM skills WHERE project IS NULL LIMIT 1").fetchone():
+            dup = "project IS NULL AND name IN (SELECT name FROM skills WHERE project = 'global')"
+            cur.execute(f"DELETE FROM fts_skills WHERE {dup}")
+            cur.execute(f"DELETE FROM skills WHERE {dup}")
+            cur.execute("UPDATE fts_skills SET project = 'global' WHERE project IS NULL")
+            cur.execute("UPDATE skills SET project = 'global' WHERE project IS NULL")
+            self.conn.commit()
 
         # Hybrid retrieval for skills: BLOB float32 vectors, brute-force cosine.
         # Plain BLOB (not vec0) so the dimension follows the configured embedder.
