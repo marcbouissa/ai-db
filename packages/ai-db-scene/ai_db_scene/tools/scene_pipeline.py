@@ -1038,6 +1038,11 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
     spec, errors = _parse_spec(args.get("spec"))
     if spec is None:
         return {"status": "invalid", "errors": errors}
+    render_opts = None
+    if args.get("render") is not None:
+        render_opts, render_err = render_options(args["render"])
+        if render_opts is None:
+            return {"status": "invalid", "errors": [render_err]}
     data = spec.to_dict()
     original = list(spec.setting.bounds_m)
     repairs: list[str] = []
@@ -1106,6 +1111,11 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
            "issues_left": left[:20], "spec": data if repairs else None}
     if camera is not None:
         out["camera"] = camera
+    if render_opts is not None:
+        try:
+            out["final_render"] = final_render(render_opts)
+        except (BlenderError, OSError, TypeError, ValueError) as e:
+            out["final_render"] = {"error": str(e)}
     if exposure is not None:
         out["exposure"] = exposure
     from ai_db_scene.constants import BUILD_POLY_BUDGET
@@ -1364,6 +1374,93 @@ def exposure_issue(exp: dict[str, Any]) -> dict[str, Any] | None:
                         f"{exp.get('bright_frac')} clipped bright")}
 
 
+#: a procedural sky world (Nishita, no HDRI) whose sun matches the daylight rig's sun lamp
+#: (azimuth 135, elevation 40 when there is none): what the windows show and let in agrees with
+#: the shadows. The sky's own sun disc stays off: the lamp is the direct light.
+_SKY = """
+import bpy, math
+from mathutils import Vector
+scene = bpy.context.scene
+sun = next((o for o in scene.objects if o.type == "LIGHT" and o.data.type == "SUN"), None)
+if sun is not None:
+    d = -(sun.matrix_world.to_quaternion() @ Vector((0.0, 0.0, -1.0)))
+    el, az = math.asin(max(-1.0, min(1.0, d.z))), math.atan2(d.y, d.x)
+else:
+    el, az = math.radians(40.0), math.radians(135.0)
+world = scene.world or bpy.data.worlds.new("World")
+scene.world = world
+world.use_nodes = True
+nt = world.node_tree
+st = next((n for n in nt.nodes if n.type == "TEX_SKY"), None)
+if st is None:
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputWorld")
+    bg = nt.nodes.new("ShaderNodeBackground")
+    st = nt.nodes.new("ShaderNodeTexSky")
+    nt.links.new(st.outputs["Color"], bg.inputs["Color"])
+    nt.links.new(bg.outputs["Background"], out.inputs["Surface"])
+for kind in ("NISHITA", "MULTIPLE_SCATTERING", "SINGLE_SCATTERING"):
+    try:
+        st.sky_type = kind
+        break
+    except (TypeError, ValueError):
+        continue
+st.sun_elevation, st.sun_rotation = el, math.pi / 2 - az
+try:
+    st.sun_disc = False
+except AttributeError:
+    pass
+bg = next((n for n in nt.nodes if n.type == "BACKGROUND"), None)
+if bg is not None:
+    bg.inputs["Strength"].default_value = max(bg.inputs["Strength"].default_value, {strength!r})
+result = {{"sky": st.sky_type.lower(), "sun_elevation": round(math.degrees(el), 1),
+          "sun_azimuth": round(math.degrees(az), 1), "sun": sun.name if sun else None}}
+"""
+
+
+def render_options(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """build_scene's ``render`` argument -> (options, error)."""
+    from ai_db_scene.constants import BUILD_RENDER_RESOLUTION, BUILD_RENDER_SAMPLES
+
+    if not isinstance(raw, dict):
+        return None, "render must be an object {engine, samples, sky, resolution, path}"
+    unknown = set(raw) - {"engine", "samples", "sky", "resolution", "path"}
+    if unknown:
+        return None, f"render: unknown keys {sorted(unknown)}"
+    engine = raw.get("engine", "cycles")
+    if engine not in ("cycles", "eevee"):
+        return None, "render.engine must be cycles|eevee"
+    samples = raw.get("samples", BUILD_RENDER_SAMPLES)
+    if not isinstance(samples, int) or isinstance(samples, bool) or not 1 <= samples <= 4096:
+        return None, "render.samples must be an integer 1..4096"
+    res = raw.get("resolution", list(BUILD_RENDER_RESOLUTION))
+    if not (isinstance(res, list) and len(res) == 2 and all(isinstance(v, int) and 16 <= v <= 8192 for v in res)):
+        return None, "render.resolution must be [w, h] in pixels (16..8192)"
+    if not isinstance(raw.get("sky", False), bool):
+        return None, "render.sky must be true|false"
+    return {"engine": engine, "samples": samples, "resolution": res, "sky": raw.get("sky", False),
+            "path": raw.get("path")}, None
+
+
+def final_render(opts: dict[str, Any]) -> dict[str, Any]:
+    """The optional nicer render: sky world first if asked, then the camera at full settings."""
+    import tempfile
+    import uuid
+
+    from ai_db_scene.constants import BUILD_RENDER_SKY_STRENGTH
+
+    out: dict[str, Any] = {"engine": opts["engine"], "samples": opts["samples"]}
+    if opts["sky"]:
+        out["sky"] = BlenderClient().run_code(_SKY.format(strength=BUILD_RENDER_SKY_STRENGTH))
+    path = Path(opts["path"] or Path(tempfile.gettempdir()) / "ai_db_render" / f"{uuid.uuid4().hex}.png")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    res = BlenderClient(timeout=1800.0).request("render", {
+        "filepath": str(path), "resolution": opts["resolution"], "samples": opts["samples"],
+        "engine": opts["engine"], "denoise": True}, timeout=1800.0)
+    out["path"] = str(res.get("filepath") or path) if isinstance(res, dict) else str(path)
+    return out
+
+
 def judge_render(path: Path) -> str:
     """Render the build's eye-level camera to ``path`` (small and quick: a probe, not a final)."""
     from ai_db_scene.constants import BUILD_JUDGE_RESOLUTION, BUILD_JUDGE_SAMPLES
@@ -1530,6 +1627,13 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
                     "description": ("render the build camera (render) and return a structured critique (validator issues, "
                                     "missing objects, repairs, failed commands) with suggested edit_scene steps")},
           "render_path": {"type": "string", "description": "judge: where to write the render (default: a temp file)"},
+          "render": {"type": "object",
+                     "description": ("a nicer final render after the build (default: none, fast): {engine: cycles|eevee, "
+                                     "samples, sky: true (procedural sky world aligned with the daylight sun), "
+                                     "resolution: [w, h], path}; report: final_render.path"),
+                     "properties": {"engine": {"enum": ["cycles", "eevee"]}, "samples": {"type": "integer", "minimum": 1},
+                                    "sky": {"type": "boolean"}, "resolution": {"type": "array", "items": {"type": "integer"}},
+                                    "path": {"type": "string"}}},
           "exposure_check": {"type": "boolean",
                              "description": ("default true: a tiny probe render from the camera; the view exposure is "
                                              "adjusted until the image is neither black nor blown out (report: exposure)")}},

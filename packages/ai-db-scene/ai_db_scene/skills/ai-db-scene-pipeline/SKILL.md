@@ -42,6 +42,11 @@ Optional `build_scene` arguments:
   heaviest non-hero objects get a Decimate modifier until the scene fits (`polys.decimated`).
 - `physics: true`: rigid bodies on every mesh, passive (walls, floor, furniture) unless the
   object spec says `dynamic: true` (active, convex hull). Validation is unchanged.
+- `render: {engine: cycles|eevee, samples, sky: true, resolution: [w, h], path}`: a nicer final
+  render once the build is done (default none: builds stay fast). `sky: true` makes the world a
+  procedural Nishita sky (no HDRI download) whose sun matches the daylight sun lamp, so what the
+  window openings show and let in agrees with the shadows. Cycles (default, denoised) is the
+  better interior; Eevee is quicker. Report: `final_render: {path, engine, samples, sky}`.
 - `judge: true`: renders the build camera (`render`, or `render_path`) and returns `critique`:
   open validator issues (missing objects included), repairs, failed commands, a missed poly
   budget, blocking first, each with a `suggest`ed edit_scene step. Look at the render, fix with

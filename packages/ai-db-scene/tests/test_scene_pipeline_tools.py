@@ -544,3 +544,30 @@ def test_live_camera_check_moves_off_a_blocked_view(private_blender, mem):
     pls = sp.parse_placements(sp._handle_solve_layout({"spec": SPEC})["placements"])
     cam = sp.camera_check(spec, pls)
     assert cam["tried"] > 1 and cam["pose"] > 0 and cam["visible_heroes"] == ["sofa"], cam
+
+
+def test_render_options_validated():
+    opts, err = sp.render_options({"sky": True})
+    assert err is None and opts["engine"] == "cycles" and opts["sky"] is True and len(opts["resolution"]) == 2
+    for bad in ({"engine": "luxcore"}, {"samples": 0}, {"samples": True}, {"sky": "yes"},
+                {"resolution": [10, 10]}, {"denoise": True}, "cycles"):
+        assert sp.render_options(bad)[0] is None, bad
+    assert sp._handle_build_scene({"spec": SPEC, "render": {"engine": "x"}})["status"] == "invalid"
+
+
+@pytest.mark.blender
+@pytest.mark.parametrize("engine", ["cycles", "eevee"])
+def test_live_final_render_with_sky(private_blender, mem, tmp_path, engine):
+    from ai_db_scene.blender_client import BlenderClient
+
+    target = tmp_path / f"final_{engine}.png"
+    res = sp._handle_build_scene({"spec": SPEC, "clear": True, "snapshot": False, "exposure_check": False,
+                                  "render": {"engine": engine, "samples": 4, "sky": True, "resolution": [160, 90],
+                                             "path": str(target)}})
+    fr = res["final_render"]
+    assert "error" not in fr, fr
+    assert target.stat().st_size > 0 and fr["path"] == str(target)
+    assert fr["sky"]["sun"] and abs(fr["sky"]["sun_elevation"] - 40.0) < 1.0, fr
+    assert abs(fr["sky"]["sun_azimuth"] - 135.0) < 1.0, fr
+    assert BlenderClient().run_code(
+        "import bpy\nresult = [n.type for n in bpy.context.scene.world.node_tree.nodes].count('TEX_SKY')") == 1
