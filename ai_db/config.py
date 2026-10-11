@@ -56,7 +56,7 @@ RERANK_PROVIDERS: dict[str, tuple[frozenset[str], frozenset[str]]] = {    "none"
 }
 
 TOP_LEVEL_KEYS = frozenset(
-    {"version", "storage", "retrieval", "embedding", "rerank", "access", "auto_sync_paths", "index", "trace", "daemon", "plugins", "recall"}
+    {"version", "storage", "retrieval", "embedding", "rerank", "access", "auto_sync_paths", "index", "trace", "daemon", "plugins", "recall", "skills"}
 )
 REQUIRED_TOP_LEVEL = frozenset({"version", "storage", "retrieval", "embedding", "rerank"})
 
@@ -152,6 +152,9 @@ class AppConfig:
     plugins: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Recall extensions run by route_skills / query_contexts (ai_db.recall entry points).
     recall_providers: list[str] = field(default_factory=list)
+    # skills.generated_dir: where create_skill writes SKILL.md files (None = default,
+    # see ai_db.skill_gen.generated_skills_dir).
+    skills_generated_dir: str | None = None
     source_path: str | None = None
 
     @property
@@ -178,6 +181,7 @@ class AppConfig:
             "daemon": daemon_dict,
             "plugins": {name: dict(section) for name, section in self.plugins.items()},
             "recall": {"providers": list(self.recall_providers)},
+            **({"skills": {"generated_dir": self.skills_generated_dir}} if self.skills_generated_dir else {}),
         }
 
 
@@ -385,6 +389,12 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         raise AiDbConfigError("recall provider 'vectors' needs an embedding provider; "
                               "set embedding.provider or remove 'vectors' from recall.providers")
 
+    skills_raw = _require_dict(data.get("skills", {}), "skills")
+    _check_keys(skills_raw, frozenset({"generated_dir"}), "skills")
+    generated_dir = skills_raw.get("generated_dir")
+    if generated_dir is not None and (not isinstance(generated_dir, str) or not generated_dir):
+        raise AiDbConfigError("'skills.generated_dir' must be a non-empty path string")
+
     plugins_raw = _require_dict(data.get("plugins", {}), "plugins")
     plugins = {name: dict(_require_dict(section, f"plugins.{name}"))
                for name, section in plugins_raw.items()}
@@ -444,6 +454,7 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
         index=index,
         plugins=plugins,
         recall_providers=list(recall_providers),
+        skills_generated_dir=generated_dir,
         trace_wait_patterns=trace_wait_patterns,
         trace_wait_patterns_extend=trace_wait_patterns_extend,
         daemon=daemon,

@@ -54,6 +54,8 @@ class VectorDB:
         self.indexer.set_languages(self.config.index.languages)
         self.query_engine = QueryEngine(db=self.backend)
         self.skill_router = SkillRouter(db=self.backend, db_path=self.db_path)
+        from ai_db.skill_gen import generated_skills_dir
+        self.skill_router.generated_dir = generated_skills_dir(self.config)
         self.analyzer_engine = AnalyzerEngine(db=self.backend, query_engine=self.query_engine)
         self.analyzer_engine.languages = self.config.index.languages
         self.analyzer_engine.ref_store.languages = self.config.index.languages

@@ -29,6 +29,9 @@ class SkillRouter:
         self.db_path = db_path or getattr(self.db, "db_path", "")
         # Recall extensions (recall.providers), set by VectorDB; empty = keyword only.
         self.recall: list[RecallProvider] = list(recall or [])
+        # Folder of create_skill output (set by VectorDB from config); always searched
+        # by a default sync, AI_DB_SKILL_DIRS or not.
+        self.generated_dir: str | None = None
 
     def sync_skills(self, skill_dirs: list[str] | None = None, project: str = "global", verbose: bool = True) -> dict[str, int]:
         """Indexes skills from skill directories into skills and fts_skills tables under the specified project scope."""
@@ -38,6 +41,8 @@ class SkillRouter:
 
             skill_dirs = list(DEFAULT_SKILL_DIRS) + (
                 [] if os.environ.get("AI_DB_SKILL_DIRS") else plugin_skill_dirs())
+            if self.generated_dir:
+                skill_dirs.append(self.generated_dir)
             project = "global"
 
         stored = self.db.get_skills_by_project(project)
@@ -51,6 +56,8 @@ class SkillRouter:
                 for fname in files:
                     if fname == "SKILL.md":
                         found_files.append(os.path.join(root, fname))
+        # a dir nested in another (generated_dir under a skill dir) is walked twice
+        found_files = list(dict.fromkeys(found_files))
 
         found_set = set(found_files)
         pruned = 0

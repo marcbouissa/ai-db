@@ -1005,6 +1005,10 @@ transport it already has.
 | `sync` | Scan a directory or file; update symbols, chunks and the FTS5 index | `path`, `project`, `verbose` |
 | `sync_skills` | Scan and index `SKILL.md` definitions from directories | `skill_dirs`, `project` |
 | `route_skill` | Route a user prompt to matching skills (lexical + vector) | `prompt`, `top`, `min_confidence`, `project` |
+| `draft_skill` | Skeleton SKILL.md for a topic from existing skills, saved contexts and plugin hooks (`ai_db.skill_drafts`); no LLM call | `topic` |
+| `create_skill` | Validate and save a SKILL.md to `skills.generated_dir` (default `<first skill dir>/generated`), then re-index | `name`, `description`, `body`, `triggers`, `related_skills`, `domain`, `overwrite` |
+| `list_generated_skills` | Skills saved with `create_skill` | — |
+| `delete_skill` | Delete a generated skill (never packaged/plugin ones) | `name` |
 | `context_save` | Persist conversation memory, active files, tasks, architecture notes | `session_id`, `summary`, `title`, `active_files`, `open_tasks`, `notes`, `project` |
 | `context_recall` | Recall session context and decisions across past conversations | `session_id`, `query`, `project` |
 | `status` | Database health metrics and entity counts | — |

@@ -57,6 +57,8 @@ class ServiceDispatcher:
         self._progress: Any = None
         self._filter_scorer: Any = None  # semantic scorer for filter_output, built on first use
         self._register_default_tools()
+        from ai_db.skill_gen import register_skill_tools
+        register_skill_tools(self)
         register_tool_plugins(self)
 
     def register_tool(
