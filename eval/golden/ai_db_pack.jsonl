@@ -14,7 +14,7 @@
 {"query": "get_chunks_by_ids", "kind": "impact", "expected": [{"filepath": "ai_db/search/retriever.py", "symbol": "HybridRetriever.candidates"}, {"filepath": "ai_db/search/ranking.py", "symbol": "Ranker.rank"}]}
 {"query": "build_fts", "kind": "impact", "expected": [{"filepath": "ai_db/storage/sqlite_backend.py", "symbol": "search_chunks"}]}
 {"query": "parse_config", "kind": "impact", "expected": [{"filepath": "ai_db/config.py", "symbol": "load_config"}, {"filepath": "ai_db/config_template.py", "symbol": "build_template"}]}
-{"query": "embed_missing", "kind": "impact", "expected": [{"filepath": "ai_db/__init__.py", "symbol": "VectorDB.embed_missing"}]}
+{"query": "embed_missing", "kind": "impact", "expected": [{"filepath": "ai_db/facade.py", "symbol": "VectorDB.embed_missing"}]}
 {"query": "post_json", "kind": "impact", "expected": [{"filepath": "ai_db/embed/hosted.py", "symbol": "OpenAICompatibleEmbedder._embed"}, {"filepath": "ai_db/embed/hosted.py", "symbol": "VoyageEmbedder._embed"}]}
 {"query": "split_identifier", "kind": "impact", "expected": [{"filepath": "ai_db/search/query_builder.py", "symbol": "expand_terms"}, {"filepath": "ai_db/search/query_builder.py", "symbol": "identifier_words"}]}
-{"query": "materialize_tracked", "kind": "impact", "expected": [{"filepath": "ai_db/cli.py", "symbol": "_run_eval"}]}
+{"query": "git_worktree", "kind": "impact", "expected": [{"filepath": "ai_db/cli.py", "symbol": "_run_eval"}]}

@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -49,7 +50,7 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
         compare_pack_to_baseline,
         compare_refs_to_baseline,
         compare_to_baseline,
-        materialize_tracked,
+        git_worktree,
         run,
         run_callers,
         run_pack,
@@ -70,11 +71,12 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
                 db.close()
         else:
             root = os.path.abspath(args.root)
-            if not args.all_files:
-                root = materialize_tracked(root, os.path.join(tmp, "corpus"))
             from ai_db.facade import VectorDB
-            db = VectorDB(os.path.join(tmp, "eval.db"), config=cfg)
-            try:
+            with contextlib.ExitStack() as stack:
+                if not args.all_files:  # the committed tree, as a real git checkout
+                    root = stack.enter_context(git_worktree(root, os.path.join(tmp, "corpus")))
+                db = VectorDB(os.path.join(tmp, "eval.db"), config=cfg)
+                stack.callback(db.close)
                 if args.pack:
                     result = run_pack(args.golden, root, db, budget_tokens=args.budget)
                 elif args.symbols:
@@ -83,8 +85,6 @@ def _run_eval(args: argparse.Namespace, cfg: AppConfig) -> int:
                     result = run_callers(args.golden, root, db)
                 else:
                     result = run(args.golden, root, db, k=args.k)
-            finally:
-                db.close()
     summary = {k: v for k, v in result.items() if k != "per_query"}
     print(json.dumps(summary, indent=2))
     if args.save:
@@ -670,7 +670,8 @@ def _main(argv: list[str] | None = None) -> int:
     eval_p.add_argument("--min-confidence", type=float, default=None,
                         help="min_confidence passed to route_skills (--skills only)")
     eval_p.add_argument("--all-files", action="store_true",
-                        help="Index every file under --root (default: only git-tracked files)")
+                        help="Index every file under --root as it is on disk (default: a git "
+                             "worktree of --root at HEAD, i.e. the committed files only)")
 
     args = parser.parse_args(argv)
     from ai_db.quiet import set_verbose

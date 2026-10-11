@@ -37,4 +37,4 @@
 {"query": "token savings compression telemetry", "expected": [{"filepath": "ai_db/telemetry/tracker.py", "symbol": "record_token_compression"}], "kind": "locate"}
 {"query": "tool registry dispatch execute validate required parameters", "expected": [{"filepath": "ai_db/dispatcher.py", "symbol": "execute"}], "kind": "locate"}
 {"query": "stdio json-rpc mcp server request handling", "expected": [{"filepath": "mcp_server.py", "symbol": "handle_request"}], "kind": "locate"}
-{"query": "http server post endpoint json", "expected": [{"filepath": "ai_db/server/http_server.py", "symbol": "do_POST"}], "kind": "locate"}
+{"query": "http server post endpoint json", "expected": [{"filepath": "ai_db/daemon/server.py"}], "kind": "locate"}

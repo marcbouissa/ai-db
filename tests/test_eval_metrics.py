@@ -40,6 +40,37 @@ def test_symbol_mismatch_is_not_relevant():
     assert recall_at_k([("a.py", "bar")], [("a.py", "foo")], 5) == 0.0
 
 
+def test_symbol_match_is_exact_not_substring():
+    """G10: `run` must not match `prune`; a dotted expectation matches the qualified name."""
+    assert relevance_vector([("a.py", "def prune"), ("a.py", "def Cls.run (part 1/2)")],
+                            [("a.py", "run")]) == [0, 1]
+    assert relevance_vector([("a.py", "Other.run"), ("a.py", "Outer.Cls.run")],
+                            [("a.py", "Cls.run")]) == [0, 1]
+    assert relevance_vector([("a.py", "MyCls.run")], [("a.py", "Cls.run")]) == [0]
+
+
+def test_git_worktree_materializes_head_as_a_checkout(tmp_path):
+    import subprocess
+
+    from ai_db.eval.harness import git_worktree
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env_args = ["-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "a.py").write_text("x = 1\n")
+    subprocess.run(["git", "-C", str(repo), "add", "a.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), *env_args, "commit", "-qm", "c"], check=True)
+    (repo / "untracked.py").write_text("y = 2\n")
+    dest = tmp_path / "wt"
+    with git_worktree(str(repo), str(dest)) as tree:
+        assert (dest / "a.py").exists() and not (dest / "untracked.py").exists()
+        out = subprocess.run(["git", "-C", tree, "rev-parse", "--is-inside-work-tree"],
+                             capture_output=True, text=True, check=True)
+        assert out.stdout.strip() == "true"  # diff mode can run git here
+    assert not dest.exists()
+
+
 def test_load_golden_rejects_bad_kind(tmp_path):
     p = tmp_path / "g.jsonl"
     p.write_text(json.dumps({"query": "q", "expected": [{"filepath": "a"}], "kind": "nope"}))

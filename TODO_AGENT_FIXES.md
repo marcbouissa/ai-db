@@ -379,13 +379,23 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   `AiDbStorageError`. Test in `tests/test_analyze.py`.
 
 ### G10. Eval inflates recall
-- [ ] **Observed:** `ai_db/eval/metrics.py:_matches` uses `exp_symbol in name` (`run` matches
+- [x] **Observed:** `ai_db/eval/metrics.py:_matches` uses `exp_symbol in name` (`run` matches
   `prune`). Diff golden items use `A..B` ranges against a working-tree index. Without
   `--all-files`, `materialize_tracked` copies to a non-git dir so diff mode raises.
 - **Fix:** match the final dotted component exactly (or the full qualified name when the
   expectation is dotted); materialize as a git worktree (`git worktree add --detach`).
   Re-record baselines in the same commit and state old → new numbers in the message.
 - **Check:** metrics unit test (`run` ≠ `prune`); `ai-db eval` runs green.
+- **Done 2026-10-11:** exact matching (chunk labels `def X (part i/n)` reduced first);
+  `harness.git_worktree()` (detached, removed on exit) replaces `materialize_tracked`;
+  `A..B` diff items are indexed from a worktree at B (own project) and diffed against A.
+  Stale golden entries fixed (`VectorDB.embed_missing` lives in `ai_db/facade.py`; the
+  removed `ai_db/server/http_server.py` → `ai_db/daemon/server.py`; `materialize_tracked`
+  → `git_worktree`). Baselines: lexical recall@10 0.825 → 0.8 (two class expectations,
+  `ExternalLinter` and `AidbIgnore`, were only "hit" by their methods), pack 0.9 → 0.9,
+  polyglot 1.0 → 1.0, diff 1.0 → 1.0. Note: the lexical/pack corpus is this repo, so
+  unrelated commits move these numbers by a query or two (one BM25 near-tie,
+  `_main` vs `Indexer.sync`, flips with the corpus).
 
 ### G11. Receiver resolution is O(calls × scope)
 - [x] `ai_db/parser/receiver_types.py:resolve_receiver_class` re-walks the class/module per

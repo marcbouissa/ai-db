@@ -117,6 +117,7 @@ PACK_STUB_MAX_ITEMS = 20
 PACK_STUB_WHY_CHARS = 160
 DIFF_DEFAULT_SINCE = "HEAD"  # diff mode compares the working tree against this unless told otherwise
 GIT_TIMEOUT_S = 10  # git invocations from investigate/trace must not stall a request
+EVAL_GIT_TIMEOUT_S = 120  # `ai-db eval` worktree checkouts (a whole tree, not one request)
 STALE_RESYNC_MAX_FILES = 20  # stale result files re-synced inline per read; above this they are flagged
 DELEGATE_MAX_TOKENS = 120  # seeds this small also get their callees' callees
 REF_ID_HEX_LEN = 12  # analysis ref ids `ref:<sha1 prefix>`: 48 bits (32 collided at ~1% over 10k refs)
