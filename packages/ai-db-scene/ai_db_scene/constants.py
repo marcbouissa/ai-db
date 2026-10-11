@@ -44,6 +44,9 @@ REPAIR_GROWTH = 1.2  # build_scene: room x/y growth per repair step
 REPAIR_MAX_GROWTH = 1.8  # build_scene: never more than this times the requested size
 BUILD_MAX_REPAIRS = 6  # build_scene: spec edits before giving up
 BUILD_FIX_ROUNDS = 2  # build_scene: rounds of applying validate_scene's fix actions
+SCENE_EXPORT_DIR = "~/ai-db-exports"  # export_scene's folder; override: plugins.scene.export_dir, AI_DB_SCENE_EXPORT_DIR
+SCENE_EXPORT_FORMATS = {"glb": ".glb", "gltf": ".gltf", "usd": ".usd", "usdz": ".usdz"}
+SCENE_EXPORT_TIMEOUT_S = 300.0
 
 # --- Blender (addon socket server) ---
 BLENDER_OX_HOST = "127.0.0.1"

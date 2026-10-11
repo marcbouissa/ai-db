@@ -9,7 +9,7 @@ from typing import Any
 from ai_db.errors import AiDbConfigError
 from ai_db_scene.constants import DEFAULT_JUDGE_MODEL, POLYHAVEN_RESOLUTIONS
 
-_KEYS = frozenset({"judge_model", "asset_dirs", "polyhaven"})
+_KEYS = frozenset({"judge_model", "asset_dirs", "polyhaven", "export_dir"})
 _POLYHAVEN_KEYS = frozenset({"enabled", "license_acknowledged", "cache_dir", "resolution"})
 
 
@@ -30,6 +30,8 @@ class SceneConfig:
     #: folders of local .glb/.gltf/.blend assets used before part recipes (none by default)
     asset_dirs: tuple[str, ...] = ()
     polyhaven: PolyHavenConfig = field(default_factory=PolyHavenConfig)
+    #: the only folder export_scene writes into (None: $AI_DB_SCENE_EXPORT_DIR, else SCENE_EXPORT_DIR)
+    export_dir: str | None = None
 
 
 def _polyhaven(raw: Any) -> PolyHavenConfig:
@@ -79,5 +81,8 @@ def scene_config(app_config: Any) -> SceneConfig:
     judge_model = raw.get("judge_model", DEFAULT_JUDGE_MODEL)
     if not isinstance(judge_model, str) or not judge_model:
         raise AiDbConfigError("'plugins.scene.judge_model' must be a non-empty string")
+    export_dir = raw.get("export_dir")
+    if export_dir is not None and (not isinstance(export_dir, str) or not export_dir):
+        raise AiDbConfigError(f"'plugins.scene.export_dir' must be a non-empty path string, got {export_dir!r}")
     return SceneConfig(judge_model=judge_model, asset_dirs=_asset_dirs(raw.get("asset_dirs", [])),
-                       polyhaven=_polyhaven(raw.get("polyhaven", {})))
+                       polyhaven=_polyhaven(raw.get("polyhaven", {})), export_dir=export_dir)

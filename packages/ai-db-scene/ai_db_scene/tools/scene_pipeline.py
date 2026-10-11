@@ -918,6 +918,81 @@ def _handle_edit_scene(args: dict[str, Any]) -> Any:
     return {**out, "steps_applied": done, "previous_scene_id": scene_id, "safety_snapshot": safety}
 
 
+_EXPORT = """
+import bpy, os
+path, fmt = {path!r}, {fmt!r}
+os.makedirs(os.path.dirname(path), exist_ok=True)
+if fmt in ("glb", "gltf"):
+    bpy.ops.export_scene.gltf(filepath=path, export_format="GLB" if fmt == "glb" else "GLTF_SEPARATE")
+else:
+    try:
+        bpy.ops.wm.usd_export.get_rna_type()
+    except KeyError:
+        raise RuntimeError("this Blender has no USD exporter (bpy.ops.wm.usd_export)")
+    bpy.ops.wm.usd_export(filepath=path)
+files = [path] + ([path[:-5] + ".bin"] if fmt == "gltf" else [])
+result = {{"bytes": sum(os.path.getsize(f) for f in files if os.path.exists(f)),
+          "objects": len(bpy.context.scene.objects),
+          "meshes": sum(1 for o in bpy.context.scene.objects if o.type == "MESH")}}
+"""
+
+
+def export_root() -> Path:
+    """The one folder export_scene writes into: $AI_DB_SCENE_EXPORT_DIR, plugins.scene.export_dir
+    or SCENE_EXPORT_DIR."""
+    import os
+
+    from ai_db_scene.constants import SCENE_EXPORT_DIR
+
+    configured = os.environ.get("AI_DB_SCENE_EXPORT_DIR")
+    if not configured:
+        from ai_db.config import load_config
+        from ai_db_scene.config import scene_config
+
+        try:
+            configured = scene_config(load_config(check_env=False)).export_dir
+        except AiDbConfigError:
+            configured = None
+    return Path(configured or SCENE_EXPORT_DIR).expanduser().resolve()
+
+
+def export_path(path: str, fmt: str | None, root: Path) -> tuple[Path, str]:
+    """Resolve ``path`` (relative to ``root``, or absolute inside it) and the format.
+
+    Raises ValueError for a path that leaves ``root`` once resolved ("..", symlinks) or an
+    unknown format; a missing extension is added from the format.
+    """
+    from ai_db_scene.constants import SCENE_EXPORT_FORMATS
+
+    p = Path(path).expanduser()
+    suffix = p.suffix.lower()
+    fmt = fmt or next((f for f, ext in SCENE_EXPORT_FORMATS.items() if ext == suffix), None)
+    if fmt not in SCENE_EXPORT_FORMATS:
+        raise ValueError(f"format must be one of {list(SCENE_EXPORT_FORMATS)} (or a path ending in one)")
+    if suffix != SCENE_EXPORT_FORMATS[fmt]:
+        p = p.with_name(p.name + SCENE_EXPORT_FORMATS[fmt])
+    target = (p if p.is_absolute() else root / p).resolve()
+    if target == root or not target.is_relative_to(root):
+        raise ValueError(f"{path!r} is outside the export folder {root} (set plugins.scene.export_dir)")
+    return target, fmt
+
+
+def _handle_export_scene(args: dict[str, Any]) -> Any:
+    from ai_db_scene.constants import SCENE_EXPORT_TIMEOUT_S
+
+    root = export_root()
+    try:
+        target, fmt = export_path(str(args.get("path") or ""), args.get("format"), root)
+    except ValueError as e:
+        return _err(str(e))
+    try:
+        res = BlenderClient().run_code(_EXPORT.format(path=str(target), fmt=fmt), timeout=SCENE_EXPORT_TIMEOUT_S)
+    except BlenderError as e:
+        return {"status": "error", "message": str(e), "error_type": e.error_type or type(e).__name__, "hint": e.hint}
+    return {"status": "success", "path": str(target), "format": fmt, "bytes": res["bytes"],
+            "objects": res["objects"], "meshes": res["meshes"]}
+
+
 PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
     ("get_scene_spec_schema",
      "SceneSpec JSON schema + category vocabulary with typical dims + relations + up to 3 exemplar specs from past successful runs",
@@ -987,6 +1062,15 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
           "outcome": {"type": "string", "enum": list(RUN_OUTCOMES)}, "project": {"type": "string"}},
       "required": ["brief"]},
      _handle_record_run),
+    ("export_scene",
+     ("Export the current Blender scene to glb, gltf, usd or usdz (format from `format` or the path's "
+      "extension). `path` is relative to the export folder (plugins.scene.export_dir); paths outside it "
+      "are refused. Returns the file size and object count"),
+     {"type": "object",
+      "properties": {"path": {"type": "string", "description": "e.g. living_room.glb"},
+                     "format": {"enum": ["glb", "gltf", "usd", "usdz"]}},
+      "required": ["path"]},
+     _handle_export_scene),
     ("search_exemplars",
      "Find past successful, judge-approved runs similar to a brief (never returns failed or low-score runs)",
      {"type": "object",

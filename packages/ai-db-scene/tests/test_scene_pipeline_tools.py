@@ -296,3 +296,36 @@ def test_live_pbr_preset_builds_worn_materials(private_blender, mem, monkeypatch
     assert got["crate_1"] and all(m.endswith("_weathered_wood") for m in got["crate_1"]), got
     assert all(m.endswith("_worn_concrete") for m in got["Room_Floor"]), got
     assert not any("_rusty" in m or "_weathered" in m for m in got["lamp"]), got
+
+
+def test_export_path_stays_inside_the_export_folder(tmp_path):
+    root = tmp_path / "exports"
+    root.mkdir()
+    assert sp.export_path("room.glb", None, root) == (root / "room.glb", "glb")
+    assert sp.export_path("sub/room", "usdz", root) == (root / "sub" / "room.usdz", "usdz")
+    assert sp.export_path(str(root / "a.gltf"), None, root)[1] == "gltf"
+    (root / "escape").symlink_to(tmp_path)
+    for bad in ("../room.glb", str(tmp_path / "room.glb"), "escape/room.glb", "", "room.fbx"):
+        with pytest.raises(ValueError):
+            sp.export_path(bad, None, root)
+
+
+def test_export_scene_refuses_outside_paths_without_blender(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_DB_SCENE_EXPORT_DIR", str(tmp_path / "exports"))
+    out = sp._handle_export_scene({"path": "../../etc/x.glb"})
+    assert out["status"] == "error" and "outside the export folder" in out["message"]
+
+
+@pytest.mark.blender
+def test_live_export_scene_writes_glb_and_usd(private_blender, tmp_path, monkeypatch):
+    from ai_db_scene.blender_client import BlenderClient
+
+    monkeypatch.setenv("AI_DB_SCENE_EXPORT_DIR", str(tmp_path / "exports"))
+    c = BlenderClient(port=private_blender, timeout=120)
+    c.request("clear_scene", {"keep_camera": False, "purge_orphans": True})
+    c.request("create_primitive", {"primitive": "cube", "name": "box", "location": [0, 0, 0.5]})
+    glb = sp._handle_export_scene({"path": "scene.glb"})
+    assert glb["status"] == "success" and glb["objects"] >= 1 and glb["meshes"] == 1, glb
+    assert (tmp_path / "exports" / "scene.glb").stat().st_size == glb["bytes"] > 0
+    usd = sp._handle_export_scene({"path": "scene", "format": "usdz"})
+    assert usd["status"] == "success" and usd["bytes"] > 0, usd

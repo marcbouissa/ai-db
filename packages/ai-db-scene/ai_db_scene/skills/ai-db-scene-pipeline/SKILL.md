@@ -54,6 +54,8 @@ Only use the step-by-step tools below when you need control over one stage.
 7. **`snapshot_scene(prompt)`** stores transforms and geometry. After an edit, snapshot with
    `parent_scene_id` to make the next version; `restore_scene(id)` puts any version back and
    reports transforms that differ; `fork_scene` branches a variant.
+8. **`export_scene(path, format)`** writes the scene as glb, gltf, usd or usdz into the export
+   folder (`plugins.scene.export_dir`; other paths are refused); returns size and object count.
 
 ## Spec patterns that solve first time
 
