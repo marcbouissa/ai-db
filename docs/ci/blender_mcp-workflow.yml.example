@@ -1,0 +1,52 @@
+# Suggested CI for the separate Blender addon repo (blender_mcp). Not active here: copy it to
+# that repo as .github/workflows/ci.yml. It runs the addon's in-Blender tests against a pinned
+# headless Blender (tarball from download.blender.org, cached).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  blender-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BLENDER_VERSION: "5.2.1"
+      BLENDER_SERIES: "5.2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Blender runtime libraries
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends libxrender1 libxi6 libxkbcommon0 \
+            libsm6 libgl1 libegl1 libxxf86vm1 libxfixes3
+
+      - name: Cache Blender
+        id: blender-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/blender
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+
+      - name: Download Blender
+        if: steps.blender-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/blender
+          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            | tar -xJ -C ~/blender --strip-components=1
+
+      - name: In-Blender tests
+        run: ~/blender/blender -b --factory-startup --python tests/run_blender_tests.py
+
+  # Optional: lint / type-check the MCP server side with uv.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uvx ruff check .

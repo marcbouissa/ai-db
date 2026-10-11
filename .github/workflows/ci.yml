@@ -1,5 +1,14 @@
 name: CI
 
+# Jobs:
+#   test     ruff, mypy (core + ai-db-scene), pytest tests/ and packages/, eval baselines.
+#   blender  headless Blender (pinned tarball, cached) + the Blender socket addon, then
+#            `pytest packages/ai-db-scene/tests -m blender`.
+#            The addon lives in a separate repo. Set the repository variable
+#            BLENDER_ADDON_REPO (Settings > Secrets and variables > Actions > Variables) to its
+#            git URL (https://...); optional variable BLENDER_ADDON_REF (branch/tag) and secret
+#            BLENDER_ADDON_TOKEN (read access, for a private repo). Unset: the job is skipped.
+
 on:
   push:
     branches: [main]
@@ -15,11 +24,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install uv
-        run: pip install uv
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
 
       - name: Install dependencies
-        run: uv pip install --system -e ".[dev]" -e packages/ai-db-scene
+        run: |
+          uv venv
+          uv pip install -e ".[dev]" -e packages/ai-db-scene
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Create CI config
         run: |
@@ -40,7 +53,9 @@ jobs:
         run: ai-db --config ci.json init --force
 
       - name: Run tests
-        run: pytest -q
+        run: |
+          pytest -q
+          pytest -q packages
 
       - name: Lint
         run: ruff check .   # scope + exclusions come from [tool.ruff] in pyproject.toml
@@ -76,3 +91,64 @@ jobs:
             --root tests/fixtures/refs_py --all-files --baseline eval/baseline_symbols.json
           ai-db --config ci.json eval --callers --golden eval/golden/callers.jsonl \
             --root tests/fixtures/refs_py --all-files --baseline eval/baseline_callers.json
+
+  blender:
+    if: ${{ vars.BLENDER_ADDON_REPO != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BLENDER_VERSION: "5.2.1"
+      BLENDER_SERIES: "5.2"
+      AI_DB_BLENDER_ADDON: ${{ github.workspace }}/../blender_addon
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -e ".[dev]" -e packages/ai-db-scene
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Blender runtime libraries
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends libxrender1 libxi6 libxkbcommon0 \
+            libsm6 libgl1 libegl1 libxxf86vm1 libxfixes3
+
+      - name: Cache Blender
+        id: blender-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/blender
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+
+      - name: Download Blender
+        if: steps.blender-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/blender
+          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            | tar -xJ -C ~/blender --strip-components=1
+
+      - name: Put Blender on PATH
+        run: |
+          echo "$HOME/blender" >> "$GITHUB_PATH"
+          "$HOME/blender/blender" --version | head -1
+
+      - name: Check out the Blender addon
+        env:
+          REPO: ${{ vars.BLENDER_ADDON_REPO }}
+          REF: ${{ vars.BLENDER_ADDON_REF }}
+          TOKEN: ${{ secrets.BLENDER_ADDON_TOKEN }}
+        run: |
+          auth=()
+          if [ -n "$TOKEN" ]; then
+            auth=(-c "http.extraheader=Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)")
+          fi
+          git "${auth[@]}" clone --depth 1 ${REF:+--branch "$REF"} "$REPO" "$AI_DB_BLENDER_ADDON"
+
+      - name: Blender tests
+        run: pytest -q packages/ai-db-scene/tests -m blender
