@@ -46,7 +46,8 @@ def test_vocabularies_in_schema():
     schema = spec_schema()
     assert schema["properties"]["setting"]["properties"]["kind"]["enum"] == list(SETTING_KINDS)
     assert schema["properties"]["relations"]["items"]["properties"]["rel"]["enum"] == list(RELATIONS)
-    assert set(RELATIONS) == {"on", "against_wall", "in_front_of", "beside", "facing", "centered_in", "under", "around"}
+    assert set(RELATIONS) == {"on", "against_wall", "in_front_of", "beside", "facing", "centered_in", "under", "around",
+                              "above"}
 
 
 def test_root_not_object():
@@ -70,7 +71,7 @@ def test_bad_relation_name():
     errors = _bad(lambda d: d["relations"][1].update(rel="near"))
     assert errors[0] == (
         "relations[1].rel: 'near' is not allowed; allowed values: "
-        "['on', 'against_wall', 'in_front_of', 'beside', 'facing', 'centered_in', 'under', 'around']"
+        "['on', 'against_wall', 'in_front_of', 'beside', 'facing', 'centered_in', 'under', 'around', 'above']"
     )
 
 

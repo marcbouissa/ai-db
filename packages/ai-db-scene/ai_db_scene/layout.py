@@ -10,6 +10,8 @@ Conventions
 * Room shape ``rect`` (default) | ``ellipse`` | ``polygon`` inside the box [0,W]x[0,D]. Rect walls
   are the four named walls; ellipse has ``wall`` (+ ``at_deg`` = ellipse parameter angle);
   polygons have ``wall_<n>`` (edge n, 1-based) and ``wall`` with ``at_deg`` (ray from the center). ``location`` is the center of the bounding box (z included).
+* ``A above B``: A is wall-mounted (support ``wall``, with its against_wall relation) straight
+  above B: the same position along the wall, A's base ``gap_m`` (default 0.25 m) over B's top.
 * ``count > 1`` expands an object into instances ``<id>_1 .. <id>_n``. Relations of the
   object apply to every instance; a target with several instances is paired by index.
 """
@@ -24,6 +26,7 @@ from dataclasses import dataclass
 from ai_db_scene.constants import (
     LAYOUT_BREATHING_M,
     LAYOUT_CANDIDATES,
+    LAYOUT_DEFAULT_ABOVE_GAP_M,
     LAYOUT_DEFAULT_AROUND_GAP_M,
     LAYOUT_DEFAULT_BESIDE_GAP_M,
     LAYOUT_DEFAULT_IN_FRONT_GAP_M,
@@ -47,9 +50,9 @@ from ai_db_scene.spec import ROOM, SceneSpec
 Dims = tuple[float, float, float]
 _HALF_PI = math.pi / 2
 _GAP_RELS = ("in_front_of", "beside", "around")
-_PRIMARY_ORDER = ("on", "under", "centered_in", "around", "in_front_of", "beside")
-_DEP_RELS = ("on", "under", "centered_in", "around", "in_front_of", "beside")
-_ORIENT_RELS = ("against_wall", "facing", "in_front_of", "beside", "on", "under", "centered_in", "around")
+_PRIMARY_ORDER = ("on", "under", "above", "centered_in", "around", "in_front_of", "beside")
+_DEP_RELS = ("on", "under", "above", "centered_in", "around", "in_front_of", "beside")
+_ORIENT_RELS = ("against_wall", "facing", "in_front_of", "beside", "on", "under", "centered_in", "around", "above")
 _CURVED_WALL_GAP_M = 0.25  # max back-face gap to a curved wall (sagitta of a flat back on a curve)
 _LATERAL_TOL_M = 0.05
 
@@ -216,9 +219,10 @@ class _Problem:
                     bi = bl[0] if len(bl) == 1 else bl[a.idx % len(bl)]
                 else:
                     bi = r.b
-                default = {"in_front_of": LAYOUT_DEFAULT_IN_FRONT_GAP_M, "beside": LAYOUT_DEFAULT_BESIDE_GAP_M, "around": LAYOUT_DEFAULT_AROUND_GAP_M}.get(r.rel, 0.0)
+                default = {"in_front_of": LAYOUT_DEFAULT_IN_FRONT_GAP_M, "beside": LAYOUT_DEFAULT_BESIDE_GAP_M,
+                           "around": LAYOUT_DEFAULT_AROUND_GAP_M, "above": LAYOUT_DEFAULT_ABOVE_GAP_M}.get(r.rel, 0.0)
                 gap = default if r.gap_m is None else r.gap_m
-                label = f"{ai} {r.rel} {bi}" + (f" (gap {gap:g} m)" if r.rel in _GAP_RELS else "")
+                label = f"{ai} {r.rel} {bi}" + (f" (gap {gap:g} m)" if r.rel in (*_GAP_RELS, "above") else "")
                 self.rels.append(_Rel(ai, r.rel, bi, gap, a.idx, a.n, label, r.at_deg))
         self.by_a: dict[str, list[_Rel]] = {}
         self.by_b: dict[str, list[_Rel]] = {}
@@ -259,6 +263,13 @@ class _Problem:
                     raise LayoutError(f"relation '{r.label}': category '{b.category}' cannot support other objects", [r.label])
                 if self.insts[r.a].prior.support in ("wall", "ceiling"):
                     raise LayoutError(f"relation '{r.label}': '{r.a}' is {self.insts[r.a].prior.support}-mounted and cannot rest on an object", [r.label])
+            if r.rel == "above":
+                a = self.insts[r.a]
+                if a.prior.support != "wall" or a.id not in has_wall:
+                    raise LayoutError(
+                        f"relation '{r.label}': 'above' places a wall-mounted object over another; '{r.a}' "
+                        f"({a.category}) is {a.prior.support}-supported" + ("" if a.id in has_wall else " and has no against_wall relation")
+                        + " (e.g. a mirror against_wall + above a sink)", [r.label])
             if r.rel == "under" and self.insts[r.a].dims[2] >= self.insts[r.b].dims[2]:
                 raise LayoutError(f"relation '{r.label}': '{r.a}' is as tall as or taller than '{r.b}'", [r.label])
 
@@ -309,6 +320,9 @@ class _Problem:
     def base_z(self, inst: _Inst, poses: dict[str, _Pose]) -> float:
         sup = inst.prior.support
         if sup == "wall":
+            for r in self.by_a.get(inst.id, []):
+                if r.rel == "above" and r.b in poses:
+                    return poses[r.b].zb + self.insts[r.b].dims[2] + r.gap
             return inst.prior.mount_height_m
         if sup == "ceiling":
             return self.H - inst.dims[2]
@@ -359,6 +373,16 @@ class _Problem:
         if r.rel == "under":
             if not _inside(pa, a.dims, pb, b.dims, LAYOUT_EPS_M):
                 return f"'{r.label}': not within the footprint of '{r.b}'"
+            return None
+        if r.rel == "above":
+            ra, fa = _axes(pa.yaw)
+            d = (pb.x - pa.x, pb.y - pa.y)
+            lat = abs(d[0] * ra[0] + d[1] * ra[1])  # offset along the wall
+            depth = d[0] * fa[0] + d[1] * fa[1]  # B stands in front of the wall A hangs on
+            rise = pa.zb - (pb.zb + b.dims[2])
+            if lat > tol or depth < -tol or abs(rise - r.gap) > tol:
+                return (f"'{r.label}': offset {lat:.3f} m along the wall, {rise:.3f} m above the top of '{r.b}'"
+                        + (" (behind the wall)" if depth < -tol else ""))
             return None
         if r.rel == "in_front_of":
             fb, rb = _axes(pb.yaw)[1], _axes(pb.yaw)[0]
@@ -541,7 +565,9 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
             assert b is not None and pb is not None
             rb, fb = _axes(pb.yaw)
             jit = 0.0 if k == 0 else rng.uniform(-1, 1)
-            if prim.rel in ("on", "under"):
+            if prim.rel == "above":
+                x, y = pb.x, pb.y  # snap_walls then moves A onto its wall: same position along it
+            elif prim.rel in ("on", "under"):
                 x = pb.x + jit * max(b.dims[0] / 2 - inst.dims[0] / 2, 0) * rb[0] + rng.uniform(-1, 1) * (0 if k == 0 else max(b.dims[1] / 2 - inst.dims[1] / 2, 0)) * fb[0]
                 y = pb.y + jit * max(b.dims[0] / 2 - inst.dims[0] / 2, 0) * rb[1] + rng.uniform(-1, 1) * (0 if k == 0 else max(b.dims[1] / 2 - inst.dims[1] / 2, 0)) * fb[1]
             elif prim.rel == "around":

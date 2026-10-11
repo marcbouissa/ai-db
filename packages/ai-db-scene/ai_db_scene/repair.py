@@ -21,7 +21,7 @@ from ai_db_scene.layout import LayoutError
 _SUFFIX = re.compile(r"_\d+$")
 _LABEL = re.compile(r"^(\S+) (\w+) (\S+)")
 #: dropped first: they position an object relative to another; walls and support come last
-_DROP_ORDER = ("facing", "beside", "around", "in_front_of", "centered_in", "under", "against_wall", "on")
+_DROP_ORDER = ("facing", "beside", "around", "in_front_of", "centered_in", "under", "above", "against_wall", "on")
 
 
 def _base(iid: str, ids: set[str]) -> str:

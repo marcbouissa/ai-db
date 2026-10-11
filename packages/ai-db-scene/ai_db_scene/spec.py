@@ -12,7 +12,7 @@ from ai_db_scene.materials import material_error, material_vocabulary
 from ai_db_scene.priors import SUPPORTS, categories
 from ai_db_scene.shapes import polygon_wall_names
 
-RELATIONS = ("on", "against_wall", "in_front_of", "beside", "facing", "centered_in", "under", "around")
+RELATIONS = ("on", "against_wall", "in_front_of", "beside", "facing", "centered_in", "under", "around", "above")
 SETTING_KINDS = ("indoor", "outdoor", "tabletop", "single_asset")
 WALLS = ("wall_north", "wall_south", "wall_east", "wall_west")
 SHAPES = ("rect", "ellipse", "polygon")
@@ -188,7 +188,9 @@ def spec_schema() -> dict[str, Any]:
                             f"'{NONRECT_WALL}' (+at_deg) or '{NONRECT_WALL}_<n>' for ellipse/polygon rooms; "
                             f"'{ROOM}' also allowed for centered_in",
                         },
-                        "gap_m": {"type": "number", "minimum": 0},
+                        "gap_m": {"type": "number", "minimum": 0,
+                                  "description": "in_front_of/beside/around: free distance; above: B's top to A's base "
+                                                 "(default 0.25)"},
                         "at_deg": {"type": "number", "description": "against_wall in ellipse/polygon rooms: angle on the wall"},
                     },
                 },

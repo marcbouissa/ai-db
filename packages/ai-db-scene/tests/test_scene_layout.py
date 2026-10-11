@@ -271,3 +271,62 @@ def test_facing_relations_hold_across_seeds():
     assert spec is not None, errors
     for seed in range(5):
         assert check_layout(spec, solve_layout(spec, seed=seed)) == [], seed
+
+
+BATHROOM = {
+    "setting": {"kind": "indoor", "bounds_m": [3.0, 2.5, 2.6]},
+    "objects": [{"id": "sink", "category": "sink"}, {"id": "mirror", "category": "mirror"},
+                {"id": "toilet", "category": "toilet"}, {"id": "tub", "category": "bathtub"}],
+    "relations": [
+        {"a": "sink", "rel": "against_wall", "b": "wall_north"},
+        {"a": "mirror", "rel": "against_wall", "b": "wall_north"},
+        {"a": "mirror", "rel": "above", "b": "sink"},
+        {"a": "toilet", "rel": "against_wall", "b": "wall_north"},
+        {"a": "toilet", "rel": "beside", "b": "sink", "gap_m": 0.3},
+        {"a": "tub", "rel": "against_wall", "b": "wall_south"},
+    ],
+}
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3])
+def test_bathroom_mirror_above_sink_solves_clean(seed):
+    spec = _spec(BATHROOM)
+    pls = {p.id: p for p in solve_layout(spec, seed=seed)}
+    assert check_layout(spec, list(pls.values())) == []
+    sink, mirror = pls["sink"], pls["mirror"]
+    assert mirror.location[0] == pytest.approx(sink.location[0], abs=0.03)  # same place along the wall
+    mirror_base = mirror.location[2] - mirror.dims[2] / 2
+    assert mirror_base == pytest.approx(sink.dims[2] + 0.25, abs=1e-6)  # default gap over the sink top
+    assert mirror.location[1] + mirror.dims[1] / 2 == pytest.approx(2.5, abs=1e-3)  # on the north wall
+
+
+def test_above_gap_whiteboard_over_desk_and_checker_catches_a_moved_board():
+    from dataclasses import replace
+
+    raw = {
+        "setting": {"kind": "indoor", "bounds_m": [6.0, 5.0, 3.0]},
+        "objects": [{"id": "desk", "category": "desk"}, {"id": "board", "category": "whiteboard"}],
+        "relations": [{"a": "desk", "rel": "against_wall", "b": "wall_west"},
+                      {"a": "board", "rel": "against_wall", "b": "wall_west"},
+                      {"a": "board", "rel": "above", "b": "desk", "gap_m": 0.4}],
+    }
+    spec = _spec(raw)
+    pls = solve_layout(spec)
+    assert check_layout(spec, pls) == []
+    by = {p.id: p for p in pls}
+    assert by["board"].location[2] - by["board"].dims[2] / 2 == pytest.approx(by["desk"].dims[2] + 0.4, abs=1e-6)
+    moved = [replace(p, location=(p.location[0], p.location[1] + 0.5, p.location[2])) if p.id == "board" else p
+             for p in pls]
+    assert any("board above desk" in i for i in check_layout(spec, moved))
+
+
+def test_above_needs_a_wall_mounted_object():
+    raw = {
+        "setting": {"kind": "indoor", "bounds_m": [4.0, 4.0, 2.8]},
+        "objects": [{"id": "counter", "category": "kitchen_counter"}, {"id": "plant", "category": "potted_plant"}],
+        "relations": [{"a": "counter", "rel": "against_wall", "b": "wall_north"},
+                      {"a": "plant", "rel": "above", "b": "counter"}],
+    }
+    with pytest.raises(LayoutError, match="wall-mounted") as ei:
+        solve_layout(_spec(raw))
+    assert "plant above counter (gap 0.25 m)" in ei.value.conflicts

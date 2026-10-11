@@ -16,6 +16,7 @@ LAYOUT_LOCAL_YAW_DEG = 15.0
 LAYOUT_DEFAULT_IN_FRONT_GAP_M = 0.4
 LAYOUT_DEFAULT_BESIDE_GAP_M = 0.15
 LAYOUT_DEFAULT_AROUND_GAP_M = 0.3
+LAYOUT_DEFAULT_ABOVE_GAP_M = 0.25  # "above": B's top to A's base (mirror over a sink, board over a desk)
 LAYOUT_FLAT_MAX_H_M = 0.03  # objects at most this tall (rugs) do not block others
 LAYOUT_BREATHING_M = 1.0  # soft preference for free space around objects
 LAYOUT_FACING_ATTEMPTS = 12  # extra seeds tried while a facing relation is still missed (≈50 ms each)

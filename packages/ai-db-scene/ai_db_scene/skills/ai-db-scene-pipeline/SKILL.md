@@ -37,7 +37,8 @@ Only use the step-by-step tools below when you need control over one stage.
      `grid: {rows, cols, gap_m}` for rows of desks, tables or racks (solved as one block).
    - `relations`: `against_wall` (wall_north/south/east/west), `in_front_of` (A faces B at
      `gap_m`), `beside`, `facing`, `centered_in` (a room or a rug: on the rug's footprint), `on`,
-     `under`, `around` (chairs around a table).
+     `under`, `around` (chairs around a table), `above` (a wall-mounted object straight over
+     another, `gap_m` from its top, default 0.25: mirror above a sink, whiteboard above a desk).
 3. **`submit_scene_spec`** returns exact errors; fix all of them and resubmit.
 4. **`solve_layout`** returns placements, or the conflicting relations: loosen them (bigger room,
    fewer objects, drop a duplicate constraint), never ignore them.
@@ -55,6 +56,7 @@ Only use the step-by-step tools below when you need control over one stage.
 - Seating group: sofa `against_wall`; coffee table `in_front_of` sofa (gap 0.45);
   rug `centered_in` room; table `centered_in` rug; armchairs `facing` the coffee table.
 - Dining: table `centered_in` room; chairs with `count` N `around` the table.
+- Bathroom: sink `against_wall`; mirror `against_wall` the same wall and `above` the sink.
 - Classroom: board `against_wall` wall_north; desks `grid {rows: 3, cols: 4}` `facing` the board;
   teacher desk `in_front_of` the board, gap 1.0.
 - Warehouse: racks `grid {rows: 1, cols: 4, gap_m: [3.0, 0]}`; aisles come from the gap.

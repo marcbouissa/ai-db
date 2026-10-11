@@ -62,7 +62,7 @@ The brief becomes a `SceneSpec`, a strict JSON schema validated by code:
 ```
 - The model picks `category` from a closed vocabulary (the categories that have priors or
   recipes), and `rel` from a fixed set (`on`, `against_wall`, `in_front_of`, `beside`,
-  `facing`, `centered_in`, `under`, `around`).
+  `facing`, `centered_in`, `under`, `around`, `above`).
 - Schema violations go back to the model with the exact error, up to 2 retries.
 - Spatial reasoning becomes **classification**, which small models do well.
 
