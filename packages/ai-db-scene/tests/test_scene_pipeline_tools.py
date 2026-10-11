@@ -394,3 +394,27 @@ def test_live_judge_renders_and_critiques(private_blender, mem, tmp_path):
     assert (tmp_path / "judge.png").stat().st_size > 0
     assert isinstance(res["critique"], list)
     assert all({"source", "severity", "objects", "message", "suggest"} <= set(c) for c in res["critique"])
+
+
+def test_multi_room_build_has_inner_walls_with_door_gaps():
+    from test_scene_layout import _HOUSE
+
+    spec, errors = sp._parse_spec(_HOUSE)
+    assert spec is not None, errors
+    cmds, names = sp.build_layout_commands(spec, sp.solve_layout(spec), geometry="boxes")
+    walls = [c["params"] for c in cmds if c["type"] == "create_primitive" and c["params"]["name"].startswith("wall_")]
+    # living|bed+bath wall at x=5 split by two doors into 3 slabs; bed|bath wall at y=3 by one door into 2
+    assert sorted(w["name"] for w in walls) == ["wall_bed_north_0", "wall_bed_north_1", "wall_living_east_0",
+                                                "wall_living_east_1", "wall_living_east_2"]
+    assert all(n in names for n in ("wall_bed_north_0", "sofa", "sink"))
+    assert sp._handle_solve_layout({"spec": _HOUSE})["doors"]
+
+
+@pytest.mark.blender
+def test_live_multi_room_builds(private_blender, mem):
+    from test_scene_layout import _HOUSE
+
+    res = sp._handle_build_scene({"spec": _HOUSE, "clear": True, "snapshot": False, "geometry": "boxes"})
+    assert res["status"] in ("built", "built_with_issues") and not res["failed_commands"], res
+    assert "wall_living_east_2" in res["created"]
+    assert not [i for i in res["issues_left"] if i.get("check") in ("missing_objects", "out_of_bounds")], res["issues_left"]

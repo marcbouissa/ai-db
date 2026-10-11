@@ -19,8 +19,8 @@ import copy
 from typing import Any
 
 OPS = ("add_object", "remove_object", "update_object", "add_relation", "remove_relation", "update_setting")
-_OBJECT_FIELDS = ("category", "count", "hero", "detail", "grid", "material", "dynamic")
-_SETTING_FIELDS = ("kind", "bounds_m", "style", "shape", "points", "floor_material", "wall_material")
+_OBJECT_FIELDS = ("category", "count", "hero", "detail", "grid", "material", "dynamic", "room")
+_SETTING_FIELDS = ("kind", "bounds_m", "style", "shape", "points", "floor_material", "wall_material", "rooms")
 
 
 def apply_steps(spec: dict[str, Any], steps: Any) -> tuple[dict[str, Any] | None, list[str], list[str]]:

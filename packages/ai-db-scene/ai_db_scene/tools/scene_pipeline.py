@@ -164,6 +164,43 @@ def _room_commands(spec: SceneSpec, placements: list[Placement] | None = None) -
         **({"points": [list(p) for p in spec.setting.points]} if shp == "polygon" else {"size": [w, d]})}}]
 
 
+def _interior_wall_commands(spec: SceneSpec) -> list[dict[str, Any]]:
+    """Multi-room buildings: a wall slab on each room's east and north edge that is not the
+    outer shell, with a full-height gap at each door (layout.room_doors). Rooms that tile the
+    bounds get every inner wall; an edge facing empty space on the west/south is left open."""
+    from ai_db_scene.layout import room_doors
+
+    if not spec.setting.rooms:
+        return []
+    w, d, h = spec.setting.bounds_m
+    t, off = WALL_THICKNESS_M, frame_offset(spec)
+    doors = room_doors(spec)
+    mat = material_for("", spec.setting.wall_material or style_material(spec.setting.style, "wall") or WALL_MATERIAL)
+    cmds: list[dict[str, Any]] = []
+    for r in spec.setting.rooms:
+        for k, side in ((0, "east"), (1, "north")):  # k: the axis the wall sits at a constant of
+            line = r.offset_m[k] + r.size_m[k]
+            if abs(line - (w, d)[k]) < 1e-6:
+                continue  # the outer shell already has this wall
+            o = 1 - k
+            cuts = sorted((dr["at"][o] - dr["width"] / 2, dr["at"][o] + dr["width"] / 2) for dr in doors
+                          if abs(dr["at"][k] - line) < 1e-6 and r.offset_m[o] < dr["at"][o] < r.offset_m[o] + r.size_m[o])
+            spans, lo = [], r.offset_m[o]
+            for a, b in cuts:
+                spans.append((lo, a))
+                lo = b
+            spans.append((lo, r.offset_m[o] + r.size_m[o]))
+            for i, (a, b) in enumerate(s for s in spans if s[1] - s[0] > 1e-3):
+                centre, half = [0.0, 0.0, h / 2], [0.0, 0.0, h / 2]
+                centre[k], half[k] = line, t / 2
+                centre[o], half[o] = (a + b) / 2, (b - a) / 2
+                name = f"wall_{r.id}_{side}_{i}"
+                cmds.append({"type": "create_primitive", "params": {
+                    "primitive": "cube", "name": name, "location": _shift(centre, off), "scale": half}})
+                cmds.append({"type": "apply_material", "params": {"name": name, "material": mat}})
+    return cmds
+
+
 def _lookup_asset(asset_map: dict[str, Any], pl: Placement, base_id: str) -> dict[str, Any] | None:
     for key in (pl.id, base_id, pl.category):
         v = asset_map.get(key)
@@ -393,8 +430,8 @@ def build_layout_commands(
     # the style's palette counts as a choice: it wins over generator/category defaults
     materials = {o.id: o.material or style_material(spec.setting.style, o.category) for o in spec.objects}
     details = {o.id: o.detail for o in spec.objects}
-    cmds = _room_commands(spec, placements)
-    names = [c["params"].get("name", "room_shell") for c in cmds]
+    cmds = _room_commands(spec, placements) + _interior_wall_commands(spec)
+    names = [c["params"].get("name", "room_shell") for c in cmds if c["type"] != "apply_material"]
     if placements:
         reserve = [pl.id for pl in placements] + [
             a["asset_name"] for pl in placements
@@ -741,7 +778,10 @@ def _handle_solve_layout(args: dict[str, Any]) -> Any:
         pls = solve_layout(spec, **kw)
     except LayoutError as e:
         return {"status": "conflict", "message": str(e), "conflicts": e.conflicts}
-    return {"status": "ok", "placements": [placement_to_dict(p) for p in pls]}
+    from ai_db_scene.layout import room_doors
+
+    return {"status": "ok", "placements": [placement_to_dict(p) for p in pls],
+            **({"doors": room_doors(spec)} if spec.setting.rooms else {})}
 
 
 def _handle_apply_layout(args: dict[str, Any]) -> Any:

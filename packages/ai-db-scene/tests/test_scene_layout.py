@@ -6,7 +6,7 @@ import random
 
 import pytest
 from ai_db_scene.layout import LayoutError, check_layout, solve_layout
-from ai_db_scene.spec import SceneSpec
+from ai_db_scene.spec import SceneSpec, validate_spec
 
 
 def _spec(d: dict) -> SceneSpec:
@@ -330,3 +330,58 @@ def test_above_needs_a_wall_mounted_object():
     with pytest.raises(LayoutError, match="wall-mounted") as ei:
         solve_layout(_spec(raw))
     assert "plant above counter (gap 0.25 m)" in ei.value.conflicts
+
+
+_HOUSE = {
+    "setting": {"kind": "indoor", "bounds_m": [9, 5, 2.7], "rooms": [
+        {"id": "living", "offset_m": [0, 0], "size_m": [5, 5]},
+        {"id": "bed", "offset_m": [5, 0], "size_m": [4, 3]},
+        {"id": "bath", "offset_m": [5, 3], "size_m": [4, 2]}]},
+    "objects": [
+        {"id": "sofa", "category": "sofa", "room": "living"},
+        {"id": "table", "category": "coffee_table", "room": "living"},
+        {"id": "bed1", "category": "bed", "room": "bed"},
+        {"id": "sink", "category": "sink", "room": "bath"}],
+    "relations": [
+        {"a": "sofa", "rel": "against_wall", "b": "wall_west"},
+        {"a": "table", "rel": "in_front_of", "b": "sofa"},
+        {"a": "bed1", "rel": "against_wall", "b": "wall_east"},
+        {"a": "sink", "rel": "against_wall", "b": "wall_north"}],
+}
+
+
+def test_multi_room_spec_solves_room_by_room():
+    from ai_db_scene.layout import room_doors
+
+    spec = SceneSpec.from_dict(_HOUSE)
+    assert SceneSpec.from_dict(spec.to_dict()) == spec
+    pls = {p.id: p for p in solve_layout(spec)}
+    rooms = {r.id: r for r in spec.setting.rooms}
+    for o in spec.objects:  # every object inside its own room's rectangle
+        r, p = rooms[o.room], pls[o.id]
+        assert r.offset_m[0] <= p.location[0] <= r.offset_m[0] + r.size_m[0], o.id
+        assert r.offset_m[1] <= p.location[1] <= r.offset_m[1] + r.size_m[1], o.id
+    assert abs(pls["bed1"].location[0] + pls["bed1"].dims[1] / 2 - 9.0) < 0.05 or \
+        abs(pls["bed1"].location[0] + pls["bed1"].dims[0] / 2 - 9.0) < 0.05  # against the bedroom's east wall
+    doors = {d["id"]: d for d in room_doors(spec)}
+    assert set(doors) == {"door_living_bed", "door_living_bath", "door_bed_bath"}
+    assert doors["door_living_bed"]["at"] == [5.0, 1.5] and doors["door_bed_bath"]["axis"] == "x"
+
+
+def test_multi_room_spec_errors():
+    def errs(**patch):
+        data = {**_HOUSE, **patch}
+        return " ".join(validate_spec(data)[1])
+
+    assert "not a room" in errs(objects=[{"id": "sofa", "category": "sofa", "room": "attic"}], relations=[])
+    assert "not a room" in errs(objects=[{"id": "sofa", "category": "sofa"}], relations=[])
+    assert "different rooms" in errs(relations=[{"a": "table", "rel": "beside", "b": "bed1"}])
+    overlap = {**_HOUSE["setting"], "rooms": [{"id": "a", "offset_m": [0, 0], "size_m": [5, 5]},
+                                               {"id": "b", "offset_m": [4, 0], "size_m": [5, 5]}]}
+    assert "overlaps" in errs(setting=overlap, objects=[{"id": "x", "category": "sofa", "room": "a"}], relations=[])
+    outside = {**_HOUSE["setting"], "rooms": [{"id": "a", "offset_m": [0, 0], "size_m": [5, 5]},
+                                               {"id": "b", "offset_m": [5, 0], "size_m": [5, 5]}]}
+    assert "leaves bounds_m" in errs(setting=outside, relations=[])
+    one_room = {"setting": {"kind": "indoor", "bounds_m": [4, 4, 2.7]},
+                "objects": [{"id": "sofa", "category": "sofa", "room": "living"}]}
+    assert "only allowed when setting.rooms" in " ".join(validate_spec(one_room)[1])

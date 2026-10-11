@@ -22,6 +22,7 @@ import math
 import random
 from collections import Counter
 from dataclasses import dataclass
+from typing import Any
 
 from ai_db_scene.constants import (
     LAYOUT_BREATHING_M,
@@ -785,6 +786,8 @@ def solve_layout(
 
     Raises LayoutError (with ``conflicts``) when the spec cannot be satisfied.
     """
+    if spec.setting.rooms:
+        return _solve_rooms(spec, priors, measured_dims, seed)
     pr = _Problem(spec, priors or load_priors(), {k: tuple(v) for k, v in (measured_dims or {}).items()})  # type: ignore[misc]
     # facing is soft here but blocking in validate_scene, and whether a wall-bound object can
     # face its target depends on where earlier objects landed: try a few more seeds (still
@@ -809,6 +812,59 @@ def solve_layout(
         assert error is not None
         raise error
     return best[1]
+
+
+def _solve_rooms(
+    spec: SceneSpec, priors: dict[str, CategoryPrior] | None, measured_dims: dict[str, Dims] | None, seed: int,
+) -> list[Placement]:
+    """A multi-room building, room by room: each room is a one-room spec of its own size (its
+    walls are wall_north.. of that rectangle), then shifted to its offset. Relations never cross
+    rooms (validate_spec), so the rooms are independent."""
+    from dataclasses import replace
+
+    out: list[Placement] = []
+    for room in spec.setting.rooms:
+        objs = tuple(replace(o, room=None) for o in spec.objects if o.room == room.id)
+        if not objs:
+            continue
+        ids = {o.id for o in objs}
+        sub = SceneSpec(replace(spec.setting, bounds_m=(*room.size_m, spec.setting.bounds_m[2]), rooms=()), objs,
+                        tuple(r for r in spec.relations if r.a in ids), spec.lighting, spec.camera)
+        try:
+            pls = solve_layout(sub, priors, measured_dims, seed)
+        except LayoutError as e:
+            raise LayoutError(f"room '{room.id}': {e}", e.conflicts) from e
+        dx, dy = room.offset_m
+        out += [replace(p, location=(p.location[0] + dx, p.location[1] + dy, p.location[2])) for p in pls]
+    return out
+
+
+def room_doors(spec: SceneSpec, width_m: float = 0.9, margin_m: float = 0.1) -> list[dict[str, Any]]:
+    """One door per pair of rooms sharing a wall long enough for it, at the shared segment's middle.
+
+    ``at`` is in the layout frame; ``axis`` is the wall's direction ("x": a wall running east-west).
+    """
+    doors: list[dict[str, Any]] = []
+    rooms = spec.setting.rooms
+    for i, a in enumerate(rooms):
+        for b in rooms[i + 1:]:
+            for k in (0, 1):  # k = 0: a wall at constant x (runs along y); k = 1: at constant y
+                o = 1 - k
+                if abs(a.offset_m[k] + a.size_m[k] - b.offset_m[k]) < 1e-6:
+                    touch = b.offset_m[k]
+                elif abs(b.offset_m[k] + b.size_m[k] - a.offset_m[k]) < 1e-6:
+                    touch = a.offset_m[k]
+                else:
+                    continue
+                lo = max(a.offset_m[o], b.offset_m[o])
+                hi = min(a.offset_m[o] + a.size_m[o], b.offset_m[o] + b.size_m[o])
+                if hi - lo < width_m + 2 * margin_m:
+                    continue
+                at = [0.0, 0.0]
+                at[k], at[o] = touch, (lo + hi) / 2
+                doors.append({"id": f"door_{a.id}_{b.id}", "rooms": [a.id, b.id], "at": at,
+                              "axis": "y" if k == 0 else "x", "width": width_m})
+    return doors
 
 
 def _solve_once(pr: _Problem, seed: int) -> dict[str, _Pose]:

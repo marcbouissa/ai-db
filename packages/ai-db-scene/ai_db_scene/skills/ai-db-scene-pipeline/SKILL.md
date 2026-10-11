@@ -47,6 +47,9 @@ Optional `build_scene` arguments:
      (explicit materials win over the style); any material may also be `pbr:<preset>` (worn_metal, rusty_steel,
      aged_brass, weathered_wood, scuffed_leather, dusty_plaster, worn_concrete): a library
      material with the pbr-shader-builder grunge layer.
+   - Several rooms (indoor rect): `rooms: [{id, offset_m: [x, y], size_m: [w, d]}]` inside
+     `bounds_m`; every object then gets `room: <id>` and its relations stay in that room (walls
+     are that room's wall_north..). Rooms sharing a wall get a door; each is solved on its own.
    - `objects`: `id`, `category`, `count`, `hero`, `material` (see blender-material-library),
      `grid: {rows, cols, gap_m}` for rows of desks, tables or racks (solved as one block).
    - `relations`: `against_wall` (wall_north/south/east/west), `in_front_of` (A faces B at

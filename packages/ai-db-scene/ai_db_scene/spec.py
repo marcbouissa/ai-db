@@ -26,6 +26,15 @@ _WALL_REL = "against_wall"
 
 
 @dataclass(frozen=True)
+class Room:
+    """One rectangle of a multi-room building, in the setting's frame (x east, y north)."""
+
+    id: str
+    offset_m: tuple[float, float]  # its south-west corner inside setting.bounds_m
+    size_m: tuple[float, float]
+
+
+@dataclass(frozen=True)
 class Setting:
     kind: str
     bounds_m: tuple[float, float, float]  # x (east-west), y (north-south), z (height)
@@ -34,6 +43,9 @@ class Setting:
     points: tuple[tuple[float, float], ...] = ()  # polygon footprint (x, y) in meters
     floor_material: str | None = None  # see ai_db_scene.materials; None = default for the kind
     wall_material: str | None = None
+    #: multi-room building (indoor rect only): each object names its room, a door joins
+    #: rooms that share a wall (layout.room_doors); empty = one room, as before
+    rooms: tuple[Room, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -48,6 +60,7 @@ class ObjectSpec:
     grid: tuple[int, int, float, float] | None = None
     material: str | None = None  # see ai_db_scene.materials; None = the category default
     dynamic: bool = False  # build_scene physics: an active rigid body (else passive)
+    room: str | None = None  # Setting.rooms id (required there, refused without rooms)
 
 
 @dataclass(frozen=True)
@@ -85,12 +98,15 @@ class SceneSpec:
                 **({"points": [list(p) for p in self.setting.points]} if self.setting.points else {}),
                 **({"floor_material": self.setting.floor_material} if self.setting.floor_material else {}),
                 **({"wall_material": self.setting.wall_material} if self.setting.wall_material else {}),
+                **({"rooms": [{"id": r.id, "offset_m": list(r.offset_m), "size_m": list(r.size_m)}
+                              for r in self.setting.rooms]} if self.setting.rooms else {}),
             },
             "objects": [
                 {"id": o.id, "category": o.category, "count": o.count, "hero": o.hero, "detail": o.detail,
                  **({"grid": {"rows": o.grid[0], "cols": o.grid[1], "gap_m": [o.grid[2], o.grid[3]]}} if o.grid else {}),
                  **({"material": o.material} if o.material else {}),
-                 **({"dynamic": True} if o.dynamic else {})}
+                 **({"dynamic": True} if o.dynamic else {}),
+                 **({"room": o.room} if o.room else {})}
                 for o in self.objects
             ],
             "relations": [
@@ -133,6 +149,18 @@ def spec_schema() -> dict[str, Any]:
                     "shape": {"enum": list(SHAPES), "description": "room footprint inside bounds_m x/y; default rect"},
                     "floor_material": {"type": "string", "description": "floor surface, e.g. wood:oak, marble:carrara (see objects.material)"},
                     "wall_material": {"type": "string", "description": "wall surface, e.g. plaster:#e8e0d0 (see objects.material)"},
+                    "rooms": {
+                        "type": "array",
+                        "minItems": 2,
+                        "description": ("indoor rect only: rooms of a building, each a rectangle inside bounds_m; "
+                                        "rooms sharing a wall get a door; every object then names its room"),
+                        "items": {"type": "object", "required": ["id", "offset_m", "size_m"], "additionalProperties": False,
+                                  "properties": {"id": {"type": "string", "pattern": _ID_RE.pattern},
+                                                 "offset_m": {"type": "array", "items": {"type": "number"}, "minItems": 2,
+                                                              "maxItems": 2, "description": "[x, y] of its south-west corner"},
+                                                 "size_m": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0},
+                                                            "minItems": 2, "maxItems": 2}}},
+                    },
                     "points": {
                         "type": "array",
                         "minItems": 3,
@@ -153,6 +181,7 @@ def spec_schema() -> dict[str, Any]:
                         "category": {"enum": categories()},
                         "count": {"type": "integer", "minimum": 1, "maximum": LAYOUT_MAX_COUNT},
                         "hero": {"type": "boolean"},
+                        "room": {"type": "string", "description": "setting.rooms id (multi-room buildings only)"},
                         "dynamic": {"type": "boolean",
                                     "description": "build_scene physics: falls and moves (active rigid body)"},
                         "detail": {"enum": list(DETAILS), "description": "modeling detail level; default standard"},
@@ -232,7 +261,7 @@ def _parse_setting(raw: Any, errors: list[str]) -> Setting | None:
         return None
     n0 = len(errors)
     _unknown_keys("setting", raw, ("kind", "bounds_m", "style", "shape", "points", "floor_material",
-                                   "wall_material"), errors)
+                                   "wall_material", "rooms"), errors)
     mats = {}
     for key in ("floor_material", "wall_material"):
         if raw.get(key) is not None:
@@ -277,10 +306,55 @@ def _parse_setting(raw: Any, errors: list[str]) -> Setting | None:
                     pts.append((float(pt[0]), float(pt[1])))
     elif raw_pts is not None:
         errors.append("setting.points: only allowed when setting.shape is 'polygon'")
+    rooms = _parse_rooms(raw.get("rooms"), kind, shape, bounds, errors)
     if len(errors) > n0 or bounds is None:
         return None
     return Setting(str(kind), bounds, style, str(shape), tuple(pts), mats.get("floor_material"),
-                   mats.get("wall_material"))
+                   mats.get("wall_material"), rooms)
+
+
+def _parse_rooms(raw: Any, kind: Any, shape: Any, bounds: tuple[float, float, float] | None,
+                 errors: list[str]) -> tuple[Room, ...]:
+    if raw is None:
+        return ()
+    if kind != "indoor" or shape != "rect":
+        errors.append("setting.rooms: only allowed for an indoor rect setting")
+        return ()
+    if not isinstance(raw, list) or len(raw) < 2:
+        errors.append(f"setting.rooms: expected a list of >= 2 rooms {{id, offset_m, size_m}}, got {raw!r}"[:300])
+        return ()
+    out: list[Room] = []
+    for i, r in enumerate(raw):
+        p = f"setting.rooms[{i}]"
+        if not isinstance(r, dict):
+            errors.append(f"{p}: expected object, got {_typename(r)}")
+            continue
+        _unknown_keys(p, r, ("id", "offset_m", "size_m"), errors)
+        rid, off, size = r.get("id"), r.get("offset_m"), r.get("size_m")
+        if not isinstance(rid, str) or not _ID_RE.match(rid) or rid == ROOM:
+            errors.append(f"{p}.id: {rid!r} must match {_ID_RE.pattern} and not be '{ROOM}'")
+            continue
+        if any(o.id == rid for o in out):
+            errors.append(f"{p}.id: duplicate room id '{rid}'")
+            continue
+        if not (isinstance(off, list) and len(off) == 2 and all(_is_num(v) and v >= 0 for v in off)):
+            errors.append(f"{p}.offset_m: expected [x, y] >= 0 in meters, got {off!r}")
+            continue
+        if not (isinstance(size, list) and len(size) == 2 and all(_is_num(v) and v > 0 for v in size)):
+            errors.append(f"{p}.size_m: expected [width, depth] > 0 in meters, got {size!r}")
+            continue
+        if bounds is not None and (off[0] + size[0] > bounds[0] + 1e-6 or off[1] + size[1] > bounds[1] + 1e-6):
+            errors.append(f"{p}: [{off[0]:g}, {off[1]:g}] + [{size[0]:g}, {size[1]:g}] leaves bounds_m "
+                          f"[{bounds[0]:g}, {bounds[1]:g}]")
+            continue
+        room = Room(rid, (float(off[0]), float(off[1])), (float(size[0]), float(size[1])))
+        for o in out:
+            if (room.offset_m[0] < o.offset_m[0] + o.size_m[0] - 1e-6 and o.offset_m[0] < room.offset_m[0] + room.size_m[0] - 1e-6
+                    and room.offset_m[1] < o.offset_m[1] + o.size_m[1] - 1e-6
+                    and o.offset_m[1] < room.offset_m[1] + room.size_m[1] - 1e-6):
+                errors.append(f"{p}: room '{rid}' overlaps room '{o.id}'")
+        out.append(room)
+    return tuple(out)
 
 
 def _parse_objects(raw: Any, errors: list[str]) -> list[ObjectSpec]:
@@ -295,7 +369,7 @@ def _parse_objects(raw: Any, errors: list[str]) -> list[ObjectSpec]:
         if not isinstance(o, dict):
             errors.append(f"{p}: expected object, got {_typename(o)}")
             continue
-        _unknown_keys(p, o, ("id", "category", "count", "hero", "detail", "grid", "material", "dynamic"),
+        _unknown_keys(p, o, ("id", "category", "count", "hero", "detail", "grid", "material", "dynamic", "room"),
                       errors)
         material = o.get("material")
         mat_ok = material is None or material_error(material) is None
@@ -331,10 +405,14 @@ def _parse_objects(raw: Any, errors: list[str]) -> list[ObjectSpec]:
         if detail not in DETAILS:
             errors.append(f"{p}.detail: {detail!r} is not allowed; allowed values: {list(DETAILS)}")
             ok = False
+        room = o.get("room")
+        if room is not None and not isinstance(room, str):
+            errors.append(f"{p}.room: expected a setting.rooms id, got {room!r}")
+            ok = False
         if isinstance(oid, str):
             seen.add(oid)
         if ok and grid_ok and mat_ok:
-            out.append(ObjectSpec(str(oid), str(cat), count, hero, str(detail), grid, material, dynamic))
+            out.append(ObjectSpec(str(oid), str(cat), count, hero, str(detail), grid, material, dynamic, room))
     return out
 
 
@@ -411,6 +489,21 @@ def _parse_relations(raw: Any, ids: list[str], setting: Setting | None, errors: 
     return out
 
 
+def _check_rooms(setting: Setting, objs: list[ObjectSpec], rels: list[Relation], errors: list[str]) -> None:
+    """Every object names an existing room (only when there are rooms); relations stay in one room."""
+    rooms = [r.id for r in setting.rooms]
+    where = {o.id: o.room for o in objs}
+    for o in objs:
+        if not rooms and o.room is not None:
+            errors.append(f"objects '{o.id}'.room: only allowed when setting.rooms is set")
+        elif rooms and o.room not in rooms:
+            errors.append(f"objects '{o.id}'.room: {o.room!r} is not a room; allowed values: {rooms}")
+    for r in rels:
+        if rooms and r.b in where and where[r.a] != where[r.b]:
+            errors.append(f"relation {r.a} {r.rel} {r.b}: the objects are in different rooms "
+                          f"({where[r.a]}, {where[r.b]}); relations stay inside one room")
+
+
 def validate_spec(data: Any) -> tuple[SceneSpec | None, list[str]]:
     """Validate a dict. Returns (spec, []) or (None, errors); errors are 'path: problem; allowed'."""
     if not isinstance(data, dict):
@@ -438,6 +531,8 @@ def validate_spec(data: Any) -> tuple[SceneSpec | None, list[str]]:
     focus = camera.get("focus")
     if focus is not None and focus not in declared:
         errors.append(f"camera.focus: {focus!r} is not a declared object id; declared ids: {declared}")
+    if setting is not None:
+        _check_rooms(setting, objs, rels, errors)
     if errors or setting is None:
         return None, errors
     return SceneSpec(setting, tuple(objs), tuple(rels), lighting, camera), []
