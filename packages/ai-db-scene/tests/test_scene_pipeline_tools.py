@@ -344,3 +344,32 @@ def test_live_poly_budget_decimates_heaviest_non_hero(private_blender, mem, monk
     assert cut["faces_total"] < polys["faces_total"]
     floor = sp.poly_report(1)  # unreachable: every non-hero at the ratio floor, hero untouched
     assert floor["over_budget"] and floor["faces_per_object"]["sofa"] == polys["faces_per_object"]["sofa"]
+
+
+def test_physics_command_marks_only_dynamic_instances():
+    spec = dict(SPEC, objects=[*SPEC["objects"], {"id": "ball", "category": "floor_lamp", "count": 2, "dynamic": True}])
+    parsed, errors = sp._parse_spec(spec)
+    assert parsed is not None, errors
+    assert parsed.to_dict()["objects"][-1]["dynamic"] is True
+    pls = sp.solve_layout(parsed)
+    code = sp.physics_commands(parsed, pls)["params"]["code"]
+    compile(code, "<physics>", "exec")
+    assert '["ball_1", "ball_2"]' in code and "sofa" not in code
+    assert sp._parse_spec(dict(SPEC, objects=[{"id": "a", "category": "sofa", "dynamic": "yes"}]))[0] is None
+
+
+@pytest.mark.blender
+def test_live_physics_adds_rigid_bodies(private_blender, mem, monkeypatch):
+    from ai_db_scene.blender_client import BlenderClient
+
+    monkeypatch.setattr(sp, "_handle_validate_scene", lambda args: {"status": "success", "result": {"issues": []}})
+    spec = dict(SPEC, objects=[*SPEC["objects"][:2], {"id": "lamp", "category": "floor_lamp", "dynamic": True}])
+    res = sp._handle_build_scene({"spec": spec, "clear": True, "snapshot": False, "physics": True})
+    assert res["physics"]["active"] >= 1 and res["physics"]["passive"] >= 3, res.get("physics")
+    got = BlenderClient(port=private_blender, timeout=120).run_code(
+        "import bpy\n"
+        "def kinds(n):\n"
+        "    r = bpy.data.objects[n]\n"
+        "    return sorted({o.rigid_body.type for o in [r, *r.children_recursive] if o.rigid_body})\n"
+        "result = {n: kinds(n) for n in ('sofa', 'lamp', 'Room_Floor')}\n")
+    assert got == {"sofa": ["PASSIVE"], "lamp": ["ACTIVE"], "Room_Floor": ["PASSIVE"]}, got

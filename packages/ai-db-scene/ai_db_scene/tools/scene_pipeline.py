@@ -858,6 +858,11 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
             out["polys"] = poly_report(int(budget))
         except (BlenderError, KeyError, TypeError, ValueError) as e:
             out["polys"] = {"error": str(e)}
+    if args.get("physics"):
+        try:
+            out["physics"] = BlenderClient().request("run_code", physics_commands(spec, placements)["params"])["result"]
+        except (BlenderError, KeyError, TypeError) as e:
+            out["physics"] = {"error": str(e)}
     # every build is a run: exemplar search (get_scene_spec_schema, search_exemplars) learns
     # from successes without anyone calling record_run (4 calls in 23 benchmark runs)
     blocking = sum(1 for i in left if i.get("severity") == "blocking")
@@ -927,6 +932,48 @@ def poly_report(budget: int | None) -> dict[str, Any]:
 
     return dict(BlenderClient().run_code(_POLY_BUDGET.format(
         payload=json.dumps([budget, BUILD_DECIMATE_MIN_RATIO])), timeout=120.0))
+
+
+#: rigid bodies on every mesh of the scene: active (convex hull) for the parts of objects the
+#: spec marks dynamic, passive for everything else: furniture as convex hulls, the floor as a box,
+#: the walls as their mesh (a box around a room's walls would fill the room).
+_PHYSICS = """
+import bpy, json
+dynamic = set(json.loads({payload!r}))
+scene = bpy.context.scene
+if scene.rigidbody_world is None:
+    with bpy.context.temp_override(scene=scene):
+        bpy.ops.rigidbody.world_add()
+
+def owner(o):
+    while o is not None and o.get("ai_db_id") is None:
+        o = o.parent
+    return o
+
+counts = {{"active": 0, "passive": 0}}
+for o in list(scene.objects):
+    if o.type != "MESH":
+        continue
+    root = owner(o)
+    active = root is not None and root.get("ai_db_id") in dynamic
+    if o.rigid_body is None:
+        with bpy.context.temp_override(object=o, active_object=o, selected_objects=[o]):
+            bpy.ops.rigidbody.object_add()
+    rb = o.rigid_body
+    rb.type = "ACTIVE" if active else "PASSIVE"
+    rb.collision_shape = ("CONVEX_HULL" if root is not None else
+                          "MESH" if o.name.startswith("Room_Wall") else "BOX")
+    counts["active" if active else "passive"] += 1
+result = counts
+"""
+
+
+def physics_commands(spec: SceneSpec, placements: list[Placement]) -> dict[str, Any]:
+    """run_code adding the rigid bodies of _PHYSICS; dynamic ids are the placements of dynamic objects."""
+    ids = {o.id for o in spec.objects}
+    dynamic = {o.id for o in spec.objects if o.dynamic}
+    payload = [pl.id for pl in placements if (pl.id if pl.id in ids else _SUFFIX.sub("", pl.id)) in dynamic]
+    return {"type": "run_code", "params": {"code": _PHYSICS.format(payload=json.dumps(payload))}}
 
 
 def _stored_spec(scene_id: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -1077,7 +1124,9 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
           "project": {"type": "string"},
           "poly_budget": {"type": "integer", "minimum": 1,
                           "description": ("total faces; reports faces per object and decimates the heaviest "
-                                          "non-hero objects until the scene fits (report: polys)")}},
+                                          "non-hero objects until the scene fits (report: polys)")},
+          "physics": {"type": "boolean",
+                      "description": "add rigid bodies: passive structure and furniture, active objects with dynamic: true"}},
       "required": ["spec"]},
      _handle_build_scene),
     ("edit_scene",

@@ -31,6 +31,8 @@ Only use the step-by-step tools below when you need control over one stage.
 Optional `build_scene` arguments:
 - `poly_budget` (total faces): the report's `polys` lists faces per object; over the budget the
   heaviest non-hero objects get a Decimate modifier until the scene fits (`polys.decimated`).
+- `physics: true`: rigid bodies on every mesh, passive (walls, floor, furniture) unless the
+  object spec says `dynamic: true` (active, convex hull). Validation is unchanged.
 
 1. **`get_scene_spec_schema(brief)`** returns the schema, the category vocabulary with typical
    sizes, the relations, and exemplar specs from past successful runs. Use only listed categories.

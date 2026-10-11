@@ -19,7 +19,7 @@ import copy
 from typing import Any
 
 OPS = ("add_object", "remove_object", "update_object", "add_relation", "remove_relation", "update_setting")
-_OBJECT_FIELDS = ("category", "count", "hero", "detail", "grid", "material")
+_OBJECT_FIELDS = ("category", "count", "hero", "detail", "grid", "material", "dynamic")
 _SETTING_FIELDS = ("kind", "bounds_m", "style", "shape", "points", "floor_material", "wall_material")
 
 

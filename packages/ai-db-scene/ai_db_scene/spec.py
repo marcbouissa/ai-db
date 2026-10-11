@@ -47,6 +47,7 @@ class ObjectSpec:
     #: facing the same way (classroom desks, cafe tables). count == rows * cols.
     grid: tuple[int, int, float, float] | None = None
     material: str | None = None  # see ai_db_scene.materials; None = the category default
+    dynamic: bool = False  # build_scene physics: an active rigid body (else passive)
 
 
 @dataclass(frozen=True)
@@ -88,7 +89,8 @@ class SceneSpec:
             "objects": [
                 {"id": o.id, "category": o.category, "count": o.count, "hero": o.hero, "detail": o.detail,
                  **({"grid": {"rows": o.grid[0], "cols": o.grid[1], "gap_m": [o.grid[2], o.grid[3]]}} if o.grid else {}),
-                 **({"material": o.material} if o.material else {})}
+                 **({"material": o.material} if o.material else {}),
+                 **({"dynamic": True} if o.dynamic else {})}
                 for o in self.objects
             ],
             "relations": [
@@ -151,6 +153,8 @@ def spec_schema() -> dict[str, Any]:
                         "category": {"enum": categories()},
                         "count": {"type": "integer", "minimum": 1, "maximum": LAYOUT_MAX_COUNT},
                         "hero": {"type": "boolean"},
+                        "dynamic": {"type": "boolean",
+                                    "description": "build_scene physics: falls and moves (active rigid body)"},
                         "detail": {"enum": list(DETAILS), "description": "modeling detail level; default standard"},
                         "material": {"type": "string", "description": ("surface material: kind or kind:variant, optional "
                                                                 ":#rrggbb tint, e.g. wood:walnut, fabric:linen:#6b7f99. "
@@ -291,7 +295,8 @@ def _parse_objects(raw: Any, errors: list[str]) -> list[ObjectSpec]:
         if not isinstance(o, dict):
             errors.append(f"{p}: expected object, got {_typename(o)}")
             continue
-        _unknown_keys(p, o, ("id", "category", "count", "hero", "detail", "grid", "material"), errors)
+        _unknown_keys(p, o, ("id", "category", "count", "hero", "detail", "grid", "material", "dynamic"),
+                      errors)
         material = o.get("material")
         mat_ok = material is None or material_error(material) is None
         if not mat_ok:
@@ -319,13 +324,17 @@ def _parse_objects(raw: Any, errors: list[str]) -> list[ObjectSpec]:
         if not isinstance(hero, bool):
             errors.append(f"{p}.hero: expected boolean, got {hero!r}")
             ok = False
+        dynamic = o.get("dynamic", False)
+        if not isinstance(dynamic, bool):
+            errors.append(f"{p}.dynamic: expected boolean, got {dynamic!r}")
+            ok = False
         if detail not in DETAILS:
             errors.append(f"{p}.detail: {detail!r} is not allowed; allowed values: {list(DETAILS)}")
             ok = False
         if isinstance(oid, str):
             seen.add(oid)
         if ok and grid_ok and mat_ok:
-            out.append(ObjectSpec(str(oid), str(cat), count, hero, str(detail), grid, material))
+            out.append(ObjectSpec(str(oid), str(cat), count, hero, str(detail), grid, material, dynamic))
     return out
 
 
