@@ -133,7 +133,7 @@ def failures_from_memory(memory: Any, project: str | None = None) -> list[dict[s
 
 
 def teach(failures: list[dict[str, Any]], write: bool, project: str = "default",
-          score: float = 4.0) -> list[dict[str, Any]]:
+          score: float = 3.5) -> list[dict[str, Any]]:
     """Correct each failure; with ``write``, store it through the record_run tool."""
     from ai_db_scene.tools.scene_pipeline import _handle_record_run
 
@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jsonl", action="append", default=[], help="scene_bench.py output (repeatable)")
     ap.add_argument("--memory", action="store_true", help="also failed/partial runs of the scene memory")
     ap.add_argument("--project", default="default")
-    ap.add_argument("--score", type=float, default=4.0, help="exemplar score of a corrected spec")
+    ap.add_argument("--score", type=float, default=3.5, help="score of a corrected spec (exemplars need >= 4.0: unjudged fixes stay out of exemplar search; pass 4.0 to promote)")
     ap.add_argument("--write", action="store_true", help="store the corrected specs (default: dry run)")
     args = ap.parse_args(argv)
     failures = [f for p in args.jsonl for f in failures_from_jsonl(p)]

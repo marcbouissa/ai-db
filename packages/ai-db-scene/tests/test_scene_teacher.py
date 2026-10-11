@@ -64,5 +64,8 @@ def test_teach_is_a_dry_run_unless_asked(teacher, mem, tmp_path):
     assert not mem.search_exemplars("cosy corner")
     done = teacher.teach(failures, write=True)
     stored = mem.get_run(done[0]["run_id"])
-    assert stored.outcome == "success" and stored.score == 4.0 and stored.spec["objects"][0]["category"] == "sofa"
+    assert stored.outcome == "success" and stored.score == 3.5 and stored.spec["objects"][0]["category"] == "sofa"
+    assert not mem.search_exemplars("a cosy corner")  # unjudged fixes stay out of exemplar search
+    promoted = teacher.teach(failures[:1], write=True, score=4.0)
+    assert mem.get_run(promoted[0]["run_id"]).score == 4.0
     assert [r.brief for r in mem.search_exemplars("a cosy corner", top_k=1)] == ["a cosy corner"]
