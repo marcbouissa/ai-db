@@ -232,6 +232,19 @@ def test_live_outdoor_recipes_build_with_exact_bbox(private_blender):
         assert abs(got["min_z"]) < 1e-3 and got["parts"] >= 2, cat
 
 
+def test_every_recipe_has_no_floating_parts():
+    from ai_db_scene.priors import load_priors
+    from ai_db_scene.recipes import recipe_categories, recipe_spec, variant_categories
+
+    priors = load_priors()
+    for cat in recipe_categories():
+        dims = priors[cat].typical_m if cat in priors else (1.0, 1.0, 1.0)
+        assert _floating_parts(recipe_spec(cat, cat, dims)["parts"]) == [], cat
+        if cat in variant_categories():
+            for seed in range(25):
+                assert _floating_parts(recipe_spec(cat, cat, dims, seed=seed)["parts"]) == [], (cat, seed)
+
+
 def _extent(parts):
     boxes = [_part_box(p) for p in parts]
     return [min(b[0][i] for b in boxes) for i in range(3)], [max(b[1][i] for b in boxes) for i in range(3)]

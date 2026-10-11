@@ -112,9 +112,9 @@ _RECIPES: dict[str, Any] = {
         _box("roof", [0.9, 0.45, 0.03], [0, 0.2, 0.95], _DARK),
         _box("pillar_l", [0.05, 0.05, 0.45], [-0.42, 0.0, 0.5], _DARK),
         _box("pillar_r", [0.05, 0.05, 0.45], [0.42, 0.0, 0.5], _DARK),
-        _box("mast", [0.7, 0.05, 0.95], [0, -0.17, 0.05], _DARK),
-        _box("fork_l", [0.08, 0.32, 0.03], [-0.2, -0.36, 0.05], "metal:steel"),
-        _box("fork_r", [0.08, 0.32, 0.03], [0.2, -0.36, 0.05], "metal:steel"),
+        _box("mast", [0.7, 0.05, 0.95], [0, -0.155, 0.05], _DARK),
+        _box("fork_l", [0.08, 0.32, 0.03], [-0.2, -0.34, 0.05], "metal:steel"),
+        _box("fork_r", [0.08, 0.32, 0.03], [0.2, -0.34, 0.05], "metal:steel"),
         *[_cyl(f"wheel_{i}", [0.25, 0.25, 0.12], [x, y, 0.0], _DARK, rotation_deg=[0, 90, 0])
           for i, (x, y) in enumerate(((-0.45, -0.1), (0.45, -0.1), (-0.45, 0.35), (0.45, 0.35)))]],
     "fountain": lambda: [
@@ -134,7 +134,7 @@ _FABRIC = "fabric:linen"
 
 
 def _cabinet(doors: int, drawers: int = 0, legs: bool = False, wood: str = _WOOD) -> list[dict[str, Any]]:
-    """A carcass with door/drawer lines and handles on its front (-Y)."""
+    """A carcass with door/drawer lines and handles on its front (-Y), all touching its face (y=-0.46)."""
     z0 = 0.08 if legs else 0.0
     parts = [_box("body", [1.0, 0.96, 1.0 - z0], [0, 0.02, z0], wood)]
     if legs:
@@ -143,12 +143,12 @@ def _cabinet(doors: int, drawers: int = 0, legs: bool = False, wood: str = _WOOD
     h = 1.0 - z0
     for k in range(drawers):
         z = z0 + h * (1 - (k + 1) / (drawers + doors / 2 + 0.001))
-        parts += [_box(f"drawer_line_{k}", [0.94, 0.02, 0.006], [0, -0.48, z], _DARK),
-                  _box(f"drawer_pull_{k}", [0.16, 0.03, 0.02], [0, -0.5, z + 0.04], _STEEL)]
+        parts += [_box(f"drawer_line_{k}", [0.94, 0.02, 0.006], [0, -0.47, z], _DARK),
+                  _box(f"drawer_pull_{k}", [0.16, 0.03, 0.02], [0, -0.475, z + 0.04], _STEEL)]
     for k in range(doors):
         x = -0.5 + (k + 0.5) / doors
-        parts += [_box(f"door_line_{k}", [0.006, 0.02, h * 0.9], [x + 0.5 / doors - 0.003, -0.48, z0 + h * 0.05], _DARK),
-                  _box(f"handle_{k}", [0.02, 0.03, 0.14], [x + 0.4 / doors * (1 if k % 2 else -1), -0.5, z0 + h * 0.45], _STEEL)]
+        parts += [_box(f"door_line_{k}", [0.006, 0.02, h * 0.9], [x + 0.5 / doors - 0.003, -0.47, z0 + h * 0.05], _DARK),
+                  _box(f"handle_{k}", [0.02, 0.03, 0.14], [x + 0.4 / doors * (1 if k % 2 else -1), -0.475, z0 + h * 0.45], _STEEL)]
     return parts
 
 
@@ -206,6 +206,7 @@ _RECIPES.update({
         _box("tray", [1.0, 1.0, 0.05], [0, 0, 0], _WHITE_C),
         _box("glass_front", [1.0, 0.02, 0.95], [0, -0.49, 0.05], "glass:frosted"),
         _box("glass_side", [0.02, 1.0, 0.95], [-0.49, 0, 0.05], "glass:frosted"),
+        _box("riser", [0.03, 0.03, 0.88], [0.3, 0.485, 0.05], "metal:chrome"),
         _box("head_arm", [0.04, 0.2, 0.03], [0.3, 0.4, 0.9], "metal:chrome"),
         _cyl("head", [0.12, 0.12, 0.03], [0.3, 0.3, 0.88], "metal:chrome")],
     "mirror": lambda: [
@@ -232,7 +233,7 @@ _RECIPES.update({
         _box("tray", [0.7, 0.3, 0.05], [0, -0.6, 0.35], "color:#c8c8c8"),
         _box("lid", [1.0, 1.0, 0.2], [0, 0, 0.8], "color:#bdbdbd")],
     "book_stack": lambda: [
-        _box(f"book_{i}", [w, d, 0.24], [x, 0, 0.25 * i], c)
+        _box(f"book_{i}", [w, d, 0.25], [x, 0, 0.25 * i], c)
         for i, (w, d, x, c) in enumerate(((1.0, 1.0, 0, "color:#7a3b2e"), (0.9, 0.9, 0.04, "color:#2e4f7a"),
                                           (0.95, 0.85, -0.02, "color:#3b6b45"), (0.8, 0.8, 0.05, "color:#b08a3c")))],
     "vase": lambda: [
@@ -416,7 +417,7 @@ _RECIPES.update({
 _RECIPES["kitchen_counter"] = lambda: [
     _box("cabinet", [1.0, 0.95, 0.94], [0, 0.025, 0], "color:#e9e5dc"),
     *[_box(f"door_line_{k}", [0.006, 0.02, 0.8], [-0.5 + (k + 1) / 3, -0.46, 0.07], _DARK) for k in range(2)],
-    *[_box(f"handle_{k}", [0.12, 0.03, 0.02], [-0.5 + (k + 0.5) / 3, -0.48, 0.8], _STEEL) for k in range(3)],
+    *[_box(f"handle_{k}", [0.12, 0.03, 0.02], [-0.5 + (k + 0.5) / 3, -0.465, 0.8], _STEEL) for k in range(3)],
     _box("top", [1.0, 1.0, 0.06], [0, 0, 0.94], "color:#d8d6d0")]
 
 
