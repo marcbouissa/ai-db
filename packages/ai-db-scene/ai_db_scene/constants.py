@@ -90,6 +90,9 @@ SCENE_FOLIAGE_MAX_LEAVES = 40000  # per mesh: big crowns get sparser leaves, not
 SCENE_FOLIAGE_LEAF_M = 0.09  # leaf length
 FOLIAGE_CATEGORIES = ("tree", "bush", "hedge", "potted_plant")
 TREE_BARK_MATERIAL = "stone:#4b3b2e:proj=box"  # rough and bumpy; wood grain read as birch-like stripes
+SCENE_LINE_WIDTH_M = 0.1  # painted floor lines (aisles, walkways) in warehouse rooms
+SCENE_LINE_MATERIAL = "paint:#e8b400"
+SCENE_WALKWAY_INSET_M = 0.9  # walkway border line this far inside the walls
 SCENE_RUG_PILE_DENSITY = 1500.0  # carpet tufts per m2 on rugs; 0 turns the pile off
 
 # --- Blender (addon socket server) ---

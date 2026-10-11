@@ -37,12 +37,15 @@ from ai_db_scene.constants import (
     SCENE_GROUND_DROP_M,
     SCENE_GROUND_EXTENT_M,
     SCENE_LAMP_W,
+    SCENE_LINE_MATERIAL,
+    SCENE_LINE_WIDTH_M,
     SCENE_PLANK_FLOOR,
     SCENE_PLANK_GRAIN_SCALE,
     SCENE_PLANK_TOP_M,
     SCENE_REF_FLOOR_M2,
     SCENE_RUG_PILE_DENSITY,
     SCENE_SUN_ENERGY,
+    SCENE_WALKWAY_INSET_M,
     TREE_BARK_MATERIAL,
 )
 from ai_db_scene.layout import LayoutError, Placement, solve_layout
@@ -1747,6 +1750,46 @@ _CRITIQUE_FIX: dict[str, str] = {
 }
 
 
+#: categories that make a room a working floor: painted lines mark its aisles and walkways
+_WAREHOUSE = ("pallet_rack", "conveyor", "forklift", "loading_dock", "shelving_unit")
+
+
+def _safety_lines(spec: SceneSpec, placements: list[Placement]) -> list[dict[str, Any]]:
+    """Yellow floor lines in an indoor rect room with warehouse equipment: along both long sides
+    of every rack/conveyor (the aisle edges) and a walkway border inside the walls."""
+    st = spec.setting
+    if st.kind != "indoor" or st.shape != "rect" or st.rooms or \
+            not any(p.category in _WAREHOUSE for p in placements):
+        return []
+    from ai_db_scene.ergonomics import _footprint
+
+    w, d, _ = st.bounds_m
+    lw, z, gap = SCENE_LINE_WIDTH_M, 0.002, 0.15
+    strips: list[tuple[float, float, float, float]] = []  # centre x, centre y, length x, length y
+    ox, oy, _ = frame_offset(spec)  # placements -> the room shell's centred frame
+    for p in placements:
+        if p.category not in ("pallet_rack", "conveyor"):
+            continue
+        x0, x1, y0, y1 = _footprint(p)
+        x0, x1, y0, y1 = x0 + ox, x1 + ox, y0 + oy, y1 + oy
+        if x1 - x0 >= y1 - y0:  # long along x: lines in front of and behind it
+            strips += [((x0 + x1) / 2, y0 - gap, x1 - x0, lw), ((x0 + x1) / 2, y1 + gap, x1 - x0, lw)]
+        else:
+            strips += [(x0 - gap, (y0 + y1) / 2, lw, y1 - y0), (x1 + gap, (y0 + y1) / 2, lw, y1 - y0)]
+    inset = SCENE_WALKWAY_INSET_M
+    strips += [(0, -d / 2 + inset, w - 2 * inset, lw), (0, d / 2 - inset, w - 2 * inset, lw),
+               (-w / 2 + inset, 0, lw, d - 2 * inset), (w / 2 - inset, 0, lw, d - 2 * inset)]
+    cmds: list[dict[str, Any]] = []
+    for k, (cx, cy, lx, ly) in enumerate(strips):
+        if lx <= 0 or ly <= 0 or abs(cx) + lx / 2 > w / 2 or abs(cy) + ly / 2 > d / 2:
+            continue  # a line would run into a wall
+        name = f"floor_line_{k}"
+        cmds.append({"type": "create_primitive", "params": {
+            "primitive": "cube", "name": name, "location": [cx, cy, z], "scale": [lx / 2, ly / 2, z]}})
+        cmds.append({"type": "apply_material", "params": {"name": name, "material": SCENE_LINE_MATERIAL}})
+    return cmds
+
+
 def _floor_and_rug_detail(spec: SceneSpec, placements: list[Placement], floor: str) -> list[dict[str, Any]]:
     """Real geometry where a texture alone reads as fake: a wood floor of separate bevelled planks
     (rect rooms; planks would poke through curved walls) and carpet pile on rugs."""
@@ -1758,6 +1801,7 @@ def _floor_and_rug_detail(spec: SceneSpec, placements: list[Placement], floor: s
         cmds.append({"type": "wood_plank_floor", "params": {
             "name": "Room_Planks", "size": [w, d], "material": floor.split(":proj")[0] + ":proj=uv:scale=" + str(SCENE_PLANK_GRAIN_SCALE),
             "location": [0.0, 0.0, SCENE_PLANK_TOP_M - 0.015], "thickness": 0.015}})
+    cmds += _safety_lines(spec, placements)
     if SCENE_RUG_PILE_DENSITY > 0:
         cmds += [{"type": "carpet_pile", "params": {"name": pl.id, "density": SCENE_RUG_PILE_DENSITY}}
                  for pl in placements if pl.category == "rug"]

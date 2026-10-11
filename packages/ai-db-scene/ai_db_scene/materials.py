@@ -90,7 +90,7 @@ STYLE_PALETTES: dict[str, StylePalette] = {
         "dining_chair": "wood:oak", "bookshelf": "wood:oak", "tv_stand": "wood:oak", "nightstand": "wood:oak",
         "floor_lamp": "color:#f0f0f0", "table_lamp": "ceramic", "pendant_lamp": "color:#f0f0f0",
         "rug": "fabric:weave:#e6e1d6"}},
-    "industrial": {"floor": "color:#6e6e6a", "wall": "plaster:#8f8a84", "categories": {
+    "industrial": {"floor": "concrete:#8a8986", "wall": "concrete:#a7a49c", "categories": {
         "sofa": "leather", "armchair": "leather", "coffee_table": "wood:dark", "side_table": "metal:steel",
         "dining_table": "wood:dark", "chair": "metal:steel", "dining_chair": "metal:steel", "stool": "metal:steel",
         "bookshelf": "metal:steel", "tv_stand": "metal:steel", "desk": "wood:dark",

@@ -126,7 +126,7 @@ def test_style_palette_with_explicit_materials_winning():
     pls = sp.parse_placements(sp._handle_solve_layout({"spec": raw})["placements"])
     cmds, _ = sp.build_layout_commands(spec, pls, geometry="boxes")
     mats = {c["params"]["name"]: c["params"]["material"] for c in cmds if c["type"] == "apply_material"}
-    assert mats["Room_Floor"] == "color:#6e6e6a" and mats["Room_Walls"] == "plaster:#ffffff:proj=box"
+    assert mats["Room_Floor"] == "concrete:#8a8986:proj=box" and mats["Room_Walls"] == "plaster:#ffffff:proj=box"
     assert mats["sofa"] == "leather:proj=box" and mats["table"] == "marble:verde:proj=box"
     assert mats["lamp"] == "metal:steel:proj=box"
     raw["setting"]["style"] = "Industrial loft"  # free text naming a style picks its palette
@@ -741,3 +741,28 @@ def test_trees_are_grown_not_spheres_and_each_differs():
     seeds = {_json.loads(c["params"]["code"].split("json.loads(")[1].split(")\n")[0][1:-1])["seed"] for c in trees}
     assert len(seeds) == len(trees)  # no two trees alike
     assert any(c["type"] == "run_code" and "ai_db_foliage" in c["params"]["code"] for c in cmds)
+
+
+WAREHOUSE = {"setting": {"kind": "indoor", "bounds_m": [16.0, 12.0, 7.0], "style": "industrial"},
+             "objects": [{"id": "racks", "category": "pallet_rack", "grid": {"rows": 1, "cols": 3, "gap_m": [0.5, 0]}},
+                         {"id": "conveyor", "category": "conveyor", "hero": True},
+                         {"id": "forklift", "category": "forklift"},
+                         {"id": "pallets", "category": "pallet", "count": 3},
+                         {"id": "crates", "category": "crate", "count": 4},
+                         {"id": "barrier", "category": "safety_barrier", "count": 2}],
+             "relations": [{"a": "racks", "rel": "against_wall", "b": "wall_north"},
+                           {"a": "conveyor", "rel": "centered_in", "b": "room"}]}
+
+
+def test_warehouse_gets_concrete_and_safety_lines():
+    spec, _ = sp._parse_spec(WAREHOUSE)
+    pls = sp.parse_placements(sp._handle_solve_layout({"spec": WAREHOUSE})["placements"])
+    cmds, _ = sp.build_layout_commands(spec, pls, geometry="generated")
+    lines = [c for c in cmds if c["type"] == "create_primitive" and c["params"]["name"].startswith("floor_line_")]
+    assert len(lines) >= 4 + 2  # the walkway border, and both aisle edges of the rack row / conveyor
+    mats = {c["params"]["name"]: c["params"]["material"] for c in cmds if c["type"] == "apply_material"}
+    assert mats["Room_Floor"].startswith("concrete") and mats[lines[0]["params"]["name"]].startswith("paint")
+    living = {"setting": {"kind": "indoor", "bounds_m": [5.0, 4.0, 2.7]}, "objects": [{"id": "s", "category": "sofa"}],
+              "relations": []}
+    spec2, _ = sp._parse_spec(living)
+    assert sp._safety_lines(spec2, sp.parse_placements(sp._handle_solve_layout({"spec": living})["placements"])) == []
