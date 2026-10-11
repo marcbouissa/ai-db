@@ -124,10 +124,12 @@ def _running_elsewhere(arm: str, brief: str) -> bool:
 
 def cmd_run(arm: str, brief: str) -> dict[str, Any]:
     model, mode = arm.rsplit("-", 1)
-    if mode not in ("aidb", "aidb2", "raw"):
-        raise SystemExit(f"arm must end in -raw, -aidb or -aidb2: {arm}")
+    if mode not in ("aidb", "aidb2", "aidb3", "raw"):
+        raise SystemExit(f"arm must end in -raw, -aidb, -aidb2 or -aidb3: {arm}")
     with_aidb = mode != "raw"
-    version = 2 if mode == "aidb2" else 1
+    # aidb3: the aidb2 prompt and tools on the later pipeline (styles, judge, doorways, recipes,
+    # skill drafting); the arm's ai-db hash in metrics.json pins the code it ran on
+    version = 2 if mode in ("aidb2", "aidb3") else 1
     tools = briefs.AIDB2_TOOLS if version == 2 else briefs.AIDB_TOOLS
     rd = run_dir(arm, brief)
     if os.path.exists(os.path.join(rd, "metrics.json")):
