@@ -531,7 +531,7 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 ## P2: Architecture decay
 
 ### K1. Merge `ai_db/analyzer/` into `ai_db/analysis/`
-- [ ] Two diff engines (`references._diff_spans`, `investigate._git_changed_spans`), three
+- [x] Two diff engines (`references._diff_spans`, `investigate._git_changed_spans`), three
   "symbols of a file" paths (indexed `symbols`, `analyze_file` re-parse, `ast_visitor`), two
   token counters (`len//4` vs tiktoken). `investigate` calls the private
   `analyzer_engine._store_analysis_ref`; `analyzer/formatters.py` renders investigate packs.
@@ -543,6 +543,18 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
   `_add_callees`, the `"methods"` branches, the unused `_BUILTINS` in `resolve.py`,
   `ast_visitor._regex_outline`, `ts_graph`'s `fallback_name_node` path, `getattr` defaults in
   `QueryEngine`, `hasattr` session-state paths.
+- **Done 2026-10-11:** (1) `analysis/diff.py` (with G7); (2) `analysis/refs.py`
+  (`ReferenceStore.store_ref`/`expand_ref`); (3) `analyze_file` uses the chunker
+  (`analysis/analyze.py:file_symbols`, G6), not indexed chunks: the indexed ones go stale
+  when the file changes and the chunker is the index's own code path, so names/spans agree
+  either way; (4) `count_tokens` (`ai_db/tokens.py`) replaces every `len//4`; (5)
+  `analysis/formatters.py`; (6) `ai_db/analyzer/` deleted (`AnalyzerEngine` is
+  `analysis/analyze.py`, exported from `ai_db.analysis`). Removed: `_import_cache`, the
+  populate call, the `"methods"` branches, `resolve._BUILTINS`, `_regex_outline` (files
+  without a grammar outline their markdown sections or nothing), the `fallback_name_node`
+  path (a `@def` pattern without `@name` now raises; the TS/JS export patterns that relied
+  on it were redundant and are gone). The `hasattr` session paths were gone with K3; the
+  `QueryEngine` `getattr` defaults are K7 bullet 3. Golden/scenario paths follow the moves.
 
 ### K2. Split `SQLiteBackend` (2306-line god class)
 - [ ] Repositories sharing one connection + `transaction()`: `chunks` (+FTS), `vectors`,

@@ -369,7 +369,7 @@ LLM context windows are constrained and expensive. `ai-db` avoids dumping whole 
 
 ### 5.1 The 4 Serialization Formats
 
-`ai_db/analyzer/formatters.py` provides 4 distinct serializations:
+`ai_db/analysis/formatters.py` provides 4 distinct serializations:
 
 | Format | Representation | Token Cost (% of Raw) | Best Suited For |
 |--------|----------------|----------------------|-----------------|

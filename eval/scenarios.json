@@ -172,7 +172,7 @@
           "query": "stub formatter output",
           "ground_truth": {
             "recall": [
-              "ai_db/analyzer/formatters.py"
+              "ai_db/analysis/formatters.py"
             ],
             "symbol_recall": [
               "format_as_stub"
@@ -296,7 +296,7 @@
           "ground_truth": {
             "recall": [
               "ai_db/search/retriever.py",
-              "ai_db/analyzer/engine.py"
+              "ai_db/analysis/analyze.py"
             ],
             "symbol_recall": []
           }

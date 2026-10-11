@@ -9,8 +9,8 @@ import os
 import time
 from typing import Any
 
-from ai_db.analyzer.engine import AnalyzerEngine
-from ai_db.analyzer.formatters import Formatters, format_as_sexp, format_as_stub
+from ai_db.analysis.analyze import AnalyzerEngine
+from ai_db.analysis.formatters import Formatters, format_as_sexp, format_as_stub
 from ai_db.config import AppConfig, load_config
 from ai_db.constants import (
     DEFAULT_DB_FILE,

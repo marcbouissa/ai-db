@@ -253,7 +253,7 @@ def cond_investigate(db, question: str, item: dict, mode: str, project: str,
     format's cost here is its real cost, not a re-render.
     """
     try:
-        from ai_db.analyzer.formatters import format_pack
+        from ai_db.analysis.formatters import format_pack
         pack = db.investigate(question, budget_tokens=BUDGET_CHARS // CHARS_PER_TOKEN,
                               mode=mode, project=project)
         text = format_pack(pack, fmt)

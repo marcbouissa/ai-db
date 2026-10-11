@@ -26,13 +26,13 @@
 {"query": "index SKILL.md files", "expected": [{"filepath": "ai_db/search/skills.py", "symbol": "sync_skills"}], "kind": "locate"}
 {"query": "save session context memory", "expected": [{"filepath": "ai_db/memory/context.py", "symbol": "save_context"}], "kind": "locate"}
 {"query": "search stored contexts", "expected": [{"filepath": "ai_db/memory/context.py", "symbol": "query_contexts"}], "kind": "locate"}
-{"query": "progressive disclosure analyze file depth structure targeted", "expected": [{"filepath": "ai_db/analyzer/engine.py", "symbol": "analyze_file"}], "kind": "explain"}
-{"query": "analyze many files with token budget and cursor", "expected": [{"filepath": "ai_db/analyzer/engine.py", "symbol": "analyze_batch"}], "kind": "locate"}
-{"query": "locate targets for a question", "expected": [{"filepath": "ai_db/analyzer/engine.py", "symbol": "locate_targets"}], "kind": "locate"}
-{"query": "expand opaque ref handle", "expected": [{"filepath": "ai_db/analyzer/references.py", "symbol": "expand_ref"}], "kind": "locate"}
-{"query": "diff spans since git ref", "expected": [{"filepath": "ai_db/analyzer/references.py", "symbol": "_diff_spans"}], "kind": "locate"}
-{"query": "format output as s-expression", "expected": [{"filepath": "ai_db/analyzer/formatters.py", "symbol": "format_as_sexp"}], "kind": "locate"}
-{"query": "stub formatter output", "expected": [{"filepath": "ai_db/analyzer/formatters.py", "symbol": "format_as_stub"}], "kind": "locate"}
+{"query": "progressive disclosure analyze file depth structure targeted", "expected": [{"filepath": "ai_db/analysis/analyze.py", "symbol": "analyze_file"}], "kind": "explain"}
+{"query": "analyze many files with token budget and cursor", "expected": [{"filepath": "ai_db/analysis/analyze.py", "symbol": "analyze_batch"}], "kind": "locate"}
+{"query": "locate targets for a question", "expected": [{"filepath": "ai_db/analysis/analyze.py", "symbol": "locate_targets"}], "kind": "locate"}
+{"query": "expand opaque ref handle", "expected": [{"filepath": "ai_db/analysis/refs.py", "symbol": "expand_ref"}], "kind": "locate"}
+{"query": "diff spans since git ref", "expected": [{"filepath": "ai_db/analysis/diff.py", "symbol": "file_diff"}], "kind": "locate"}
+{"query": "format output as s-expression", "expected": [{"filepath": "ai_db/analysis/formatters.py", "symbol": "format_as_sexp"}], "kind": "locate"}
+{"query": "stub formatter output", "expected": [{"filepath": "ai_db/analysis/formatters.py", "symbol": "format_as_stub"}], "kind": "locate"}
 {"query": "record query latency percentiles telemetry", "expected": [{"filepath": "ai_db/telemetry/tracker.py", "symbol": "record_query"}], "kind": "locate"}
 {"query": "token savings compression telemetry", "expected": [{"filepath": "ai_db/telemetry/tracker.py", "symbol": "record_token_compression"}], "kind": "locate"}
 {"query": "tool registry dispatch execute validate required parameters", "expected": [{"filepath": "ai_db/dispatcher.py", "symbol": "execute"}], "kind": "locate"}

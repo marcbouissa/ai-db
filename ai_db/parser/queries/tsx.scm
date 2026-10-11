@@ -71,17 +71,7 @@
 (enum_declaration
   name: (identifier) @name) @def.type
 
-; Export statements - separate patterns for each declaration type
-(export_statement
-  (class_declaration) @def.class)
-(export_statement
-  (abstract_class_declaration) @def.class)
-(export_statement
-  (interface_declaration) @def.interface)
-(export_statement
-  (type_alias_declaration) @def.type)
-(export_statement
-  (enum_declaration) @def.type)
+; Exported declarations are matched by the patterns above (they match at any depth)
 (export_statement
   (lexical_declaration) @ref.export)
 

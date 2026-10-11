@@ -56,7 +56,7 @@ depends on is complete.
 | Retrieval / ranking | `ai_db/search/retriever.py`, `ai_db/search/ranking.py`, `ai_db/search/query.py`, `ai_db/search/query_builder.py` |
 | investigate / trace | `ai_db/analysis/investigate.py`, `ai_db/analysis/pack.py`, `ai_db/analysis/trace.py`, `ai_db/analysis/resolve.py` |
 | Skills / memory | `ai_db/search/skills.py`, `ai_db/memory/context.py` |
-| Analyzer | `ai_db/analyzer/engine.py`, `ai_db/analyzer/references.py` |
+| Analyzer | `ai_db/analysis/analyze.py`, `ai_db/analysis/refs.py` |
 | Eval | `ai_db/eval/harness.py`, `eval/golden/*.jsonl`, `eval/results/*.json` |
 | Transports | `ai_db/dispatcher.py`, `mcp_server.py` (the HTTP server was removed) |
 | Root facades | `vectordb.py` (restored as a Python module in `0dc9923`), `mcp_server.py` |
@@ -616,7 +616,7 @@ dispatcher schema, and `indent=2` hardcoded in both `ai_db/cli.py` and
 different schema from analyze output, so pack renderers were written rather than
 the existing ones reshaped.
 
-`format_pack(pack, style)` in `ai_db/analyzer/formatters.py` renders
+`format_pack(pack, style)` in `ai_db/analysis/formatters.py` renders
 `json` (default, indented), `compact` (same data, one line), `stub` (ranked
 answer + `why` provenance + graph edges, no bodies) and `sexp`. The dispatcher
 returns a rendered **string** for a non-default style; `mcp_server.py` already
@@ -652,7 +652,7 @@ Measured on this repo at `--budget 8000`, 40 questions:
 
    To make the measurement possible, `analyze`'s rendering moved out of
    `ai_db/cli.py` into `format_analyze()` / `annotate_formatted_tokens()` in
-   `ai_db/analyzer/formatters.py` — the CLI had it inline, and counting the
+   `ai_db/analysis/formatters.py` — the CLI had it inline, and counting the
    formatted size without duplicating the rendering means the number and the
    printed string can drift apart. All five formats verified byte-identical
    before and after the move.

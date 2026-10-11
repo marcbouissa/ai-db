@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ai_db.parser.languages import declared_name, language_for
+from ai_db.parser.languages import language_for
 from ai_db.parser.naming import bound_variable, definition_name, qualified_name
 
 if TYPE_CHECKING:
@@ -267,16 +267,11 @@ def extract_graph(filepath: str, content: str) -> tuple[list[dict], list[dict], 
             if capture_name.startswith("def."):
                 for i, node in enumerate(nodes):
                     line = node.start_point[0] + 1
-                    # Use captured name node if available, otherwise fall back to field lookup
-                    if i < len(name_nodes):
-                        def_name_node = name_nodes[i]
-                        name = source[def_name_node.start_byte:def_name_node.end_byte].decode("utf-8", errors="replace")
-                    else:
-                        fallback_name_node: Node | None = declared_name(node)
-                        if fallback_name_node:
-                            name = source[fallback_name_node.start_byte:fallback_name_node.end_byte].decode("utf-8", errors="replace")
-                        else:
-                            name = ""
+                    # Every @def pattern captures the definition's @name
+                    if i >= len(name_nodes):
+                        raise ValueError(f"{lang}.scm: a @{capture_name} pattern has no @name capture")
+                    def_name_node = name_nodes[i]
+                    name = source[def_name_node.start_byte:def_name_node.end_byte].decode("utf-8", errors="replace")
                     sym_type = capture_name[4:]  # remove "def."
                     if lang == "python" and sym_type == "function" and _python_in_class_body(node):
                         continue  # emitted by the method pattern; one symbol per def

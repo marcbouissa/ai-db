@@ -8,7 +8,7 @@
 {"query": "how are hosted provider http requests retried", "kind": "explain", "expected": [{"filepath": "ai_db/http_client.py", "symbol": "post_json"}]}
 {"query": "how is the fts match expression built from a query", "kind": "explain", "expected": [{"filepath": "ai_db/search/query_builder.py", "symbol": "build_fts"}, {"filepath": "ai_db/search/query_builder.py", "symbol": "expand_terms"}]}
 {"query": "how does investigate fit the pack into the token budget", "kind": "explain", "expected": [{"filepath": "ai_db/analysis/investigate.py", "symbol": "_pack"}, {"filepath": "ai_db/analysis/investigate.py", "symbol": "_finalize"}]}
-{"query": "search_chunks", "kind": "impact", "expected": [{"filepath": "ai_db/search/retriever.py", "symbol": "_bm25"}, {"filepath": "ai_db/analyzer/engine.py", "symbol": "locate_targets"}]}
+{"query": "search_chunks", "kind": "impact", "expected": [{"filepath": "ai_db/search/retriever.py", "symbol": "_bm25"}, {"filepath": "ai_db/analysis/analyze.py", "symbol": "locate_targets"}]}
 {"query": "count_tokens", "kind": "impact", "expected": [{"filepath": "ai_db/parser/chunker.py", "symbol": "add"}, {"filepath": "ai_db/analysis/investigate.py", "symbol": "_pack"}]}
 {"query": "expand_terms", "kind": "impact", "expected": [{"filepath": "ai_db/search/retriever.py", "symbol": "_bm25"}, {"filepath": "ai_db/search/ranking.py", "symbol": "Ranker.rank"}]}
 {"query": "get_chunks_by_ids", "kind": "impact", "expected": [{"filepath": "ai_db/search/retriever.py", "symbol": "HybridRetriever.candidates"}, {"filepath": "ai_db/search/ranking.py", "symbol": "Ranker.rank"}]}

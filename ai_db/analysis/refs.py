@@ -5,6 +5,7 @@ from typing import Any
 from ai_db.constants import REF_ID_HEX_LEN
 from ai_db.parser.languages import SUPPORTED_LANGUAGES
 from ai_db.storage.models import AnalysisRefRecord
+from ai_db.tokens import count_tokens
 
 
 class ReferenceStore:
@@ -57,7 +58,7 @@ class ReferenceStore:
             start_line = start_line + offset_start
             end_line = start_line + len(selected_lines) - 1
 
-        tokens_est = max(1, len(body) // 4)
+        tokens_est = max(1, count_tokens(body))
         return {
             "ref": record.ref_id,
             "file": record.filepath,

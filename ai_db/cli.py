@@ -1136,7 +1136,7 @@ def _main(argv: list[str] | None = None) -> int:
             # One renderer, shared with the token accounting, so the printed
             # string and meta.tokens_out_formatted cannot describe different
             # things.
-            from ai_db.analyzer.formatters import annotate_formatted_tokens
+            from ai_db.analysis.formatters import annotate_formatted_tokens
             # Only pay for tiktoken when the count is part of what the user is
             # looking at: json embeds meta, the other formats are read directly.
             print(annotate_formatted_tokens(output_data, effective_fmt,

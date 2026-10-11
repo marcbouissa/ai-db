@@ -124,7 +124,6 @@ class Investigator:
     def __init__(self, vdb: Any):
         self.vdb = vdb
         self.db = vdb.backend
-        self._import_cache: dict[str, set[str]] = {}
         self._resolver = Resolver(self.db)
 
     # ------------------------------------------------------------------ api
@@ -360,14 +359,11 @@ class Investigator:
         frontier = [(s.chunk, s.score) for s in seeds]
         for hop in (1, 2):
             per_src: list[tuple[ChunkRecord, float, list[str]]] = []
-            all_names: set[str] = set()
             for chunk, score in frontier:
                 refs = self.db.get_refs_from(chunk.filepath, scope_of(chunk.qualified_name))
                 # call order (first occurrence) is the reading order of the body
                 names = list(dict.fromkeys(r.callee_name for r in refs if r.callee_name not in _BUILTINS))
                 per_src.append((chunk, score, names))
-                all_names |= set(names)
-            self.db.find_chunks_by_symbol(sorted(all_names), allowed)  # populate resolver cache
             next_frontier = []
             for chunk, score, names in per_src:
                 result = self._resolver.resolve_callees(set(names), chunk, allowed)

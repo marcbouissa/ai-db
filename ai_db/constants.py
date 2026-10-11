@@ -107,7 +107,7 @@ DIFF_QUERY_BOOST = 25.0  # a full query match must outrank raw diff density, or 
                         # for a targeted "just the X" review; 25 is the density ratio
                         # beyond which density wins.
 DIFF_SEEDS_PER_FILE = 3  # diversity device only: a diff must not spend every seed slot on one file
-# --- investigate pack rendering (see ai_db.analyzer.formatters) ---
+# --- investigate pack rendering (see ai_db.analysis.formatters) ---
 # Cap on how many items a rendered pack lists per section. A pack holds up to
 # the budget's worth of evidence; printing all of it defeats the point of
 # rendering it compactly, and the rest is reachable by ref.

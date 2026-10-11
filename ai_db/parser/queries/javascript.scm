@@ -33,10 +33,6 @@
 )
 
 (export_statement
-  (class_declaration) @def.class
-)
-
-(export_statement
   (lexical_declaration) @ref.export
 )
 

@@ -692,7 +692,7 @@ class TestStorageTier2:
 
     def test_decoupled_analyzer_cache_delegation(self):
         """TC-T2-F11-05: AnalyzerEngine delegates state and cache management to StorageBackend."""
-        from ai_db.analyzer.engine import AnalyzerEngine
+        from ai_db.analysis.analyze import AnalyzerEngine
         mock_backend = MagicMock()
         mock_backend.backend = mock_backend
         mock_backend.get_state.return_value = {"cached_summary": "Analysis result"}

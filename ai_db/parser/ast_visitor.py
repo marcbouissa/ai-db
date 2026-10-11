@@ -10,13 +10,18 @@ from ai_db.parser.ts_graph import extract_graph
 def extract_file_outline(filepath: str, content: str,
                          languages: Collection[str] = SUPPORTED_LANGUAGES) -> list[tuple[int, str]]:
     """
-    Extracts file outline lines (line number and label) for fast inspection.
-    Uses tree-sitter queries for supported languages.
+    Extracts file outline lines (line number and label) for fast inspection:
+    tree-sitter symbols for a selected language, section headers for markdown,
+    nothing for other text.
     """
     lang = enabled_language_for(filepath, languages)
     if lang is None:
-        # Fallback for unsupported languages
-        return _regex_outline(content)
+        # No grammar: markdown has its section tree; other text has no structure to list.
+        if not filepath.lower().endswith(".md"):
+            return []
+        from ai_db.parser.chunker import chunk_file
+        return [(c["start_line"], "  " * c["qualified_name"].count(" > ") + c["name"])
+                for c in chunk_file(filepath, content, languages)]
 
     symbols, _, _ = extract_graph(filepath, content)
     outline = []
@@ -37,22 +42,4 @@ def extract_file_outline(filepath: str, content: str,
             outline.append((s["line"], label))
 
     outline.sort(key=lambda x: x[0])
-    return outline
-
-
-def _regex_outline(content: str) -> list[tuple[int, str]]:
-    """Generic regex-based outline fallback."""
-    import re
-    outline = []
-    for i, line in enumerate(content.splitlines(), 1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith(("#", "//", "/*", "*")):
-            continue
-        m = re.match(
-            r"^(?:export\s+|public\s+|private\s+|protected\s+|static\s+|async\s+)*"
-            r"(class\s+\w+|interface\s+\w+|type\s+\w+|def\s+\w+\([^)]*\)|function\s+\w+\([^)]*\)|fn\s+\w+|[A-Z0-9_]{3,}\s*=)",
-            stripped
-        )
-        if m:
-            outline.append((i, stripped[:100]))
     return outline

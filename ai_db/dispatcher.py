@@ -1225,7 +1225,7 @@ class ServiceDispatcher:
         style = args.get("format") or default_fmt or "stub"
         if style == "json":
             return pack
-        from ai_db.analyzer.formatters import format_pack
+        from ai_db.analysis.formatters import format_pack
         rendered = format_pack(pack, style)
         if stale and isinstance(rendered, str):
             return freshness.annotate(rendered, stale)

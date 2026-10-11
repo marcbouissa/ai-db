@@ -6,10 +6,11 @@ import time
 from typing import Any
 
 from ai_db.analysis.diff import file_diff
-from ai_db.analyzer.references import ReferenceStore
+from ai_db.analysis.refs import ReferenceStore
 from ai_db.errors import AiDbConfigError
 from ai_db.parser.chunker import chunk_file
 from ai_db.parser.languages import SUPPORTED_LANGUAGES
+from ai_db.tokens import count_tokens
 from ai_db.utils import (
     client_cwd,
     compute_sha256,
@@ -107,7 +108,7 @@ class AnalyzerEngine:
             }
 
         file_hash = compute_sha256(abs_path)
-        tokens_in = max(1, len(content) // 4)
+        tokens_in = max(1, count_tokens(content))
         all_lines = content.splitlines()
         total_lines = len(all_lines)
 
@@ -142,7 +143,7 @@ class AnalyzerEngine:
                 "ref": ref_id,
                 "body": snippet_text
             }]
-            tokens_out = max(1, len(snippet_text) // 4)
+            tokens_out = max(1, count_tokens(snippet_text))
             res = {
                 "file": filepath,
                 "symbols": symbols,
@@ -188,40 +189,9 @@ class AnalyzerEngine:
                 "ref": sym["ref"]
             }
 
-            if depth == "summary":
-                # Signatures only, strictly no body
-                pass
-            elif depth == "structure":
-                # Structure: signature + submethods if any
-                if "methods" in sym:
-                    item["methods"] = [{
-                        "name": mt["name"],
-                        "kind": mt["kind"],
-                        "sig": mt["sig"],
-                        "span": mt["span"],
-                        "ref": mt["ref"]
-                    } for mt in sym["methods"]]
-            elif depth == "targeted":
-                # Bodies included only if matched filter/question
-                if is_match:
-                    item["body"] = sym.get("body", "")
-                if "methods" in sym:
-                    item["methods"] = []
-                    for mt in sym["methods"]:
-                        m_item: dict[str, Any] = {
-                            "name": mt["name"],
-                            "kind": mt["kind"],
-                            "sig": mt["sig"],
-                            "span": mt["span"],
-                            "ref": mt["ref"]
-                        }
-                        if q_tokens and any(tok in f"{mt['name']} {mt['sig']} {mt['body']}".lower() for tok in q_tokens if len(tok) > 2):
-                            m_item["body"] = mt["body"]
-                        item["methods"].append(m_item)
-            elif depth == "full":
+            # summary/structure: signature only; targeted: bodies of matching symbols only
+            if depth == "full" or (depth == "targeted" and is_match):
                 item["body"] = sym.get("body", "")
-                if "methods" in sym:
-                    item["methods"] = sym["methods"]
 
             if q_tokens or focus:
                 if is_match or (depth != "targeted" and depth != "summary"):
@@ -235,7 +205,7 @@ class AnalyzerEngine:
 
         # Compute token estimates
         rendered_json = json.dumps(filtered_symbols)
-        tokens_out = max(1, len(rendered_json) // 4)
+        tokens_out = max(1, count_tokens(rendered_json))
 
         result = {
             "file": filepath,
