@@ -76,6 +76,12 @@ RECIPE_EDGE_BEVEL_M = 0.006
 RECIPE_EDGE_BEVEL_SEGMENTS = 2
 RECIPE_EDGE_BEVEL_MAX_SHARE = 0.25  # never more than this share of the part's thinnest side
 
+# --- Room realism (tools/scene_pipeline.py) ---
+SCENE_CEILING = True        # indoor rooms get a ceiling slab (an open top shows the sky)
+SCENE_PLANK_FLOOR = True    # a wood floor in a rect room is real planks, not one textured sheet
+SCENE_PLANK_TOP_M = 0.001   # plank tops this far above z=0, so they hide the floor slab cleanly
+SCENE_RUG_PILE_DENSITY = 1500.0  # carpet tufts per m2 on rugs; 0 turns the pile off
+
 # --- Blender (addon socket server) ---
 BLENDER_OX_HOST = "127.0.0.1"
 BLENDER_OX_PORT = 9877  # override: AI_DB_BLENDER_PORT

@@ -17,6 +17,7 @@ from ai_db_scene.constants import (
     LAYOUT_DOOR_HEIGHT_M,
     SCENE_CAMERA_HEIGHT_M,
     SCENE_CAMERA_INSET,
+    SCENE_CEILING,
     SCENE_EXPOSURE_INDOOR,
     SCENE_EXPOSURE_OUTDOOR,
     SCENE_EXPOSURE_PER_DOUBLING,
@@ -26,7 +27,10 @@ from ai_db_scene.constants import (
     SCENE_FILL_W_PER_M2,
     SCENE_FILL_W_RANGE,
     SCENE_LAMP_W,
+    SCENE_PLANK_FLOOR,
+    SCENE_PLANK_TOP_M,
     SCENE_REF_FLOOR_M2,
+    SCENE_RUG_PILE_DENSITY,
     SCENE_SUN_ENERGY,
 )
 from ai_db_scene.layout import LayoutError, Placement, solve_layout
@@ -150,7 +154,7 @@ def _room_commands(spec: SceneSpec, placements: list[Placement] | None = None) -
         params: dict[str, Any] = {
             "shape": st.shape, "height": h, "wall_thickness": t,
             "openings": _openings(spec, placements or []),
-            "floor": True, "ceiling": False, "trim": False,
+            "floor": True, "ceiling": SCENE_CEILING, "trim": False,
         }
         if st.shape == "polygon":
             params["points"] = [list(p) for p in st.points]
@@ -703,6 +707,7 @@ def build_layout_commands(
             surfaces.append(("Room_Walls", st.wall_material or style_material(st.style, "wall") or WALL_MATERIAL))
         for obj, mat in surfaces:
             cmds.append({"type": "apply_material", "params": {"name": obj, "material": material_for("", mat)}})
+        cmds += _floor_and_rug_detail(spec, placements, floor)
         # anything else of the shell (ceiling, trim) gets the neutral room material
         cmds.append({"type": "run_code", "params": {"code": _ROOM_MATERIAL}})
     ids = {o.id for o in spec.objects}
@@ -1427,6 +1432,23 @@ _CRITIQUE_FIX: dict[str, str] = {
     "exposure": ("a black render: the camera may sit in a wall or behind furniture (move it, or add lamps); "
                  "blown out: fewer lights or an outdoor kind without sky"),
 }
+
+
+def _floor_and_rug_detail(spec: SceneSpec, placements: list[Placement], floor: str) -> list[dict[str, Any]]:
+    """Real geometry where a texture alone reads as fake: a wood floor of separate bevelled planks
+    (rect rooms; planks would poke through curved walls) and carpet pile on rugs."""
+    cmds: list[dict[str, Any]] = []
+    st = spec.setting
+    if SCENE_PLANK_FLOOR and st.kind == "indoor" and st.shape == "rect" and floor.startswith("wood") \
+            and not st.rooms and pbr_preset(floor) is None:
+        w, d, _ = st.bounds_m
+        cmds.append({"type": "wood_plank_floor", "params": {
+            "name": "Room_Planks", "size": [w, d], "material": floor.split(":proj")[0] + ":proj=uv",
+            "location": [0.0, 0.0, SCENE_PLANK_TOP_M - 0.015], "thickness": 0.015}})
+    if SCENE_RUG_PILE_DENSITY > 0:
+        cmds += [{"type": "carpet_pile", "params": {"name": pl.id, "density": SCENE_RUG_PILE_DENSITY}}
+                 for pl in placements if pl.category == "rug"]
+    return cmds
 
 
 def _retry_legacy_materials(cmds: list[dict[str, Any]], results: list[dict[str, Any]]) -> list[dict[str, Any]]:
