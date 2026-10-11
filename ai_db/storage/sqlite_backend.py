@@ -2077,9 +2077,24 @@ class SQLiteBackend(StorageBackend, VectorCapable):
         self._check_closed()
         cur = self.conn.cursor()
         zbody = zlib.compress(ref.body_text.encode("utf-8"), level=ZLIB_LEVEL)
+        existing = cur.execute(
+            "SELECT filepath, start_line, end_line, zbody FROM analysis_refs WHERE ref_id = ?",
+            (ref.ref_id,)).fetchone()
+        if existing is not None:
+            same = (existing["filepath"] == ref.filepath and existing["start_line"] == ref.start_line
+                    and existing["end_line"] == ref.end_line
+                    and _decompress(existing["zbody"], f"analysis ref {ref.ref_id}") == ref.body_text)
+            if not same:
+                # A hash-prefix collision: overwriting would make `expand` return another body.
+                raise AiDbStorageError(
+                    f"analysis ref id collision: {ref.ref_id} already holds "
+                    f"{existing['filepath']}:{existing['start_line']}-{existing['end_line']}")
+            cur.execute("UPDATE analysis_refs SET name = ?, kind = ?, timestamp = ? WHERE ref_id = ?",
+                        (ref.name, ref.kind, ref.timestamp, ref.ref_id))
+            return
         cur.execute(
             """
-            INSERT OR REPLACE INTO analysis_refs (ref_id, filepath, name, start_line, end_line, kind, zbody, timestamp)
+            INSERT INTO analysis_refs (ref_id, filepath, name, start_line, end_line, kind, zbody, timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (ref.ref_id, ref.filepath, ref.name, ref.start_line, ref.end_line, ref.kind, zbody, ref.timestamp)

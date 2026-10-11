@@ -41,6 +41,26 @@ def test_full_depth_returns_the_whole_function(vdb, tmp_path):
     assert syms["Store"]["kind"] == "class"
 
 
+def test_ref_ids_are_48_bits_and_a_collision_raises(vdb):
+    """G9: a forced id collision must raise instead of overwriting another body."""
+    import time
+
+    from ai_db.errors import AiDbStorageError
+    from ai_db.storage.models import AnalysisRefRecord
+
+    store = vdb.analyzer_engine.ref_store
+    ref_id = store.store_ref("/x/a.py", "f", 1, 2, "function", "def f():\n    pass")
+    assert len(ref_id) == len("ref:") + 12
+    # storing the same body again is idempotent
+    assert store.store_ref("/x/a.py", "f", 1, 2, "function", "def f():\n    pass") == ref_id
+    other = AnalysisRefRecord(ref_id=ref_id, filepath="/x/b.py", name="g", start_line=5,
+                              end_line=6, kind="function", body_text="def g(): ...",
+                              timestamp=time.time())
+    with pytest.raises(AiDbStorageError, match="collision"):
+        vdb.backend.store_analysis_ref(other)
+    assert vdb.backend.get_analysis_ref(ref_id).body_text == "def f():\n    pass"
+
+
 def test_text_files_yield_symbols(vdb, tmp_path):
     path = tmp_path / "notes.txt"
     path.write_text("first line\nsecond line\n")

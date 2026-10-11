@@ -119,6 +119,7 @@ DIFF_DEFAULT_SINCE = "HEAD"  # diff mode compares the working tree against this 
 GIT_TIMEOUT_S = 10  # git invocations from investigate/trace must not stall a request
 STALE_RESYNC_MAX_FILES = 20  # stale result files re-synced inline per read; above this they are flagged
 DELEGATE_MAX_TOKENS = 120  # seeds this small also get their callees' callees
+REF_ID_HEX_LEN = 12  # analysis ref ids `ref:<sha1 prefix>`: 48 bits (32 collided at ~1% over 10k refs)
 
 # Skill router
 SKILL_W_TRIGGER = 8.0  # weight for exact trigger phrase match in prompt

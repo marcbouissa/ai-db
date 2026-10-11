@@ -4,6 +4,7 @@ import os
 import time
 from typing import Any
 
+from ai_db.constants import REF_ID_HEX_LEN
 from ai_db.parser.languages import SUPPORTED_LANGUAGES
 from ai_db.storage.models import AnalysisRefRecord
 
@@ -21,7 +22,7 @@ class ReferenceStore:
         """Stores a node body in analysis_refs and returns an opaque handle `ref:<sha1_hex>`."""
         hasher = hashlib.sha1()
         hasher.update(f"{filepath}:{start_line}:{end_line}:{body_text}".encode())
-        ref_id = f"ref:{hasher.hexdigest()[:8]}"
+        ref_id = f"ref:{hasher.hexdigest()[:REF_ID_HEX_LEN]}"
 
         record = AnalysisRefRecord(
             ref_id=ref_id,

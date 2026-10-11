@@ -369,11 +369,14 @@ Priority: **P0 → P1 → P2**. Inside a priority, top to bottom.
 - **Check:** test in a temp git repo.
 
 ### G9. Ref ids collide
-- [ ] **Observed:** analysis ref ids are `sha1[:8]` (32 bits) with `INSERT OR REPLACE`; ~10k
+- [x] **Observed:** analysis ref ids are `sha1[:8]` (32 bits) with `INSERT OR REPLACE`; ~10k
   refs in the 7-day window → ~1% collision; `expand` then returns another body.
 - **Fix:** 12 hex chars (48 bits) and `INSERT` that raises on conflict with a different body.
   Constant `REF_ID_HEX_LEN`.
 - **Check:** test: forced collision raises instead of overwriting.
+- **Done 2026-10-11:** `REF_ID_HEX_LEN = 12`; `store_analysis_ref` re-storing the same
+  ref only refreshes its timestamp, a different file/span/body under the same id raises
+  `AiDbStorageError`. Test in `tests/test_analyze.py`.
 
 ### G10. Eval inflates recall
 - [ ] **Observed:** `ai_db/eval/metrics.py:_matches` uses `exp_symbol in name` (`run` matches
