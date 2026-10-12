@@ -95,6 +95,26 @@ Nothing real is evenly coloured or evenly rough, even when new.
   render scores worst with any judge.
 - Final images: `build_scene(render: {"engine": "cycles", "sky": true})`.
 
+## 6. Details that make an object read as itself
+
+Learned rebuilding ai-db's own recipes; use them in `create_recipe` parts.
+
+- Fronts, not lines: doors and drawers are separate panels (`raised_panel`, recessed field)
+  with a small gap between them and a pull each - a drawn line on a block reads as a box.
+- Hollow what holds things: tubs, basins, bins and lamp shades use the `shell` op
+  (`{"op": "shell", "thickness": ..., "open_faces": "top" | "bottom"}`) so the inside shows.
+- Screens and glass: a thin black body with an inset glass face (`glass:tinted`); mirrors
+  `metal:chrome`; windows and shower panels `glass:clear` in a thin metal frame.
+- Structure you can see through: racks have braced upright frames and beams; tables and
+  benches have legs, rails and A-frames; stairs have treads over risers on stringers.
+- Wheels: rubber tyres with a metal rim standing slightly proud; casters on chair bases.
+- Small cues carry identity: knobs on a cooker, a flush button, a marker tray, a beacon on a
+  forklift, bungs on a drum, a lens under a street lamp.
+- Repeated items vary: generated furniture takes a seed and a style preset; do not copy one
+  part list for every instance.
+- Wood figure must suit the part size (`:scale=` finer on furniture than on floors);
+  coarse figure on small panels reads as zebra or contour-map stripes.
+
 ## Pitfalls
 
 - Uniformly thick parts (every board 4 cm): vary them - tops thicker, backs and shelves thinner.
