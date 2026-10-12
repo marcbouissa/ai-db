@@ -160,8 +160,18 @@ are uncommitted (mixed with the owner's own work there).
 | Headless server (`tools/serve_headless.py`), `tools/material_sheet.py`, `tests/run_blender_tests.py` | [used] | private Blender for tests; material sheets; 182 addon tests pass |
 | Regression tests (`tests/test_bl_rooms.py`, `tests/test_bl_materials.py`) | [changed] | rooms checks; new material kinds |
 
+## Benchmark result (blind Opus, paired per brief, 2026-10-12)
+
+Mean judge score 1-10 over the six briefs, same free model, same judge batch per brief:
+
+| model | no ai-db | ai-db v1 | v2 (build/edit) | v3 | v4 (this realism pass) |
+|---|---|---|---|---|---|
+| nemotron-3.5-lightning | 1.50 | 2.00 | 2.83 | 2.83 | **5.17** |
+| nemotron-3-ultra | 4.33 | 4.33 | 3.20 | 3.33 | **4.67** |
+
+v4 vs v3: +2.33 (lightning) and +1.33 (ultra). Full tables in `bench/REPORT.md` (git-ignored).
+
 ## Not finished or left for later
 
 - Tree types (pine, birch, palm): drop the paper-looking flattened sprays and scatter needles and leaflets along twigs instead.
-- Opus judging of the "ai-db v2" and "v3" benchmark arms after the weekly reset, then `bench/REPORT.md`.
 - The free-model and Strata benchmark runs, when rate limits and the Strata PC allow.
