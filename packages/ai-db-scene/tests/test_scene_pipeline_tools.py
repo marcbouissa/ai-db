@@ -268,7 +268,7 @@ def test_pbr_presets_resolve_to_a_base_plus_the_skill_grunge():
     pls = sp.parse_placements(sp._handle_solve_layout({"spec": _PBR_SPEC})["placements"])
     cmds, _ = sp.build_layout_commands(spec, pls, geometry="boxes")
     mats = {c["params"]["name"]: c["params"]["material"] for c in cmds if c["type"] == "apply_material"}
-    assert mats["Room_Floor"] == "color:#8a8782" and mats["cabinet"] == "metal:rust:proj=box"
+    assert mats["Room_Floor"] == "concrete:#8a8782:proj=box" and mats["cabinet"] == "metal:rust:proj=box"
     wear = [c for c in cmds if c["type"] == "run_code" and "add_grunge(worn" in c["params"]["code"]]
     assert len(wear) == 1
     code = wear[0]["params"]["code"]
