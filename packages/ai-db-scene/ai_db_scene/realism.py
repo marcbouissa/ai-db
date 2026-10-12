@@ -7,6 +7,7 @@ a living space. Warnings only, each with the fix.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 #: categories that light a room besides the daylight rig
@@ -49,4 +50,44 @@ def check(spec: Any, placements: list[Any]) -> list[dict[str, Any]]:
         if mat and str(mat).startswith("color") and p.dims[0] * p.dims[1] >= BIG_M2:
             issues.append(_warn(f"{p.id} is a large object in a flat colour ({mat}); use paint:, plastic:, "
                                 f"fabric: or wood: with the same tint", [p.id]))
+    return issues
+
+
+_NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+            "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "pair": 2, "couple": 2}
+
+
+def brief_counts(brief: str, categories: set[str]) -> dict[str, int | None]:
+    """Categories a brief names, with the count it asks for when one is stated ("two armchairs")."""
+    from ai_db_scene.feedback import ALIASES
+
+    low = " " + re.sub(r"[^a-z0-9 ]+", " ", brief.lower()) + " "
+    out: dict[str, int | None] = {}
+    names = {c.replace("_", " "): c for c in categories}
+    names.update({w: c for w, c in ALIASES.items() if c in categories})
+    for name, cat in sorted(names.items(), key=lambda kv: -len(kv[0])):
+        for m in re.finditer(rf"\b{re.escape(name)}(e?s)?\b", low):
+            before = low[:m.start()].split()[-2:]
+            n = next((int(w) if w.isdigit() else _NUMBERS[w] for w in reversed(before)
+                      if w.isdigit() or w in _NUMBERS), None)
+            if cat not in out or (n is not None and out[cat] is None):
+                out[cat] = n
+            low = low[:m.start()] + " " * (m.end() - m.start()) + low[m.end():]  # "coffee table" not also "table"
+    return out
+
+
+def check_brief(brief: str, placements: list[Any]) -> list[dict[str, Any]]:
+    """Objects the brief asks for that the scene lacks, and counts that differ from the brief."""
+    from ai_db_scene.priors import load_priors
+
+    have: dict[str, int] = {}
+    for p in placements:
+        have[p.category] = have.get(p.category, 0) + 1
+    issues = []
+    for cat, n in brief_counts(brief, set(load_priors())).items():
+        got = have.get(cat, 0)
+        if got == 0:
+            issues.append(_warn(f"the brief asks for {cat.replace('_', ' ')} but the scene has none"))
+        elif n is not None and got != n:
+            issues.append(_warn(f"the brief asks for {n} {cat.replace('_', ' ')}, the scene has {got}"))
     return issues

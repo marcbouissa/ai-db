@@ -1633,6 +1633,8 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
         from ai_db_scene import realism
 
         left += realism.check(spec, placements)
+        if args.get("brief"):
+            left += realism.check_brief(str(args["brief"]), placements)
     except Exception as e:  # noqa: BLE001 - a check must never fail a finished build
         left.append({"check": "ergonomics", "severity": "warning", "message": f"not checked: {e}"})
     try:
@@ -2251,6 +2253,8 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
                      "properties": {"engine": {"enum": ["cycles", "eevee"]}, "samples": {"type": "integer", "minimum": 1},
                                     "sky": {"type": "boolean"}, "resolution": {"type": "array", "items": {"type": "integer"}},
                                     "path": {"type": "string"}}},
+          "brief": {"type": "string", "description": "the user's brief: warns about objects it asks for that are "
+                                                      "missing and counts that differ ('two armchairs')"},
           "exposure_check": {"type": "boolean",
                              "description": ("default true: a tiny probe render from the camera; the view exposure is "
                                              "adjusted until the image is neither black nor blown out (report: exposure)")}},

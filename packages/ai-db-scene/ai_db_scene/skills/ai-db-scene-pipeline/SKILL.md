@@ -27,6 +27,8 @@ get_scene_spec_schema(brief) -> write the spec -> submit_scene_spec (fix every e
 every change is listed in `repairs`), then builds (room, real furniture, materials, daylight, lamp
 lights, eye-level camera), validates, and applies the validator's own fixes (`fixes_applied`).
 Only use the step-by-step tools below when you need control over one stage.
+Pass the user's `brief` to `build_scene` too: it warns about requested objects that are missing
+and counts that differ ("two armchairs" built as four).
 A build replaces the previous ai-db scene in Blender (its room, lights and every object an
 earlier build placed; Blender's untouched default cube too) and keeps objects made by hand.
 
