@@ -1,8 +1,8 @@
 # Side note: ai-db and ox-blender features used in the session of 2026-10-09 to 2026-10-11
 
 Legend: **[new]** added in this session, **[changed]** reworked in this session, **[used]** already
-existed and was used. ox-blender is the Blender addon in `~/GitRepos/blender_mcp` (package
-`blender_ox`, socket server on :9877, MCP server `blender_ox_mcp`). Its changes from this session
+existed and was used. ox-blender is the Blender addon in `~/GitRepos/blender_mcp` (the ox-blender
+package, socket server on :9877, MCP server its MCP server). Its changes from this session
 are uncommitted (mixed with the owner's own work there).
 
 ## ai-db core (`ai_db/`)
@@ -140,7 +140,7 @@ are uncommitted (mixed with the owner's own work there).
 - **Packaging:** `ai-db-scene` builds as a wheel **[new]**.
 - **Docs:** `docs/SCENE_TUTORIAL.md` **[new]** and `docs/3D_PIPELINE.md` **[changed]**.
 
-## ox-blender addon (`~/GitRepos/blender_mcp`, package `blender_ox`)
+## ox-blender addon (`~/GitRepos/blender_mcp`, package the ox-blender package)
 
 | Handler / module | Status | Used for |
 |---|---|---|
