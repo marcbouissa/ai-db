@@ -318,5 +318,5 @@ def test_live_rebuild_without_clear_leaves_no_leftovers(private_blender, tmp_pat
         out = sp._handle_build_scene({"spec": SPEC, "snapshot": False, "exposure_check": False})
         assert out["status"].startswith("built"), out
     names = client.run_code("import bpy\nresult = sorted(o.name for o in bpy.context.scene.objects)")
-    assert "Cube" not in names and not any(n.endswith(".001") or n.endswith("_stale") for n in names), names
+    assert "Cube" not in names and not any(n.endswith((".001", "_stale")) for n in names), names
     assert not [i for i in out["issues_left"] if i.get("check") == "interpenetration"]
