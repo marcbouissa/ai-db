@@ -15,7 +15,8 @@ SEAT_HEIGHT_M = 0.45            # typical upholstered seat top (guides: 43-48 cm
 COFFEE_REACH_M = (0.25, 0.75)   # gap seat front -> coffee table (guides: 40-45 cm; tolerant)
 COFFEE_HEIGHT_DELTA_M = (-0.15, 0.05)  # table top vs seat top: at or a little below it
 SIDE_TABLE_HEIGHT_M = (0.45, 0.75)     # about armrest height
-DINING_WALL_CLEAR_M = 0.75      # table edge -> wall to pull a chair out (guides: 0.9-1.0)
+DINING_WALL_CLEAR_M = 0.75
+SEAT_REACH_M = 0.6              # a chair this close to a desk is "at" it      # table edge -> wall to pull a chair out (guides: 0.9-1.0)
 
 
 def _footprint(p: Any) -> tuple[float, float, float, float]:
@@ -59,6 +60,14 @@ def check(spec: Any, placements: list[Any]) -> list[dict[str, Any]]:
         if not lo <= t.dims[2] <= hi:
             issues.append(_warn([t.id], f"{t.id} is {t.dims[2]:.2f} m tall; side tables match the armrest "
                                         f"({lo:.2f}-{hi:.2f} m)"))
+    # every desk (or dining table) needs a chair at it: chairs placed as a block elsewhere read as
+    # storage, not seating (a judge's complaint about a classroom)
+    chairs_all = [p for p in placements if p.category in ("chair", "office_chair", "dining_chair", "stool")]
+    if chairs_all:
+        lonely = [d.id for d in placements if d.category == "desk" and min(_gap(c, d) for c in chairs_all) > SEAT_REACH_M]
+        if lonely:
+            issues.append(_warn(lonely[:8], f"{len(lonely)} desk(s) with no chair within {SEAT_REACH_M:.1f} m: put chairs "
+                                            "in_front_of their desks (same grid) instead of in a separate block"))
     st = spec.setting
     if st.kind == "indoor" and st.shape == "rect" and not st.rooms:
         hw, hd = st.bounds_m[0] / 2, st.bounds_m[1] / 2
