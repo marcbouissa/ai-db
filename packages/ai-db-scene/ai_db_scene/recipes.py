@@ -15,6 +15,7 @@ from ai_db_scene.constants import (
     RECIPE_EDGE_BEVEL_M,
     RECIPE_EDGE_BEVEL_MAX_SHARE,
     RECIPE_EDGE_BEVEL_SEGMENTS,
+    RECIPE_WOOD_GRAIN_SCALE,
 )
 
 _DARK = "color:#141414"
@@ -240,21 +241,28 @@ _FABRIC = "fabric:linen"
 
 
 def _cabinet(doors: int, drawers: int = 0, legs: bool = False, wood: str = _WOOD) -> list[dict[str, Any]]:
-    """A carcass with door/drawer lines and handles on its front (-Y), all touching its face (y=-0.46)."""
+    """A carcass on optional legs with shaker (recessed-field) drawer fronts over door fronts and
+    pulls, all on its face (y = -0.45): real fronts with gaps read as furniture, drawn lines do not."""
     z0 = 0.08 if legs else 0.0
-    parts = [_box("body", [1.0, 0.96, 1.0 - z0], [0, 0.02, z0], wood)]
+    parts = [_box("body", [1.0, 0.95, 1.0 - z0], [0, 0.025, z0], wood)]
     if legs:
         parts += [_box(f"leg_{i}", [0.05, 0.05, z0], [x, y, 0], _DARK)
                   for i, (x, y) in enumerate(((-0.45, -0.42), (0.45, -0.42), (-0.45, 0.45), (0.45, 0.45)))]
-    h = 1.0 - z0
+    h = 1.0 - z0 - 0.02
+    dh = h * (0.22 if doors else 1.0 / max(drawers, 1))  # drawer height
+    top = 1.0 - 0.01
     for k in range(drawers):
-        z = z0 + h * (1 - (k + 1) / (drawers + doors / 2 + 0.001))
-        parts += [_box(f"drawer_line_{k}", [0.94, 0.02, 0.006], [0, -0.47, z], _DARK),
-                  _box(f"drawer_pull_{k}", [0.16, 0.03, 0.02], [0, -0.475, z + 0.04], _STEEL)]
-    for k in range(doors):
-        x = -0.5 + (k + 0.5) / doors
-        parts += [_box(f"door_line_{k}", [0.006, 0.02, h * 0.9], [x + 0.5 / doors - 0.003, -0.47, z0 + h * 0.05], _DARK),
-                  _box(f"handle_{k}", [0.02, 0.03, 0.14], [x + 0.4 / doors * (1 if k % 2 else -1), -0.475, z0 + h * 0.45], _STEEL)]
+        z = top - (k + 1) * dh
+        parts += [_panel(f"drawer_{k}", 0.97, dh - 0.012, 0, z + 0.006, wood),
+                  _box(f"drawer_pull_{k}", [0.16, 0.02, 0.02], [0, -0.49, z + dh / 2 - 0.01], _STEEL)]
+    if doors:
+        dz0, dz1 = z0 + 0.01, top - drawers * dh
+        w = 0.97 / doors
+        for k in range(doors):
+            x = -0.485 + w * (k + 0.5)
+            parts += [_panel(f"door_{k}", w - 0.01, dz1 - dz0 - 0.008, x, dz0, wood),
+                      _box(f"handle_{k}", [0.02, 0.02, min(0.14, (dz1 - dz0) * 0.3)],
+                           [x + (w / 2 - 0.05) * (1 if k % 2 == 0 else -1) * -1, -0.49, dz0 + (dz1 - dz0) * 0.45], _STEEL)]
     return parts
 
 
@@ -727,7 +735,15 @@ def recipe_spec(category: str, name: str, dims: tuple[float, float, float] | lis
     else:
         parts, style = _RECIPES[category](), "ai-db recipe"
     return {"asset": name, "category": category, "style": style,
-            "bbox_m": [float(dims[0]), float(dims[1]), float(dims[2])], "parts": soften_edges(parts, dims)}
+            "bbox_m": [float(dims[0]), float(dims[1]), float(dims[2])], "parts": _fine_grain(soften_edges(parts, dims))}
+
+
+def _fine_grain(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Furniture-scale wood figure: the library default is sized for floors and reads as big
+    contour-map swirls on a drawer front."""
+    return [{**p, "material": f"{p['material']}:scale={RECIPE_WOOD_GRAIN_SCALE}"}
+            if str(p.get("material", "")).startswith("wood") and "scale=" not in p["material"] else p
+            for p in parts]
 
 
 def soften_edges(parts: list[dict[str, Any]], dims: tuple[float, float, float] | list[float],

@@ -77,6 +77,7 @@ SCENE_EXPORT_TIMEOUT_S = 300.0
 RECIPE_EDGE_BEVEL_M = 0.006
 RECIPE_EDGE_BEVEL_SEGMENTS = 2
 RECIPE_EDGE_BEVEL_MAX_SHARE = 0.25  # never more than this share of the part's thinnest side
+RECIPE_WOOD_GRAIN_SCALE = 3.0  # wood figure scale on recipe parts (furniture, not floor-sized)
 
 # --- Room realism (tools/scene_pipeline.py) ---
 SCENE_CEILING = True        # indoor rooms get a ceiling slab (an open top shows the sky)

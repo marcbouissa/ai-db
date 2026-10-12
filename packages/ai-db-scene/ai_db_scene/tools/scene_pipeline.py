@@ -724,13 +724,16 @@ _GENERATED: dict[str, tuple[str, Any]] = {
     "conference_table": ("table", lambda w, d, h: {"width": w, "depth": d, "height": h}),
     "desk": ("desk", lambda w, d, h: {"width": w, "depth": d, "height": h}),
     "bookshelf": ("bookshelf", lambda w, d, h: {"width": w, "depth": d, "height": h}),
+    # the bed generator sizes by mattress (twin/full/queen/king): pick the one the width fits
+    "bed": ("bed", lambda w, d, h: {"size": "twin" if w < 1.2 else "full" if w < 1.5 else "queen" if w < 1.8 else "king"}),
 }
 #: setting.style -> the generator preset a family starts from (a seed then varies it)
 _STYLE_PRESETS: dict[str, dict[str, str]] = {
-    "classic": {"sofa": "chesterfield_like", "armchair": "wingback_like"},
-    "modern": {"sofa": "mid_century", "armchair": "modern_lounge"},
-    "scandinavian": {"sofa": "compact_loveseat", "armchair": "modern_lounge", "dining_chair": "scandi_slat"},
-    "rustic": {"sofa": "lounge_deep", "armchair": "club_chair"},
+    "classic": {"sofa": "chesterfield_like", "armchair": "wingback_like", "bed": "tufted_queen"},
+    "modern": {"sofa": "mid_century", "armchair": "modern_lounge", "bed": "platform_king"},
+    "scandinavian": {"sofa": "compact_loveseat", "armchair": "modern_lounge", "dining_chair": "scandi_slat",
+                     "bed": "wooden_twin"},
+    "rustic": {"sofa": "lounge_deep", "armchair": "club_chair", "bed": "wooden_twin"},
     "industrial": {"sofa": "lounge_deep", "armchair": "club_chair"},
 }
 

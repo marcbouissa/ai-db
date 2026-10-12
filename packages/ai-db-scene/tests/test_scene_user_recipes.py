@@ -16,8 +16,9 @@ def test_recipes_dir_is_isolated(tmp_path):
 
 
 def _unbevelled(parts):
-    """recipe_spec rounds box edges (soften_edges); compare the authored parts."""
-    return [{k: v for k, v in p.items() if k not in ("bevel", "bevel_segments")} for p in parts]
+    """recipe_spec rounds box edges (soften_edges) and refines wood grain; compare the authored parts."""
+    out = [{k: v for k, v in p.items() if k not in ("bevel", "bevel_segments")} for p in parts]
+    return [{**p, "material": p["material"].split(":scale=")[0]} if "material" in p else p for p in out]
 
 
 def test_create_recipe_used_by_recipe_spec(tmp_path):
