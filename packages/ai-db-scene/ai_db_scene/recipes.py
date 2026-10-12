@@ -200,11 +200,17 @@ _RECIPES: dict[str, Any] = {
         *[_box(f"marker_{k}", [0.08, 0.8, 0.012], [x, 0, 0.04], c)
           for k, (x, c) in enumerate(((-0.2, "plastic:#1d4fbf"), (-0.08, "plastic:#c62828"), (0.04, "plastic:#111111")))]],
     "kitchen_counter": _kitchen_run,
+    # kitchen island (1.8 x 0.9 x 0.92 m): plinth, carcass with shaker drawers and doors on the
+    # working side (-Y), a stone worktop overhanging the back for stools
     "kitchen_island": lambda: [
-        _box("cabinet", [0.94, 0.9, 0.94], [0, 0, 0], "color:#e9e5dc"),
-        _box("top", [1.0, 1.0, 0.06], [0, 0, 0.94], "color:#d8d6d0")],
-    # fridge-freezer (0.7 x 0.7 x 1.8 m): cabinet, two separate doors with a gap (fridge over
-    # freezer), bar handles, dark kick plate; clean brushed steel, not a raw sheet
+        _box("plinth", [0.96, 0.6, 0.11], [0, -0.13, 0], _DARK),
+        _box("carcass", [1.0, 0.68, 0.845], [0, -0.11, 0.11], "plastic:#ece8df"),
+        _box("worktop", [1.0, 1.0, 0.045], [0, 0, 0.955], "marble:calacatta"),
+        *[p for k in range(4) for p in (
+            _panel(f"drawer_{k}", 0.242, 0.17, -0.375 + k * 0.25, 0.775, "plastic:#ece8df"),
+            _box(f"drawer_pull_{k}", [0.11, 0.02, 0.012], [-0.375 + k * 0.25, -0.49, 0.855], _STEEL),
+            _panel(f"door_{k}", 0.242, 0.645, -0.375 + k * 0.25, 0.12, "plastic:#ece8df"),
+            _box(f"door_pull_{k}", [0.012, 0.02, 0.12], [-0.375 + k * 0.25 + (0.09 if k % 2 else -0.09), -0.49, 0.6], _STEEL))]],
     "refrigerator": lambda: [
         _box("cabinet", [1.0, 0.93, 1.0], [0, 0.035, 0], "metal:brushed"),
         _box("kick", [0.96, 0.03, 0.04], [0, -0.45, 0], _DARK),
@@ -382,14 +388,22 @@ _RECIPES.update({
         _box("water", [0.9, 0.86, 0.01], [0, 0, 0.42], "glass:tinted"),
         _cyl("mixer_post", [0.025, 0.06, 0.08], [0.44, 0, 0.9], "metal:chrome"),
         _box("spout", [0.06, 0.03, 0.025], [0.415, 0, 0.955], "metal:chrome")],
+    # shower stall (0.9 x 0.9 x 2.1 m): low tray, clear glass front and side in chrome frames
+    # with a door handle, a riser rail with an overhead head and a mixer on the back wall side
     "shower_stall": lambda: [
-        _box("tray", [1.0, 1.0, 0.05], [0, 0, 0], _WHITE_C),
-        _box("glass_front", [1.0, 0.02, 0.95], [0, -0.49, 0.05], "glass:frosted"),
-        _box("glass_side", [0.02, 1.0, 0.95], [-0.49, 0, 0.05], "glass:frosted"),
-        _box("riser", [0.03, 0.03, 0.88], [0.3, 0.485, 0.05], "metal:chrome"),
-        _box("head_arm", [0.04, 0.2, 0.03], [0.3, 0.4, 0.9], "metal:chrome"),
-        _cyl("head", [0.12, 0.12, 0.03], [0.3, 0.3, 0.88], "metal:chrome")],
-    # wall mirror: moulded frame, mirror glass inset behind it
+        {"id": "tray", "shape": "rounded_slab", "size": [1.0, 1.0, 0.04], "at": [0, 0, 0], "corner_radius": 0.02,
+         "material": _WHITE_C},
+        _box("glass_front", [0.96, 0.012, 0.92], [0.02, -0.488, 0.04], "glass:clear"),
+        _box("glass_side", [0.012, 0.96, 0.92], [-0.488, 0.02, 0.04], "glass:clear"),
+        _box("frame_top_f", [1.0, 0.025, 0.012], [0, -0.4875, 0.96], "metal:chrome"),
+        _box("frame_top_s", [0.025, 1.0, 0.012], [-0.4875, 0, 0.96], "metal:chrome"),
+        _box("frame_post", [0.025, 0.025, 0.92], [-0.4875, -0.4875, 0.04], "metal:chrome"),
+        _box("frame_post_r", [0.025, 0.025, 0.92], [0.4875, -0.4875, 0.04], "metal:chrome"),
+        _box("handle", [0.012, 0.03, 0.12], [0.3, -0.505, 0.45], "metal:chrome"),
+        _box("riser", [0.03, 0.03, 0.88], [0.3, 0.485, 0.04], "metal:chrome"),
+        _box("head_arm", [0.04, 0.2, 0.02], [0.3, 0.4, 0.9], "metal:chrome"),
+        _cyl("head", [0.2, 0.2, 0.012], [0.3, 0.3, 0.888], "metal:chrome"),
+        _box("mixer", [0.1, 0.04, 0.05], [0.3, 0.48, 0.5], "metal:chrome")],
     "mirror": lambda: [
         *_frame("frame", 0.07, "wood:walnut"),
         _box("back", [0.94, 0.4, 0.88], [0, 0.3, 0.06], "wood:dark"),
@@ -456,8 +470,15 @@ _RECIPES.update({
         _box("base", [1.0, 1.0, 0.08], [0, 0, 0], _STONE),
         _cyl("shaft", [0.8, 0.8, 0.84], [0, 0, 0.08], _STONE),
         _box("capital", [1.0, 1.0, 0.08], [0, 0, 0.92], _STONE)],
+    # straight stair (1.0 x 3.0 x 2.8 m, 14 rises): oak treads with a nosing over white risers,
+    # carried by sloped stringers on both sides
     "stairs": lambda: [
-        _box(f"step_{i}", [1.0, 1.0 - i / 8, (i + 1) / 8], [0, i / 16, 0], _WOOD) for i in range(8)],
+        *[p for k in range(14) for p in (
+            _box(f"riser_{k}", [0.94, 0.006, round(1 / 14 - 0.0143, 4)], [0, round(-0.5 + k / 14 + 0.003, 4), round(k / 14, 4)],
+                 "plastic:#f2f2f0"),
+            _box(f"tread_{k}", [0.94, round(1 / 14 + 0.008, 4), 0.0143], [0, round(-0.5 + (k + 0.5) / 14 - 0.004, 4),
+                                                                          round((k + 1) / 14 - 0.0143, 4)], _WOOD))],
+        *[_brace(f"stringer_{s}", x, -0.5, 0.03, 0.5, 0.97, 0.04, 0.06, "plastic:#f2f2f0") for s, x in (("l", -0.49), ("r", 0.49))]],
     "workbench": lambda: [
         _box("top", [1.0, 1.0, 0.08], [0, 0, 0.92], "wood:pine"),
         *[_box(f"leg_{i}", [0.06, 0.08, 0.92], [x, y, 0], _STEEL)
