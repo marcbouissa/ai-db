@@ -129,9 +129,12 @@ def _kitchen_run() -> list[dict[str, Any]]:
 
 
 def _screen() -> list[dict[str, Any]]:
-    return [_box("foot", [0.35, 0.8, 0.03], [0, 0, 0], "metal:chrome"),
-            _box("neck", [0.06, 0.1, 0.13], [0, 0.05, 0.03], "metal:chrome"),
-            _box("panel", [1.0, 0.12, 0.84], [0, 0, 0.16], _DARK)]
+    """Monitor / TV: an oval foot and neck, a thin black body, and the glass screen inset in its
+    bezel (a reflective dark face reads as a screen, a matte black box does not)."""
+    return [_cyl("foot", [0.35, 0.8, 0.025], [0, 0.05, 0], "metal:chrome"),
+            _box("neck", [0.06, 0.1, 0.15], [0, 0.1, 0.025], "metal:chrome"),
+            _box("body", [1.0, 0.1, 0.84], [0, 0.0, 0.16], "plastic:#0b0b0b"),
+            _box("screen", [0.96, 0.02, 0.78], [0, -0.06, 0.19], "glass:tinted")]
 
 
 _RECIPES: dict[str, Any] = {
@@ -166,18 +169,28 @@ _RECIPES: dict[str, Any] = {
         _cyl("trunk", [0.12, 0.12, 0.5], [0, 0, 0], _BARK),
         *_lobes("crown", 0.42, 0.58, 0.5, 9, _GREEN, _GREEN2)],
     "bush": lambda: _lobes("body", 0.0, 1.0, 0.5, 7, _GREEN, _GREEN2),
+    # wall whiteboard: aluminium frame bars round a glossy white board, marker tray, markers
     "whiteboard": lambda: [
-        _box("frame", [1.0, 1.0, 1.0], [0, 0, 0], "metal:steel"),
-        _box("board", [0.96, 0.2, 0.92], [0, -0.45, 0.04], _WHITE)],
+        _box("board", [0.98, 0.7, 0.92], [0, 0.15, 0.06], "plastic:#f7f7f5"),
+        _box("frame_top", [1.0, 1.0, 0.02], [0, 0, 0.98], "metal:brushed"),
+        _box("frame_bottom", [1.0, 1.0, 0.02], [0, 0, 0.04], "metal:brushed"),
+        *[_box(f"frame_{s}", [0.012, 1.0, 0.96], [x, 0, 0.04], "metal:brushed") for s, x in (("l", -0.494), ("r", 0.494))],
+        _box("tray", [0.6, 1.0, 0.04], [0, 0, 0.0], "metal:brushed"),
+        *[_box(f"marker_{k}", [0.08, 0.8, 0.012], [x, 0, 0.04], c)
+          for k, (x, c) in enumerate(((-0.2, "plastic:#1d4fbf"), (-0.08, "plastic:#c62828"), (0.04, "plastic:#111111")))]],
     "kitchen_counter": _kitchen_run,
     "kitchen_island": lambda: [
         _box("cabinet", [0.94, 0.9, 0.94], [0, 0, 0], "color:#e9e5dc"),
         _box("top", [1.0, 1.0, 0.06], [0, 0, 0.94], "color:#d8d6d0")],
+    # fridge-freezer (0.7 x 0.7 x 1.8 m): cabinet, two separate doors with a gap (fridge over
+    # freezer), bar handles, dark kick plate; clean brushed steel, not a raw sheet
     "refrigerator": lambda: [
-        _box("body", [1.0, 1.0, 1.0], [0, 0, 0], "metal:steel"),
-        _box("split", [1.0, 0.02, 0.01], [0, -0.505, 0.62], _DARK),
-        _box("handle", [0.03, 0.04, 0.3], [0.38, -0.52, 0.65], "metal:chrome"),
-        _box("handle_low", [0.03, 0.04, 0.2], [0.38, -0.52, 0.35], "metal:chrome")],
+        _box("cabinet", [1.0, 0.93, 1.0], [0, 0.035, 0], "metal:brushed"),
+        _box("kick", [0.96, 0.03, 0.04], [0, -0.45, 0], _DARK),
+        _box("door_freezer", [0.99, 0.04, 0.33], [0, -0.45, 0.045], "metal:brushed"),
+        _box("door_fridge", [0.99, 0.04, 0.615], [0, -0.45, 0.383], "metal:brushed"),
+        *[p for k, (z, hh) in enumerate(((0.12, 0.2), (0.45, 0.32))) for p in (
+            _box(f"handle_{k}", [0.03, 0.02, hh], [0.4, -0.48, z], "metal:chrome"),)]],
     "pallet_rack": _rack,
     "bench": lambda: [
         # two side frames carry the seat; posts rise from them and carry the backrest
