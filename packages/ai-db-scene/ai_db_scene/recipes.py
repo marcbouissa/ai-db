@@ -380,11 +380,16 @@ _RECIPES.update({
         *[p for s, x in (("l", -0.44), ("r", 0.44)) for p in (
             _box(f"arm_post_{s}", [0.05, 0.05, 0.2], [x, 0.05, 0.44], _DARK),
             _box(f"arm_pad_{s}", [0.08, 0.36, 0.035], [x, 0.03, 0.64], "rubber"))]],
+    # bar stool: a padded round seat on a wooden seat board, four legs, a footrest ring of
+    # four rails at foot height
     "stool": lambda: [
-        _cyl("seat", [1.0, 1.0, 0.07], [0, 0, 0.93], _WOOD),
-        *[_box(f"leg_{i}", [0.07, 0.07, 0.93], [x, y, 0], _WOOD)
-          for i, (x, y) in enumerate(((-0.3, -0.3), (0.3, -0.3), (-0.3, 0.3), (0.3, 0.3)))],
-        _box("rung", [0.66, 0.05, 0.04], [0, -0.3, 0.3], _WOOD)],
+        {"id": "cushion", "shape": "cushion", "size": [1.0, 1.0, 0.06], "at": [0, 0, 0.94], "crown": 0.01,
+         "material": "leather:#3a2a20"},
+        _cyl("seat_board", [0.96, 0.96, 0.03], [0, 0, 0.91], _WOOD),
+        *[_box(f"leg_{i}", [0.08, 0.08, 0.91], [x, y, 0], _WOOD)
+          for i, (x, y) in enumerate(((-0.32, -0.32), (0.32, -0.32), (-0.32, 0.32), (0.32, 0.32)))],
+        *[_box(f"foot_rail_{s}", [0.64, 0.05, 0.035], [0, y, 0.3], "metal:brushed") for s, y in (("f", -0.32), ("b", 0.32))],
+        *[_box(f"foot_rail_{s}", [0.05, 0.64, 0.035], [x, 0, 0.3], "metal:brushed") for s, x in (("l", -0.32), ("r", 0.32))]],
     # close-coupled toilet (front -Y): pedestal, a bowl widening to the rim, seat and lid,
     # cistern with its lid and a chrome flush button
     "toilet": lambda: [
