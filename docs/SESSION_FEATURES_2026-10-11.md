@@ -178,6 +178,12 @@ nemotron arm (lightning 4.67, ultra 4.50; raw 1.67 / 3.50). Larger free models (
 space-bunny, big-pickle) score 6-8 but finished only 1-4 scenes each before rate limits, on the
 first (easier) briefs, so they are not comparable yet.
 
+Larger free models, blind paired judging (no ai-db / v1 / v4, mean 1-10): big-pickle 5.00 / 5.67 /
+5.00, mimo 6.50 / 4.50 / 6.67, space-bunny 7.50 / 5.00 / 7.17. For capable models v4 is level with
+building without ai-db (paired per brief: +-1-2 points either way) and clearly better than v1; the
+large gains are for weak models (nemotron-lightning 1.5 -> 5.2). Without-ai-db scores cover only
+2-3 briefs each.
+
 ## Not finished or left for later
 
 - Tree types (pine, birch, palm): drop the paper-looking flattened sprays and scatter needles and leaflets along twigs instead.
