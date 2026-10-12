@@ -670,9 +670,9 @@ _RECIPES.update({
         _box("rail_l", [0.03, 0.9, 0.03], [-0.45, 0, 0.3], _WHITE),
         _box("rail_r", [0.03, 0.9, 0.03], [0.45, 0, 0.3], _WHITE),
         _box("eave", [1.0, 1.0, 0.04], [0, 0, 0.7], _WHITE),
-        _box("roof_1", [0.8, 0.8, 0.1], [0, 0, 0.74], "color:#5b4636"),
-        _box("roof_2", [0.55, 0.55, 0.08], [0, 0, 0.84], "color:#5b4636"),
-        _box("roof_3", [0.3, 0.3, 0.06], [0, 0, 0.92], "color:#5b4636"),
+        # a pitched pyramid roof (four-sided cone), shingle-matte, overhanging the eave
+        {"id": "roof", "shape": "tapered_cylinder", "size": [1.0, 1.0, 0.24], "at": [0, 0, 0.74], "radius": 1.0,
+         "radius_top": 0.02, "segments": 4, "material": "concrete:#4a3a2e"},
         _cyl("finial", [0.04, 0.04, 0.02], [0, 0, 0.98], _DARK)],
     "planter": lambda: [
         _box("box", [1.0, 1.0, 0.7], [0, 0, 0], _CONCRETE),
