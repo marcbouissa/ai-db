@@ -1584,6 +1584,9 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
         from ai_db_scene import ergonomics
 
         left += ergonomics.check(spec, placements)
+        from ai_db_scene import realism
+
+        left += realism.check(spec, placements)
     except Exception as e:  # noqa: BLE001 - a check must never fail a finished build
         left.append({"check": "ergonomics", "severity": "warning", "message": f"not checked: {e}"})
     try:

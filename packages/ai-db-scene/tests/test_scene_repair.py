@@ -56,7 +56,7 @@ def test_build_scene_repairs_builds_and_applies_fixes(monkeypatch):
     assert out["repairs"] and out["spec"] is not None
     assert sent == [("modify_object", {"name": "lamp", "location": [0, 0, 0]})]
     assert out["fixes_applied"] == ["floating: lamp floats"]
-    assert [i for i in out["issues_left"] if i["check"] != "ergonomics"] == []  # use-warnings may remain
+    assert [i for i in out["issues_left"] if i["check"] not in ("ergonomics", "realism")] == []  # advice may remain
 
 
 def test_build_scene_reports_invalid_specs():

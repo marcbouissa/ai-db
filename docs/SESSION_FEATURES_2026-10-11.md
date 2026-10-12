@@ -56,6 +56,7 @@ are uncommitted (mixed with the owner's own work there).
 | `poly_budget` (decimate heaviest non-hero objects) | [new] |
 | `physics: true` (rigid bodies, `dynamic` objects) | [new] |
 | Ergonomics warnings (coffee-table reach and height, side-table height, dining clearance) | [new] |
+| Realism warnings (flat colour on floors, walls or large objects; no lamp or window; bare walls in living spaces) | [new] |
 | Lessons from user feedback (escalate checks, floating-part tests, verify items) | [new] |
 
 ### Spec, layout and rooms
