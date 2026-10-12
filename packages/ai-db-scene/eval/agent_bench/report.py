@@ -10,7 +10,7 @@ from typing import Any
 import briefs
 
 #: arm suffixes in table order: ai-db v1, ai-db v2 (build_scene/edit_scene), then without ai-db
-MODES = ("aidb", "aidb2", "aidb3", "raw")
+MODES = ("aidb", "aidb2", "aidb3", "aidb4", "raw")
 
 
 def _split(arm: str) -> tuple[str, str]:
@@ -119,7 +119,8 @@ def write(out: str) -> str:
           "| model | comparison | pairs | judge aidb Δ | judge plain Δ | quality Δ | wall min Δ | tokens k Δ |",
           "|---|---|---|---|---|---|---|---|"]
     by = {(r["arm"], r["brief"]): r for r in rows}
-    comparisons = (("aidb", "raw"), ("aidb2", "raw"), ("aidb3", "raw"), ("aidb2", "aidb"), ("aidb3", "aidb2"))
+    comparisons = (("aidb", "raw"), ("aidb2", "raw"), ("aidb3", "raw"), ("aidb4", "raw"), ("aidb2", "aidb"),
+                   ("aidb3", "aidb2"), ("aidb4", "aidb3"))
     for model in sorted({_split(a)[0] for a in ARMS}):
         for first, second in comparisons:
             prs = [(by[(f"{model}-{first}", b)], by[(f"{model}-{second}", b)]) for b in briefs.BRIEFS
