@@ -89,7 +89,7 @@ SCENE_GROUND_DROP_M = 0.003  # ... just under the scene's own ground, so it neve
 SCENE_FOLIAGE_DENSITY = 900.0  # leaves per m2 of crown surface (trees, bushes, hedges, plants); 0 = off
 SCENE_FOLIAGE_MAX_LEAVES = 40000  # per mesh: big crowns get sparser leaves, not more
 SCENE_FOLIAGE_LEAF_M = 0.09  # leaf length
-FOLIAGE_CATEGORIES = ("tree", "bush", "hedge", "potted_plant")
+FOLIAGE_CATEGORIES = ("tree", "bush", "hedge", "potted_plant", "planter")
 TREE_BARK_MATERIAL = "stone:#4b3b2e:proj=box"  # rough and bumpy; wood grain read as birch-like stripes
 SCENE_LINE_WIDTH_M = 0.1  # painted floor lines (aisles, walkways) in warehouse rooms
 SCENE_LINE_MATERIAL = "paint:#e8b400"

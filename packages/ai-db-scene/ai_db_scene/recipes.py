@@ -565,8 +565,13 @@ _RECIPES.update({
             _cyl(f"rim_{i}", [0.27, 0.094, 0.015], [round(x + (0.0725 if x > 0 else -0.0725), 4), y, 0.08],
                  "metal:brushed", rotation_deg=[0, 90, 0]))]],
     "rock": lambda: [
-        _sphere("mass", [1.0, 0.85, 0.75], [0, 0, 0], "color:#7d7a72"),
-        _sphere("lump", [0.6, 0.55, 0.5], [0.2, 0.1, 0.4], "color:#8a867c")],
+        # a boulder: a broad, flattened mass with uneven lumps pressed into it (smooth single
+        # spheres read as eggs), rough stone, one mossy side
+        _sphere("mass", [1.0, 0.82, 0.78], [0, 0, 0], "stone"),
+        _sphere("lump_a", [0.62, 0.58, 0.55], [0.22, 0.12, 0.3], "stone:#8a857b"),
+        _sphere("lump_b", [0.5, 0.6, 0.45], [-0.25, -0.1, 0.18], "stone:#6f6b63"),
+        _sphere("lump_c", [0.42, 0.4, 0.36], [0.05, -0.22, 0.42], "stone"),
+        _sphere("moss", [0.55, 0.3, 0.3], [-0.12, 0.3, 0.45], "foliage:#4b5e2e")],
 })
 def _taper(pid: str, size: list[float], at: list[float], material: str, top: float) -> dict[str, Any]:
     """A cone-like cylinder: ``top`` is the top radius as a fraction of the base radius."""

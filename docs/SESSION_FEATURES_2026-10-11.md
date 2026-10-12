@@ -92,6 +92,7 @@ are uncommitted (mixed with the owner's own work there).
 | Car: rounded painted body, glass greenhouse, roof, lights, grille, bumpers, mirrors, rubber tyres with brushed rims | [new] |
 | Street lamp (tapered pole, arm, lantern head with lens), street bin (hollow steel body, liner), steel drum (hoops, chimes, bungs), A-frame picnic table | [new] |
 | Kitchen island (shaker fronts, overhanging worktop), shower stall (clear glass in chrome frames, tray, head, mixer), straight stair (treads with nosing, risers, stringers) | [new] |
+| Boulder (flattened mass with lumps, stone, moss); planters get leaf foliage | [new] |
 | Generated furniture varies per scene and follows the style (seed + preset) | [new] |
 | Trees grown from a branching skeleton; leaf-card foliage on trees, bushes, hedges, plants | [new] (pine, birch and palm types prototyped, not committed) |
 | Material vocabulary incl. `concrete`, `stone`, `foliage`, `plastic`, `paint`, `rubber`, `pbr:<preset>` wear | [new] |
