@@ -86,6 +86,7 @@ are uncommitted (mixed with the owner's own work there).
 | Bedroom: beds from the addon's bed generator (size by width, style preset, seeded); shaker fronts on cabinet, wardrobe, dresser, nightstand, filing cabinet, TV stand | [new] |
 | Furniture-scale wood figure on every recipe part | [new] |
 | Fridge-freezer (two doors, bar handles, kick plate), whiteboard (aluminium frame, tray, markers), monitor/TV (thin bezel, glass screen) | [new] |
+| Floor and table lamps: hollow tapered linen shades with bulbs, weighted base, ceramic body | [new] |
 | Generated furniture varies per scene and follows the style (seed + preset) | [new] |
 | Trees grown from a branching skeleton; leaf-card foliage on trees, bushes, hedges, plants | [new] (pine, birch and palm types prototyped, not committed) |
 | Material vocabulary incl. `concrete`, `stone`, `foliage`, `plastic`, `paint`, `rubber`, `pbr:<preset>` wear | [new] |

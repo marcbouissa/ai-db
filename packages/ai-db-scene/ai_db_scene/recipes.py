@@ -140,14 +140,24 @@ def _screen() -> list[dict[str, Any]]:
 _RECIPES: dict[str, Any] = {
     "tv": _screen,
     "monitor": _screen,
+    # floor lamp: weighted disc base, slim pole, a hollow tapered linen shade (open below, a bulb
+    # inside) - a solid cylinder shade is the clearest placeholder tell
     "floor_lamp": lambda: [
-        _cyl("base", [0.6, 0.6, 0.02], [0, 0, 0], "metal:steel"),
-        _cyl("pole", [0.05, 0.05, 0.76], [0, 0, 0.02], "metal:chrome"),
-        _cyl("shade", [1.0, 1.0, 0.22], [0, 0, 0.78], "fabric:linen")],
+        _cyl("base", [0.55, 0.55, 0.025], [0, 0, 0], "metal:steel"),
+        _cyl("pole", [0.045, 0.045, 0.76], [0, 0, 0.025], "metal:brushed"),
+        _sphere("bulb", [0.2, 0.2, 0.06], [0, 0, 0.8], "plastic:#fff4dc"),
+        {"id": "shade", "shape": "tapered_cylinder", "size": [1.0, 1.0, 0.22], "at": [0, 0, 0.78],
+         "radius": 1.0, "radius_top": 0.78, "material": "fabric:linen:#e9e1cf",
+         "ops": [{"op": "shell", "thickness": 0.006, "open_faces": "bottom"}]}],
+    # table lamp: a ceramic body on a small foot, brass stem, hollow tapered shade with a bulb
     "table_lamp": lambda: [
-        _cyl("base", [0.5, 0.5, 0.08], [0, 0, 0], "metal:gold"),
-        _cyl("stem", [0.12, 0.12, 0.45], [0, 0, 0.08], "metal:gold"),
-        _cyl("shade", [1.0, 1.0, 0.47], [0, 0, 0.53], "fabric:linen")],
+        _cyl("foot", [0.5, 0.5, 0.04], [0, 0, 0], "metal:gold"),
+        _sphere("body", [0.55, 0.55, 0.36], [0, 0, 0.04], "ceramic"),
+        _cyl("stem", [0.07, 0.07, 0.16], [0, 0, 0.4], "metal:gold"),
+        _sphere("bulb", [0.22, 0.22, 0.1], [0, 0, 0.55], "plastic:#fff4dc"),
+        {"id": "shade", "shape": "tapered_cylinder", "size": [1.0, 1.0, 0.44], "at": [0, 0, 0.56],
+         "radius": 1.0, "radius_top": 0.72, "material": "fabric:linen:#efe8d8",
+         "ops": [{"op": "shell", "thickness": 0.008, "open_faces": "bottom"}]}],
     "pendant_lamp": lambda: [
         _cyl("shade", [1.0, 1.0, 0.3], [0, 0, 0], "metal:copper"),
         _cyl("cord", [0.02, 0.02, 0.7], [0, 0, 0.3], _DARK)],
