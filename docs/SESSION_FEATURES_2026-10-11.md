@@ -90,6 +90,7 @@ are uncommitted (mixed with the owner's own work there).
 | Picture frame (gilt moulding, mat, painted landscape canvas) and wall mirror (moulded frame, mirror glass) | [new] |
 | Classic marble fireplace (hearth, pilasters, capitals, frieze, mantel shelf, sooty firebox with brick cheeks and logs) and a glazed ceramic vase | [new] |
 | Car: rounded painted body, glass greenhouse, roof, lights, grille, bumpers, mirrors, rubber tyres with brushed rims | [new] |
+| Street lamp (tapered pole, arm, lantern head with lens), street bin (hollow steel body, liner), steel drum (hoops, chimes, bungs), A-frame picnic table | [new] |
 | Generated furniture varies per scene and follows the style (seed + preset) | [new] |
 | Trees grown from a branching skeleton; leaf-card foliage on trees, bushes, hedges, plants | [new] (pine, birch and palm types prototyped, not committed) |
 | Material vocabulary incl. `concrete`, `stone`, `foliage`, `plastic`, `paint`, `rubber`, `pbr:<preset>` wear | [new] |

@@ -173,12 +173,16 @@ _RECIPES: dict[str, Any] = {
         _box("plate", [0.4, 0.12, 0.6], [0, 0.44, 0.2], "metal:gold"),
         _box("arm", [0.08, 0.5, 0.06], [0, 0.17, 0.42], "metal:gold"),  # plate -> shade
         _cyl("shade", [0.9, 0.9, 0.5], [0, -0.05, 0.25], "fabric:linen")],
+    # street lamp (4.5 m): base plinth, tapering pole, an arm reaching out over the path, a
+    # lantern head with a warm lens underneath
     "street_lamp": lambda: [
-        _cyl("foot", [0.5, 0.5, 0.05], [0, 0, 0], _DARK),
-        _cyl("pole", [0.2, 0.2, 0.88], [0, 0, 0.05], _DARK),
-        _box("head", [1.0, 0.6, 0.07], [0, -0.2, 0.93], _DARK)],
-    # Foliage as clusters of overlapping lobes: one ball per crown is the clearest "placeholder"
-    # look; uneven lobes give a broken silhouette that reads as leaves at a distance.
+        _cyl("plinth", [0.7, 0.7, 0.04], [0, 0.1, 0], "concrete:#8a8986"),
+        {"id": "pole", "shape": "tapered_cylinder", "size": [0.3, 0.3, 0.86], "at": [0, 0.1, 0.04],
+         "radius": 1.0, "radius_top": 0.55, "material": "paint:#2b2f33"},
+        _box("arm", [0.08, 0.62, 0.012], [0, -0.17, 0.9], "paint:#2b2f33"),
+        {"id": "head", "shape": "tapered_cylinder", "size": [0.55, 0.5, 0.06], "at": [0, -0.42, 0.875],
+         "radius": 0.7, "radius_top": 1.0, "material": "paint:#2b2f33"},
+        _cyl("lens", [0.4, 0.36, 0.008], [0, -0.42, 0.867], "plastic:#fff1c9")],
     "potted_plant": lambda: [
         _cyl("pot", [0.55, 0.55, 0.3], [0, 0, 0], "concrete:#a0522d"),
         *_lobes("leaves", 0.3, 0.7, 0.42, 7, _GREEN, _GREEN2)],
@@ -217,11 +221,13 @@ _RECIPES: dict[str, Any] = {
         _box("post_l", [0.05, 0.05, 0.45], [-0.47, 0.265, 0.42], _DARK),
         _box("post_r", [0.05, 0.05, 0.45], [0.47, 0.265, 0.42], _DARK),
         _box("backrest", [1.0, 0.04, 0.24], [0, 0.265, 0.63], "wood:pine")],
+    # street bin: a brushed steel body (hollow, open top) round a dark liner, a rim and a base ring
     "trash_can": lambda: [
-        _cyl("bin", [1.0, 1.0, 0.92], [0, 0, 0], "metal:steel"),
-        _cyl("lid", [1.04, 1.04, 0.08], [0, 0, 0.92], _DARK)],
-    # steel safety barrier: two round posts on bolted base plates, a top rail and a lower
-    # kick rail in safety yellow, black end caps
+        _cyl("base", [1.0, 1.0, 0.04], [0, 0, 0], _DARK),
+        {"id": "body", "shape": "cylinder", "size": [0.96, 0.96, 0.92], "at": [0, 0, 0.04], "material": "metal:brushed",
+         "ops": [{"op": "shell", "thickness": 0.02, "open_faces": "top"}]},
+        _cyl("liner", [0.86, 0.86, 0.9], [0, 0, 0.05], "plastic:#141414"),
+        _cyl("rim", [1.0, 1.0, 0.04], [0, 0, 0.96], "metal:steel")],
     "safety_barrier": lambda: [
         *[p for s, x in (("l", -0.45), ("r", 0.45)) for p in (
             _box(f"plate_{s}", [0.12, 1.0, 0.02], [x, 0, 0], _STEEL),
@@ -482,11 +488,12 @@ _RECIPES.update({
         *[_box(f"block_{i}_{j}", [0.145, 0.12, 0.55], [x, y, 0.15], "wood:pine")
           for i, x in enumerate((-0.4275, 0.0, 0.4275)) for j, y in enumerate((-0.44, 0.0, 0.44))],
         *[_box(f"bottom_{k}", [0.145, 1.0, 0.15], [x, 0, 0], "wood:pine") for k, x in enumerate((-0.4275, 0.0, 0.4275))]],
+    # steel drum: painted body, two rolling hoops, top and bottom chimes, bung caps on the lid
     "barrel": lambda: [
-        _cyl("body", [1.0, 1.0, 1.0], [0, 0, 0], "color:#2f5d8a"),
-        *[_cyl(f"rib_{k}", [1.03, 1.03, 0.03], [0, 0, z], _DARK) for k, z in enumerate((0.25, 0.72))]],
-    # roller conveyor (3.0 x 0.6 x 0.8 m typical): steel side channels, a bed of rollers between
-    # them, leg frames with cross braces and foot plates, a drive unit under the bed
+        _cyl("body", [0.97, 0.97, 0.96], [0, 0, 0.02], "paint:#2f5d8a"),
+        *[_cyl(f"chime_{k}", [1.0, 1.0, 0.02], [0, 0, z], "paint:#2f5d8a") for k, z in enumerate((0.0, 0.98))],
+        *[_cyl(f"hoop_{k}", [1.0, 1.0, 0.025], [0, 0, z], "paint:#24486b") for k, z in enumerate((0.32, 0.65))],
+        *[_cyl(f"bung_{k}", [0.09, 0.09, 0.015], [x, 0.25, 0.985], "metal:steel") for k, x in enumerate((-0.25, 0.25))]],
     "conveyor": lambda: [
         *[_box(f"rail_{s}", [1.0, 0.083, 0.15], [0, y, 0.85], _STEEL) for s, y in (("l", -0.4585), ("r", 0.4585))],
         *[_cyl(f"roller_{k}", [0.017, 0.0625, 0.84], [round(-0.48 + k * 0.0331, 4), 0, 0.925], "metal:brushed",
@@ -504,14 +511,16 @@ _RECIPES.update({
         _box("post_r", [0.06, 1.0, 1.0], [0.47, 0, 0], "wood:pine"),
         *[_box(f"rail_{k}", [1.0, 0.5, 0.08], [0, 0, z], "wood:pine") for k, z in enumerate((0.25, 0.75))],
         *[_box(f"picket_{k}", [0.06, 0.4, 0.9], [-0.4 + k * 0.16, 0, 0.05], "wood:pine") for k in range(6)]],
+    # picnic table (1.8 x 1.5 x 0.78 m): plank top and benches on A-frame legs, bench bearers
     "picnic_table": lambda: [
-        _box("top", [1.0, 0.45, 0.06], [0, 0, 0.94], "wood:pine"),
-        _box("bench_f", [1.0, 0.2, 0.05], [0, -0.38, 0.55], "wood:pine"),
-        _box("bench_b", [1.0, 0.2, 0.05], [0, 0.38, 0.55], "wood:pine"),
-        _box("frame_l", [0.06, 1.0, 0.55], [-0.4, 0, 0], "wood:pine"),
-        _box("frame_r", [0.06, 1.0, 0.55], [0.4, 0, 0], "wood:pine"),
-        _box("stem_l", [0.06, 0.12, 0.39], [-0.4, 0, 0.55], "wood:pine"),
-        _box("stem_r", [0.06, 0.12, 0.39], [0.4, 0, 0.55], "wood:pine")],
+        *[_box(f"top_{k}", [1.0, 0.11, 0.06], [0, round(-0.24 + k * 0.12, 4), 0.94], "wood:pine") for k in range(5)],
+        *[_box(f"seat_{s}_{k}", [1.0, 0.09, 0.05], [0, round(sy * (0.37 + k * 0.1), 4), 0.55], "wood:pine")
+          for s, sy in (("f", -1), ("b", 1)) for k in range(2)],
+        *[p for i, x in enumerate((-0.36, 0.36)) for p in (
+            _box(f"bearer_{i}", [0.05, 1.0, 0.06], [x, 0, 0.49], "wood:pine"),
+            _box(f"top_bearer_{i}", [0.05, 0.62, 0.06], [x, 0, 0.88], "wood:pine"),
+            _brace(f"leg_{i}_f", x, -0.44, 0.0, -0.06, 0.88, 0.05, 0.07, "wood:pine"),
+            _brace(f"leg_{i}_b", x, 0.44, 0.0, 0.06, 0.88, 0.05, 0.07, "wood:pine"))]],
     "car": lambda: [
         # front at -Y. A rounded painted body over dark sills and bumpers, a glass greenhouse
         # (tinted windows all round, narrower than the body) under a rounded roof, head and tail
