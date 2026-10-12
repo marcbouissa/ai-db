@@ -684,10 +684,13 @@ _RECIPES.update({
         _box("leveler", [0.4, 0.3, 0.01], [0, -0.2, 0.92], _STEEL)],
     "shipping_container": lambda: [
         _box("base_frame", [1.0, 1.0, 0.04], [0, 0, 0], _DARK),
-        _box("body", [0.97, 0.98, 0.92], [0, 0, 0.04], "color:#2f5d8a"),
+        _box("body", [0.97, 0.98, 0.92], [0, 0, 0.04], "paint:#2f5d8a"),
         _box("top_frame", [1.0, 1.0, 0.04], [0, 0, 0.96], _DARK),
-        *[_box(f"rib_{s}_{k}", [0.015, 0.02, 0.92], [sx * 0.4925, -0.45 + 0.1 * k, 0.04], "color:#2a5480")
-          for s, sx in (("l", -1), ("r", 1)) for k in range(10)],
+        # corrugated side walls: a raised rib every ~0.27 m along the length
+        *[_box(f"rib_{s}_{k}", [0.015, 0.022, 0.92], [sx * 0.4925, round(-0.47 + 0.0454 * k, 4), 0.04], "paint:#2a5480")
+          for s, sx in (("l", -1), ("r", 1)) for k in range(21)],
+        *[_box(f"corner_{k}", [0.04, 0.02, 0.92], [x, y, 0.04], _DARK)
+          for k, (x, y) in enumerate(((-0.48, -0.49), (0.48, -0.49), (-0.48, 0.49), (0.48, 0.49)))],
         # doors at the back (+Y): a centre split and four locking bars
         _box("door_split", [0.006, 0.02, 0.88], [0, 0.49, 0.06], _DARK),
         *[_box(f"lock_bar_{k}", [0.02, 0.02, 0.86], [x, 0.49, 0.07], _STEEL)
