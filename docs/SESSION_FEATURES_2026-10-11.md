@@ -151,7 +151,7 @@ are uncommitted (mixed with the owner's own work there).
 | `apply_material` and the procedural library (`materials.py`) | [changed] | **new kinds** concrete, stone, foliage, plastic, paint, rubber; micro-roughness on `color` |
 | `room_shell` (openings, floor, ceiling) | [used] | rooms; ceiling now on |
 | `wood_plank_floor`, `carpet_pile` (`surface.py`) | [used] | plank floors, rug pile |
-| `daylight_rig`, `set_camera`, `frame_camera`, `render` | [used] / [changed] | `frame_camera` fits the projected extent (`lights_cameras.py`) |
+| `daylight_rig`, `set_camera`, `frame_camera`, `render` | [used] / [changed] | `frame_camera` fits the projected extent (`lights_cameras.py`); `daylight_rig` adds an interior fill in closed rooms without windows (they rendered black) |
 | `validate_scene` (`verify.py`, `scene_checks.py`) | [changed] | structure penetration, coverings (rugs, floors), facing rays, deduplicated pairs |
 | `create_primitive`, `modify_object`, `clear_scene`, `append_asset`, `import_file`, `run_code` | [used] | build steps, mouldings, foliage, trees, exposure and camera checks, export |
 | Moulding profiles and sweep (`profiles.py`) | [used] | crown, chair rail and baseboard through `run_code` |
