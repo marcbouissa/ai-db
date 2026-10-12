@@ -425,16 +425,27 @@ _RECIPES.update({
         _box(f"book_{i}", [w, d, 0.25], [x, 0, 0.25 * i], c)
         for i, (w, d, x, c) in enumerate(((1.0, 1.0, 0, "color:#7a3b2e"), (0.9, 0.9, 0.04, "color:#2e4f7a"),
                                           (0.95, 0.85, -0.02, "color:#3b6b45"), (0.8, 0.8, 0.05, "color:#b08a3c")))],
+    # glazed ceramic vase: foot, a full body, shoulder, neck and a slightly flared lip
     "vase": lambda: [
-        _cyl("foot", [0.6, 0.6, 0.1], [0, 0, 0], "color:#3d5a80"),
-        _sphere("body", [1.0, 1.0, 0.6], [0, 0, 0.08], "color:#3d5a80"),
-        _cyl("neck", [0.4, 0.4, 0.34], [0, 0, 0.66], "color:#3d5a80")],
+        _cyl("foot", [0.55, 0.55, 0.06], [0, 0, 0], "ceramic:#3d5a80"),
+        _sphere("body", [1.0, 1.0, 0.6], [0, 0, 0.04], "ceramic:#3d5a80"),
+        _cyl("neck", [0.38, 0.38, 0.3], [0, 0, 0.6], "ceramic:#3d5a80"),
+        _cyl("lip", [0.48, 0.48, 0.06], [0, 0, 0.9], "ceramic:#3d5a80")],
     "fireplace": lambda: [
-        _box("hearth", [1.0, 1.0, 0.08], [0, 0, 0], _STONE),
-        _box("surround_l", [0.2, 0.7, 0.75], [-0.4, 0.15, 0.08], _STONE),
-        _box("surround_r", [0.2, 0.7, 0.75], [0.4, 0.15, 0.08], _STONE),
-        _box("firebox", [0.6, 0.6, 0.6], [0, 0.2, 0.08], _DARK),
-        _box("lintel", [1.0, 0.7, 0.17], [0, 0.15, 0.83], _STONE)],
+        _box("hearth", [1.0, 1.0, 0.05], [0, 0, 0], "marble:carrara"),
+        _box("back", [1.0, 0.45, 0.95], [0, 0.275, 0.05], "marble:carrara"),
+        *[p for s, x in (("l", -0.4), ("r", 0.4)) for p in (
+            _box(f"plinth_{s}", [0.18, 0.6, 0.08], [x, 0.15, 0.05], "marble:carrara"),
+            _box(f"pilaster_{s}", [0.14, 0.55, 0.62], [x, 0.17, 0.13], "marble:carrara"),
+            _box(f"capital_{s}", [0.18, 0.6, 0.05], [x, 0.15, 0.75], "marble:carrara"))],
+        _box("frieze", [0.98, 0.55, 0.12], [0, 0.17, 0.8], "marble:carrara"),
+        _box("mantel", [1.0, 0.95, 0.06], [0, -0.025, 0.92], "marble:carrara"),
+        # the opening: a sooty recess (dark back, brick cheeks) set behind the surround's face
+        _box("firebox", [0.6, 0.08, 0.6], [0, 0.09, 0.05], "rubber:#0f0c0a"),
+        *[_box(f"cheek_{s}", [0.05, 0.3, 0.6], [x, 0.0, 0.05], "stone:#4a2a20") for s, x in (("l", -0.3), ("r", 0.3))],
+        # logs lie along x: about Y the part's z (0.22 -> 0.33 m) becomes the length, x (0.073 -> 8 cm) the height
+        *[_cyl(f"log_{k}", [0.073, 0.2, 0.22], [0, y, 0.05], "wood:dark", rotation_deg=[0, 90, 0])
+          for k, y in enumerate((-0.05, 0.03))]],
     "column": lambda: [
         _box("base", [1.0, 1.0, 0.08], [0, 0, 0], _STONE),
         _cyl("shaft", [0.8, 0.8, 0.84], [0, 0, 0.08], _STONE),
