@@ -698,7 +698,9 @@ _RECIPES.update({
         *[_sphere(f"plant_{k}", [0.3, 0.6, 0.32], [x, 0, 0.68], g)
           for k, (x, g) in enumerate(((-0.3, _GREEN), (0.0, _GREEN2), (0.3, _GREEN)))]],
     "hedge": lambda: [
-        _box("body", [1.0, 0.9, 0.85], [0, 0, 0], _GREEN),
+        # a clipped hedge is a rounded mass, not a box; leaf cards cover it in a scene
+        {"id": "body", "shape": "rounded_slab", "size": [1.0, 0.9, 0.85], "at": [0, 0, 0], "corner_radius": 0.12,
+         "material": _GREEN},
         *[_sphere(f"top_{k}", [0.3, 1.0, 0.3], [x, 0, 0.7], _GREEN2) for k, x in enumerate((-0.35, 0.0, 0.35))]],
     "signpost": lambda: [
         _cyl("post", [0.1, 0.6, 0.72], [0, 0.2, 0], _STEEL),
