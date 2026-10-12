@@ -144,6 +144,7 @@ are uncommitted (mixed with the owner's own work there).
 | `build_asset` (parts) | [used] | every recipe |
 | `build_asset` shape types and ops | [used] | box with `bevel`, cylinder, tapered_cylinder, sphere, rounded_slab, cushion, tufted_panel, raised_panel; `shell` op for hollow tubs and basins |
 | `generate_asset` families with `seed` and `preset` | [used] | sofa, armchair, dining_chair, table, desk, bookshelf, bed |
+| Generator wood palette (`generators/palettes.py`) | [changed] | furniture-scale figure on generated tables, desks, chairs, beds, bookshelves |
 | `apply_material` and the procedural library (`materials.py`) | [changed] | **new kinds** concrete, stone, foliage, plastic, paint, rubber; micro-roughness on `color` |
 | `room_shell` (openings, floor, ceiling) | [used] | rooms; ceiling now on |
 | `wood_plank_floor`, `carpet_pile` (`surface.py`) | [used] | plank floors, rug pile |
