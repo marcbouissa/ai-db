@@ -34,7 +34,7 @@ PBR_PRESETS: dict[str, tuple[str, float, float]] = {
     "worn_metal": ("metal:steel", 0.6, 6.0), "rusty_steel": ("metal:rust", 0.7, 5.0),
     "aged_brass": ("brass", 0.4, 10.0), "weathered_wood": ("wood:pine", 0.5, 4.0),
     "scuffed_leather": ("leather", 0.4, 8.0), "dusty_plaster": ("plaster", 0.3, 12.0),
-    "worn_concrete": ("color:#8a8782", 0.6, 3.0),
+    "worn_concrete": ("concrete:#8a8782", 0.6, 3.0),
 }
 
 #: Material of each category when the spec names none (box projection: placeholders have no UVs).
@@ -54,10 +54,10 @@ CATEGORY_MATERIALS: dict[str, str] = {
     "filing_cabinet": "metal:steel", "pallet_rack": "metal:steel", "conveyor": "metal:steel",
     "forklift": "paint:#e0a000", "car": "paint:#7a1f1f", "safety_barrier": "paint:#e0a000",
     "trash_can": "metal:steel", "street_lamp": "metal:steel", "fence_section": "wood:pine",
-    "floor_lamp": "brass", "table_lamp": "brass", "pendant_lamp": "brass", "ceiling_light": "color:#f2f2f2",
+    "floor_lamp": "brass", "table_lamp": "brass", "pendant_lamp": "brass", "ceiling_light": "plastic:#f2f2f2",
     "wall_sconce": "brass", "fireplace": "marble:carrara", "column": "marble:carrara",
     "potted_plant": "ceramic", "vase": "ceramic", "tree": "foliage", "bush": "foliage:#4a7a35",
-    "rock": "stone", "barrel": "wood:dark", "book_stack": "color:#7a3b2e",
+    "rock": "stone", "barrel": "wood:dark", "book_stack": "fabric:canvas:#7a3b2e",
     "picture_frame": "wood:dark", "wall_clock": "wood:dark", "whiteboard": "plastic:#f4f4f4",
     "wall_partition": "plaster", "niche": "plaster", "fountain": "stone:#b7b1a6",
     # outdoor / industrial
@@ -82,13 +82,13 @@ STYLE_PALETTES: dict[str, StylePalette] = {
     "modern": {"floor": "wood:oak", "wall": "plaster:#f2f2f0", "categories": {
         "sofa": "fabric:weave:#5a5f66", "armchair": "fabric:weave:#5a5f66", "coffee_table": "glass:tinted",
         "side_table": "metal:chrome", "dining_table": "wood:walnut", "dining_chair": "metal:brushed",
-        "chair": "metal:brushed", "bookshelf": "metal:brushed", "tv_stand": "color:#1c1c1c",
+        "chair": "metal:brushed", "bookshelf": "metal:brushed", "tv_stand": "plastic:#1c1c1c",
         "floor_lamp": "chrome", "table_lamp": "chrome", "pendant_lamp": "chrome", "rug": "fabric:weave:#8c8c8c"}},
     "scandinavian": {"floor": "wood:pine", "wall": "plaster:#f4f1ea", "categories": {
         "sofa": "fabric:linen:#d9d4c7", "armchair": "fabric:linen:#c8bfae", "bed": "fabric:linen:#e8e4da",
         "coffee_table": "wood:oak", "side_table": "wood:oak", "dining_table": "wood:oak", "chair": "wood:oak",
         "dining_chair": "wood:oak", "bookshelf": "wood:oak", "tv_stand": "wood:oak", "nightstand": "wood:oak",
-        "floor_lamp": "color:#f0f0f0", "table_lamp": "ceramic", "pendant_lamp": "color:#f0f0f0",
+        "floor_lamp": "paint:#f0f0f0", "table_lamp": "ceramic", "pendant_lamp": "paint:#f0f0f0",
         "rug": "fabric:weave:#e6e1d6"}},
     "industrial": {"floor": "concrete:#8a8986", "wall": "concrete:#a7a49c", "categories": {
         "sofa": "leather", "armchair": "leather", "coffee_table": "wood:dark", "side_table": "metal:steel",
