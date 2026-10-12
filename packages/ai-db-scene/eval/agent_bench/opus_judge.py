@@ -7,6 +7,7 @@ Paired variant (cheaper: one batch per brief over only the given models' arms, j
 judge_pairs.json so the full-field judge.json is kept):
 
     python opus_judge.py prepare --pairs nemotron      bench/_judging_pairs/<brief>/...
+    (several models: --pairs big-pickle,mimo,space-bunny)
     python opus_judge.py apply --pairs '{...}'
 
 Scenes are anonymised (S1, S2, ... shuffled per brief); key.json maps codes back to arms and
@@ -33,7 +34,7 @@ JDIR = os.path.join(OUT, "_judging")
 def _scenes(brief: str, models: str | None = None) -> list[str]:
     return sorted(d for d in glob.glob(os.path.join(OUT, "*", brief))
                   if os.path.exists(os.path.join(d, "metrics.json")) and "/_" not in d
-                  and (models is None or os.path.basename(os.path.dirname(d)).startswith(models)))
+                  and (models is None or os.path.basename(os.path.dirname(d)).startswith(tuple(models.split(",")))))
 
 
 def prepare(models: str | None = None) -> None:
