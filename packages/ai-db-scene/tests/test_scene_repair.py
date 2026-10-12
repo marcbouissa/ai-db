@@ -54,7 +54,8 @@ def test_build_scene_repairs_builds_and_applies_fixes(monkeypatch):
     out = sp._handle_build_scene({"spec": tiny, "snapshot": False})
     assert out["status"] == "built", out
     assert out["repairs"] and out["spec"] is not None
-    assert sent == [("modify_object", {"name": "lamp", "location": [0, 0, 0]})]
+    assert [r for r in sent if r[0] != "run_code"] == [("modify_object", {"name": "lamp", "location": [0, 0, 0]})]
+    assert any(r[0] == "run_code" and "factory_cube" in r[1]["code"] for r in sent)  # leftovers tidied first
     assert out["fixes_applied"] == ["floating: lamp floats"]
     assert [i for i in out["issues_left"] if i["check"] not in ("ergonomics", "realism")] == []  # advice may remain
 
@@ -298,3 +299,24 @@ def test_live_every_bevelled_recipe_and_soft_shapes_build_exact(private_blender)
     c.request("build_asset", {"spec": {"asset": "soft", "bbox_m": list(dims), "parts": soften_edges(soft, dims)}})
     got = c.run_code(_BBOX.format(name="soft"))
     assert got["size"] == pytest.approx(list(dims), abs=3e-3) and got["parts"] >= 3
+
+
+@pytest.mark.blender
+def test_live_rebuild_without_clear_leaves_no_leftovers(private_blender, tmp_path, monkeypatch):
+    """No factory cube, no second room shell, no stale copies after building twice without clear."""
+    from ai_db_scene.blender_client import BlenderClient
+    from ai_db_scene.memory import SceneMemory
+    from ai_db_scene.tools import scene_pipeline as sp
+    from ai_db_scene.tools import scene_tools
+
+    client = BlenderClient(port=private_blender, timeout=120)
+    memory = SceneMemory("json_file", {"path": str(tmp_path / "mem")})
+    memory.set_blender_client(client)
+    monkeypatch.setattr(scene_tools, "_scene_memory", memory)
+    assert "Cube" in client.run_code("import bpy\nresult = [o.name for o in bpy.context.scene.objects]")  # factory scene
+    for _ in range(2):
+        out = sp._handle_build_scene({"spec": SPEC, "snapshot": False, "exposure_check": False})
+        assert out["status"].startswith("built"), out
+    names = client.run_code("import bpy\nresult = sorted(o.name for o in bpy.context.scene.objects)")
+    assert "Cube" not in names and not any(n.endswith(".001") or n.endswith("_stale") for n in names), names
+    assert not [i for i in out["issues_left"] if i.get("check") == "interpenetration"]
