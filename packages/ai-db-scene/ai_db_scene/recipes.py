@@ -513,17 +513,27 @@ _RECIPES.update({
         _box("stem_l", [0.06, 0.12, 0.39], [-0.4, 0, 0.55], "wood:pine"),
         _box("stem_r", [0.06, 0.12, 0.39], [0.4, 0, 0.55], "wood:pine")],
     "car": lambda: [
-        # lower body with bonnet and boot, a narrower cabin with dark windows, roof, wheels
-        _box("body", [1.0, 1.0, 0.33], [0, 0, 0.17], "color:#7a1f1f"),
-        _box("cabin", [0.86, 0.48, 0.3], [0, 0.04, 0.5], "color:#22303c"),
-        _box("pillar_f", [0.86, 0.04, 0.3], [0, -0.2, 0.5], "color:#7a1f1f"),
-        _box("pillar_b", [0.86, 0.04, 0.3], [0, 0.28, 0.5], "color:#7a1f1f"),
-        _box("roof", [0.86, 0.52, 0.04], [0, 0.04, 0.8], "color:#7a1f1f"),
-        _box("lights_f", [0.8, 0.02, 0.05], [0, -0.5, 0.38], "color:#f2f2e0"),
-        # size is taken before rotation_deg: [height diameter, length diameter, tyre width],
-        # then [0, 90, 0] turns the axle across the car (relative units: the car is long in y)
-        *[_cyl(f"wheel_{i}", [0.43, 0.15, 0.14], [x, y, 0], _DARK, rotation_deg=[0, 90, 0])
-          for i, (x, y) in enumerate(((-0.44, -0.3), (0.44, -0.3), (-0.44, 0.32), (0.44, 0.32)))]],
+        # front at -Y. A rounded painted body over dark sills and bumpers, a glass greenhouse
+        # (tinted windows all round, narrower than the body) under a rounded roof, head and tail
+        # lights, a grille, door mirrors; rubber tyres with brushed rims standing proud of them.
+        {"id": "body", "shape": "rounded_slab", "size": [1.0, 0.98, 0.3], "at": [0, 0, 0.2], "corner_radius": 0.06,
+         "material": "paint:#7a1f1f"},
+        _box("sill", [0.98, 0.7, 0.06], [0, 0, 0.15], _DARK),
+        _box("bumper_f", [0.96, 0.03, 0.1], [0, -0.485, 0.18], "plastic:#1a1a1a"),
+        _box("bumper_r", [0.96, 0.03, 0.1], [0, 0.485, 0.18], "plastic:#1a1a1a"),
+        {"id": "greenhouse", "shape": "rounded_slab", "size": [0.84, 0.5, 0.27], "at": [0, 0.05, 0.5],
+         "corner_radius": 0.04, "material": "glass:tinted"},
+        {"id": "roof", "shape": "rounded_slab", "size": [0.86, 0.46, 0.04], "at": [0, 0.06, 0.77],
+         "corner_radius": 0.03, "material": "paint:#7a1f1f"},
+        _box("grille", [0.4, 0.02, 0.07], [0, -0.495, 0.3], _DARK),
+        *[_box(f"headlight_{s}", [0.16, 0.02, 0.05], [x, -0.495, 0.38], "plastic:#f4f2e8") for s, x in (("l", -0.34), ("r", 0.34))],
+        *[_box(f"taillight_{s}", [0.16, 0.02, 0.05], [x, 0.495, 0.4], "plastic:#b01818") for s, x in (("l", -0.36), ("r", 0.36))],
+        *[_box(f"mirror_{s}", [0.06, 0.03, 0.04], [x, -0.17, 0.5], "paint:#7a1f1f") for s, x in (("l", -0.45), ("r", 0.45))],
+        # size before rotation_deg [0, 90, 0]: [height diameter, length diameter, tyre width]
+        *[p for i, (x, y) in enumerate(((-0.42, -0.3), (0.42, -0.3), (-0.42, 0.32), (0.42, 0.32))) for p in (
+            _cyl(f"wheel_{i}", [0.43, 0.15, 0.14], [x, y, 0], "rubber", rotation_deg=[0, 90, 0]),
+            _cyl(f"rim_{i}", [0.27, 0.094, 0.015], [round(x + (0.0725 if x > 0 else -0.0725), 4), y, 0.08],
+                 "metal:brushed", rotation_deg=[0, 90, 0]))]],
     "rock": lambda: [
         _sphere("mass", [1.0, 0.85, 0.75], [0, 0, 0], "color:#7d7a72"),
         _sphere("lump", [0.6, 0.55, 0.5], [0.2, 0.1, 0.4], "color:#8a867c")],
