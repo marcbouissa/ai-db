@@ -57,6 +57,8 @@ are uncommitted (mixed with the owner's own work there).
 | `physics: true` (rigid bodies, `dynamic` objects) | [new] |
 | Ergonomics warnings (coffee-table reach and height, side-table height, dining clearance) | [new] |
 | Realism warnings (flat colour on floors, walls or large objects; no lamp or window; bare walls in living spaces) | [new] |
+| Brief coverage: `build_scene(brief=...)` warns about requested objects that are missing and counts that differ | [new] |
+| Ergonomics: desks with no chair at them; outdoor objects without an orienting relation face the centre or the hero | [new] |
 | Lessons from user feedback (escalate checks, floating-part tests, verify items) | [new] |
 
 ### Spec, layout and rooms
