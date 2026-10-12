@@ -514,10 +514,17 @@ _RECIPES.update({
         # logs lie along x: about Y the part's z (0.22 -> 0.33 m) becomes the length, x (0.073 -> 8 cm) the height
         *[_cyl(f"log_{k}", [0.073, 0.2, 0.22], [0, y, 0.05], "wood:dark", rotation_deg=[0, 90, 0])
           for k, y in enumerate((-0.05, 0.03))]],
+    # classical column: square plinth, a round base moulding, a shaft tapering slightly upward
+    # (entasis), a flaring echinus and a square abacus, in marble
     "column": lambda: [
-        _box("base", [1.0, 1.0, 0.08], [0, 0, 0], _STONE),
-        _cyl("shaft", [0.8, 0.8, 0.84], [0, 0, 0.08], _STONE),
-        _box("capital", [1.0, 1.0, 0.08], [0, 0, 0.92], _STONE)],
+        _box("plinth", [1.0, 1.0, 0.05], [0, 0, 0], "marble:carrara"),
+        _cyl("base_torus", [0.92, 0.92, 0.04], [0, 0, 0.05], "marble:carrara"),
+        _cyl("base_fillet", [0.82, 0.82, 0.02], [0, 0, 0.09], "marble:carrara"),
+        {"id": "shaft", "shape": "tapered_cylinder", "size": [0.76, 0.76, 0.78], "at": [0, 0, 0.11],
+         "radius": 1.0, "radius_top": 0.86, "material": "marble:carrara"},
+        {"id": "echinus", "shape": "tapered_cylinder", "size": [0.9, 0.9, 0.05], "at": [0, 0, 0.89],
+         "radius": 0.73, "radius_top": 1.0, "material": "marble:carrara"},
+        _box("abacus", [1.0, 1.0, 0.06], [0, 0, 0.94], "marble:carrara")],
     # straight stair (1.0 x 3.0 x 2.8 m, 14 rises): oak treads with a nosing over white risers,
     # carried by sloped stringers on both sides
     "stairs": lambda: [
