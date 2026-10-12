@@ -36,7 +36,7 @@
 "picture_frame":{"min_m":[0.15,0.02,0.2],"typical_m":[0.5,0.03,0.7],"max_m":[1.5,0.05,1.2],"support":"wall","can_support_others":false,"default_clearance_m":0.0,"mount_height_m":1.5},
 "mirror":{"min_m":[0.3,0.02,0.4],"typical_m":[0.7,0.03,1.0],"max_m":[1.0,0.05,2.0],"support":"wall","can_support_others":false,"default_clearance_m":0.0,"mount_height_m":1.0},
 "wall_clock":{"min_m":[0.2,0.04,0.2],"typical_m":[0.3,0.05,0.3],"max_m":[0.6,0.08,0.6],"support":"wall","can_support_others":false,"default_clearance_m":0.0,"mount_height_m":2.0},
-"laptop":{"min_m":[0.28,0.19,0.01],"typical_m":[0.34,0.24,0.02],"max_m":[0.4,0.3,0.03],"support":"surface","can_support_others":false,"default_clearance_m":0.0},
+"laptop":{"min_m":[0.28,0.2,0.015],"typical_m":[0.34,0.25,0.22],"max_m":[0.42,0.32,0.28],"support":"surface","can_support_others":false,"default_clearance_m":0.05},
 "monitor":{"min_m":[0.45,0.15,0.3],"typical_m":[0.6,0.2,0.45],"max_m":[0.9,0.25,0.6],"support":"surface","can_support_others":false,"default_clearance_m":0.0},
 "trash_can":{"min_m":[0.2,0.2,0.3],"typical_m":[0.3,0.3,0.6],"max_m":[0.5,0.5,0.9],"support":"floor","can_support_others":false,"default_clearance_m":0.1},
 "refrigerator":{"min_m":[0.5,0.6,1.0],"typical_m":[0.7,0.7,1.8],"max_m":[0.95,0.8,2.1],"support":"floor","can_support_others":false,"default_clearance_m":0.1},

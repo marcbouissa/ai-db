@@ -479,9 +479,15 @@ _RECIPES.update({
         _box("oven_window", [0.66, 0.012, 0.3], [0, -0.486, 0.24], "glass:tinted"),
         _box("oven_handle", [0.7, 0.02, 0.025], [0, -0.49, 0.64], "metal:chrome"),
         _box("drawer", [0.92, 0.03, 0.08], [0, -0.465, 0.01], "metal:brushed")],
+    # open laptop (front -Y): aluminium base with a dark keyboard deck and touchpad, the lid
+    # standing at the back edge with a black bezel round a glass screen
     "laptop": lambda: [
-        _box("base", [1.0, 1.0, 0.1], [0, 0, 0], _STEEL),
-        _box("screen", [1.0, 0.06, 0.9], [0, 0.47, 0.1], _DARK)],
+        _box("base", [1.0, 0.92, 0.07], [0, -0.04, 0], "metal:brushed"),
+        _box("keyboard", [0.86, 0.42, 0.006], [0, 0.0, 0.07], "plastic:#1c1c1c"),
+        _box("touchpad", [0.3, 0.2, 0.004], [0, -0.33, 0.07], "plastic:#2a2a2a"),
+        _box("lid", [1.0, 0.04, 0.96], [0, 0.44, 0.04], "metal:brushed"),  # hinged at the back edge
+        _box("bezel", [0.98, 0.02, 0.9], [0, 0.41, 0.08], "plastic:#0d0d0d"),
+        _box("screen", [0.9, 0.012, 0.8], [0, 0.396, 0.12], "glass:tinted")],
     # desktop printer: body, a paper tray sticking out at the front with a sheet, the output
     # slot, a top lid and a small control panel with buttons
     "printer": lambda: [
