@@ -165,14 +165,26 @@ _RECIPES: dict[str, Any] = {
         {"id": "shade", "shape": "tapered_cylinder", "size": [1.0, 1.0, 0.44], "at": [0, 0, 0.56],
          "radius": 1.0, "radius_top": 0.72, "material": "fabric:linen:#efe8d8",
          "ops": [{"op": "shell", "thickness": 0.008, "open_faces": "bottom"}]}],
+    # pendant: ceiling canopy, a thin cord, a hollow metal dome shade (open below) with a bulb
     "pendant_lamp": lambda: [
-        _cyl("shade", [1.0, 1.0, 0.3], [0, 0, 0], "metal:copper"),
-        _cyl("cord", [0.02, 0.02, 0.7], [0, 0, 0.3], _DARK)],
-    "ceiling_light": lambda: [_cyl("disc", [1.0, 1.0, 1.0], [0, 0, 0], _WHITE)],
+        _cyl("canopy", [0.3, 0.3, 0.03], [0, 0, 0.97], "metal:brushed"),
+        _cyl("cord", [0.02, 0.02, 0.6], [0, 0, 0.37], _DARK),
+        _sphere("bulb", [0.25, 0.25, 0.12], [0, 0, 0.06], "plastic:#fff4dc"),
+        {"id": "shade", "shape": "tapered_cylinder", "size": [1.0, 1.0, 0.38], "at": [0, 0, 0.0],
+         "radius": 1.0, "radius_top": 0.25, "material": "metal:copper",
+         "ops": [{"op": "shell", "thickness": 0.01, "open_faces": "bottom"}]}],
+    # flush ceiling light: a metal base ring and a glowing opal diffuser dome below it
+    "ceiling_light": lambda: [
+        _sphere("diffuser", [0.92, 0.92, 0.8], [0, 0, 0], "plastic:#fbf8f0"),
+        _cyl("base", [1.0, 1.0, 0.25], [0, 0, 0.75], "metal:brushed")],
+    # wall sconce: a backplate on the wall, an arm, a hollow fabric shade open below with a bulb
     "wall_sconce": lambda: [
         _box("plate", [0.4, 0.12, 0.6], [0, 0.44, 0.2], "metal:gold"),
-        _box("arm", [0.08, 0.5, 0.06], [0, 0.17, 0.42], "metal:gold"),  # plate -> shade
-        _cyl("shade", [0.9, 0.9, 0.5], [0, -0.05, 0.25], "fabric:linen")],
+        _box("arm", [0.08, 0.5, 0.06], [0, 0.17, 0.42], "metal:gold"),
+        _sphere("bulb", [0.3, 0.3, 0.2], [0, -0.05, 0.3], "plastic:#fff4dc"),
+        {"id": "shade", "shape": "tapered_cylinder", "size": [0.9, 0.9, 0.5], "at": [0, -0.05, 0.25],
+         "radius": 1.0, "radius_top": 0.7, "material": "fabric:linen:#efe8d8",
+         "ops": [{"op": "shell", "thickness": 0.02, "open_faces": "bottom"}]}],
     # street lamp (4.5 m): base plinth, tapering pole, an arm reaching out over the path, a
     # lantern head with a warm lens underneath
     "street_lamp": lambda: [

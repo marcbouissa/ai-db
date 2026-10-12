@@ -756,7 +756,10 @@ def _variation(spec: SceneSpec, family: str, base_id: str) -> dict[str, Any]:
 
 GEOMETRY_MODES = ("generated", "boxes")
 #: parts a spec material must not repaint on generated furniture (wooden legs, the books)
-_KEEP_PARTS = {"sofa": ("leg",), "armchair": ("leg",), "bookshelf": ("book",)}
+_KEEP_PARTS = {"sofa": ("leg",), "armchair": ("leg",), "bookshelf": ("book",),
+               # lamps: a "brass lamp" is brass metalwork under a fabric shade and a bulb
+               **{c: ("shade", "bulb", "diffuser") for c in ("floor_lamp", "table_lamp", "pendant_lamp",
+                                                             "wall_sconce", "ceiling_light")}}
 
 #: after import_file into collection "ai_db_asset_<id>": one root named <id> (an empty parenting
 #: the file's roots), scaled uniformly to fit the placement, base centre on the floor point,
@@ -914,7 +917,8 @@ def build_layout_commands(
                 "rot_z": math.radians(pl.rotation_deg_z)}))}})
             tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
             if materials.get(base):
-                reskin.append({"name": pl.id, "material": material_for(pl.category, materials[base]), "keep": []})
+                reskin.append({"name": pl.id, "material": material_for(pl.category, materials[base]),
+                               "keep": list(_KEEP_PARTS.get(pl.category, ()))})
         elif asset:
             cmds.append({"type": "append_asset", "params": {
                 "filepath": asset["filepath"], "asset_name": asset["asset_name"], "location": _shift(pl.location, off)}})
@@ -950,7 +954,8 @@ def build_layout_commands(
                 "rotation": [0.0, 0.0, pl.rotation_deg_z]}})
             tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
             if materials.get(base):
-                reskin.append({"name": pl.id, "material": material_for(pl.category, materials[base]), "keep": []})
+                reskin.append({"name": pl.id, "material": material_for(pl.category, materials[base]),
+                               "keep": list(_KEEP_PARTS.get(pl.category, ()))})
         else:
             cmds.append({"type": "create_primitive", "params": {
                 "primitive": "cube", "name": pl.id, "location": _shift(pl.location, off),
