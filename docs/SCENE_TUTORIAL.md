@@ -128,3 +128,38 @@ Real model files are used before recipes only when you turn a provider on in the
 `asset_dirs` are local folders of `.glb`/`.gltf`/`.blend` files matched by filename. Poly Haven
 assets are CC0, but its API terms apply; it stays off until `license_acknowledged` is set.
 See [packages/ai-db-scene/README.md](../packages/ai-db-scene/README.md) for details.
+
+## 9. Teach it from feedback
+
+When a result is wrong, say so in your words and let the agent record it:
+
+```
+record_feedback(text="the bench back is floating")
+record_feedback(text="the clothes are too stiff", subjects=["clothes"], severity="warning")
+record_feedback(text="sofas face the wall", project="client_a")   # this project only
+```
+
+Each complaint becomes a lesson (objects + kind of problem + the check that sees it).
+`get_scene_spec_schema` lists the lessons for the brief's objects under `lessons`, and
+`build_scene` checks them afterwards: a matching validator check becomes blocking for those
+objects, recipe parts are tested for contact, and problems no check can see come back as
+`lesson_verify` items. Lessons are global unless recorded for a project. Manage them with
+`list_feedback`, `update_feedback` (`{"enabled": false}` disables), `delete_feedback`, and
+`optimize_feedback` (proposes merging duplicates, fixing mistyped categories and retiring
+stale lessons; `apply: true` carries the proposals out).
+
+## 10. What makes it look real
+
+- `get_scene_spec_schema` returns `room_kits` for the room types a brief names (living room,
+  bedroom, kitchen, bathroom, office, classroom, cafe, warehouse, park): what such rooms hold
+  and where it goes. Use them to complete a room; the brief always wins.
+- `build_scene` adds `ergonomics` warnings (coffee table out of reach or too tall, side table
+  height, room to pull a dining chair out) and `realism` warnings (flat colour on big surfaces,
+  no lamp or window, bare walls).
+- Materials: prefer kinds with variation (`paint:`, `plastic:`, `concrete`, `stone`,
+  `foliage`, `rubber`, wood) over `color:#...`; `pbr:<preset>` adds wear.
+- Rooms get a ceiling, plank floors (rect rooms), carpet pile on rugs, painted lines in
+  warehouses; trees grow from a branching skeleton and plants get leaf foliage.
+- The camera stays level (straight verticals) at 1.4 m on a 20 mm lens; exposure is checked.
+- Skills to read: `realistic-modeling`, `cloth-and-textiles`, `interior-camera-composition`,
+  `blender-material-library`, `pbr-shader-builder`.
