@@ -18,18 +18,18 @@ from ai_db_scene.constants import (
     RECIPE_WOOD_GRAIN_SCALE,
 )
 
-_DARK = "color:#141414"
-_STONE = "color:#b7b1a6"
+_DARK = "paint:#1a1a1a"  # powder-coated / dark finish
+_STONE = "stone:#b7b1a6"
 _GREEN = "foliage:#3f6b33"
 _GREEN2 = "foliage:#4f7d3c"
 _BARK = "wood:dark"
 _YELLOW = "paint:#e0a000"
 _BLUE = "paint:#2f5d8a"
-_ORANGE = "paint:#e8661a"
+_RACK_ORANGE = "paint:#e8661a"
 _CARDBOARD = "plaster:#a8835a"
 _CAST_IRON = "rubber:#1c1c1c"  # matte black
 _VENEER = "wood:walnut:scale=2.5"  # fronts: a finer figure; the default reads as zebra bands
-_WHITE = "color:#f2f2f2"
+_WHITE = "paint:#f2f2f2"
 
 
 def _box(pid: str, size: list[float], at: list[float] | str, material: str, **kw: Any) -> dict[str, Any]:
@@ -93,7 +93,7 @@ def _rack() -> list[dict[str, Any]]:
         parts.append(_box(f"tie_{s}", [0.012, 0.86, 0.01], [x, 0, 0.05], _BLUE))
     for k, z in enumerate(levels[1:] + (0.97,), 1):
         for f, y in (("f", -0.464), ("b", 0.464)):
-            parts.append(_box(f"beam_{k}{f}", [1.0, 0.045, 0.027], [0, y, z], _ORANGE))
+            parts.append(_box(f"beam_{k}{f}", [1.0, 0.045, 0.027], [0, y, z], _RACK_ORANGE))
         if z < 0.9:
             parts.append(_box(f"deck_{k}", [0.94, 0.89, 0.004], [0, 0, z + 0.027], "metal:brushed"))
     for k, z in enumerate(levels):
@@ -308,7 +308,7 @@ _RECIPES: dict[str, Any] = {
 
 _WOOD = "wood:oak"
 _WALNUT = "wood:walnut"
-_WHITE_C = "color:#f4f3ef"  # ceramic white
+_WHITE_C = "ceramic:#f4f3ef"  # ceramic white
 _STEEL = "metal:steel"
 _FABRIC = "fabric:linen"
 
@@ -537,7 +537,7 @@ _RECIPES.update({
         *[_box(f"post_{i}", [0.04, 0.06, 1.0], [sx * 0.48, sy * 0.47, 0], _STEEL)
           for i, (sx, sy) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))],
         *[_box(f"shelf_{k}", [1.0, 1.0, 0.02], [0, 0, z], _STEEL) for k, z in enumerate((0.05, 0.33, 0.62, 0.95))],
-        *[_box(f"box_{k}", [0.3, 0.6, 0.15], [x, 0, z + 0.02], "color:#b08a5a")
+        *[_box(f"box_{k}", [0.3, 0.6, 0.15], [x, 0, z + 0.02], _CARDBOARD)
           for k, (x, z) in enumerate(((-0.25, 0.05), (0.2, 0.33), (-0.1, 0.62)))]],
     # slatted wooden crate: corner posts, three spaced slats per side (the gaps show the dark
     # inside), a closed bottom and lid boards
@@ -627,10 +627,10 @@ def _taper(pid: str, size: list[float], at: list[float], material: str, top: flo
             "radius": 0.5, "radius_top": 0.5 * top}
 
 
-_RED = "color:#c8372d"
-_ORANGE = "color:#ff6a13"
-_CONCRETE = "color:#9a9890"
-_ASPHALT = "color:#3a3a3c"
+_RED = "paint:#c8372d"
+_ORANGE = "plastic:#ff6a13"
+_CONCRETE = "concrete:#9a9890"
+_ASPHALT = "concrete:#3a3a3c"
 #: chute and its rails slope from the platform's front edge (y 0.2, z 0.64) to the ground (y -0.5)
 _SLIDE_DEG = 42.4
 _SLIDE_LEN = 0.948
@@ -676,7 +676,7 @@ _RECIPES.update({
         _cyl("finial", [0.04, 0.04, 0.02], [0, 0, 0.98], _DARK)],
     "planter": lambda: [
         _box("box", [1.0, 1.0, 0.7], [0, 0, 0], _CONCRETE),
-        _box("soil", [0.92, 0.88, 0.05], [0, 0, 0.66], "color:#4a3526"),
+        _box("soil", [0.92, 0.88, 0.05], [0, 0, 0.66], "stone:#4a3526"),
         *[_sphere(f"plant_{k}", [0.3, 0.6, 0.32], [x, 0, 0.68], g)
           for k, (x, g) in enumerate(((-0.3, _GREEN), (0.0, _GREEN2), (0.3, _GREEN)))]],
     "hedge": lambda: [
@@ -684,7 +684,7 @@ _RECIPES.update({
         *[_sphere(f"top_{k}", [0.3, 1.0, 0.3], [x, 0, 0.7], _GREEN2) for k, x in enumerate((-0.35, 0.0, 0.35))]],
     "signpost": lambda: [
         _cyl("post", [0.1, 0.6, 0.72], [0, 0.2, 0], _STEEL),
-        _box("board", [1.0, 0.4, 0.35], [0, -0.3, 0.65], "color:#1f5a3a"),
+        _box("board", [1.0, 0.4, 0.35], [0, -0.3, 0.65], "paint:#1f5a3a"),
         _box("text_band", [0.8, 0.05, 0.08], [0, -0.525, 0.78], _WHITE)],
     "bollard": lambda: [
         _cyl("body", [0.9, 0.9, 0.88], [0, 0, 0], _DARK),
@@ -723,7 +723,7 @@ _RECIPES.update({
         _cyl("pole", [0.08, 0.3, 0.9], [0, 0, 0.03], _DARK),
         _box("crossarm", [0.9, 0.15, 0.02], [0, 0, 0.9], _DARK),
         *[_box(f"head_{k}", [0.12, 0.8, 0.08], [x, 0, 0.84], _DARK) for k, x in enumerate((-0.44, 0.44))],
-        *[_box(f"lens_{k}", [0.1, 0.7, 0.01], [x, 0, 0.83], "color:#fff4d6") for k, x in enumerate((-0.44, 0.44))],
+        *[_box(f"lens_{k}", [0.1, 0.7, 0.01], [x, 0, 0.83], "plastic:#fff4d6") for k, x in enumerate((-0.44, 0.44))],
         _cyl("finial", [0.05, 0.2, 0.08], [0, 0, 0.92], _DARK)],
 })
 
@@ -814,7 +814,7 @@ def _shelving_v(rng: Any) -> list[dict[str, Any]]:
         gap = zs[k + 1] - z - 0.02
         if rng.random() < 0.6:
             parts.append(_box(f"box_{k}", [rng.uniform(0.2, 0.35), 0.6, min(0.15, gap * 0.8)],
-                              [rng.uniform(-0.3, 0.3), 0, z + 0.02], "color:#b08a5a"))
+                              [rng.uniform(-0.3, 0.3), 0, z + 0.02], _CARDBOARD))
     return parts
 
 
