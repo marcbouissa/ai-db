@@ -415,9 +415,18 @@ _RECIPES.update({
         _box("sky", [0.76, 0.2, 0.34], [0, -0.2, 0.56], "fabric:canvas:#9fb8cf"),
         _box("hills", [0.76, 0.2, 0.16], [0, -0.2, 0.4], "fabric:canvas:#5d7a52"),
         _box("field", [0.76, 0.2, 0.25], [0, -0.2, 0.15], "fabric:canvas:#b59a5c")],
+    # wall clock: dark rim, white dial, twelve hour marks, hour and minute hands, centre pin
     "wall_clock": lambda: [
-        _cyl("rim", [1.0, 1.0, 1.0], [0, 0, 0], _DARK, rotation_deg=[90, 0, 0]),
-        _cyl("face", [0.9, 0.9, 0.2], [0, -0.45, 0.05], _WHITE, rotation_deg=[90, 0, 0])],
+        # depth layers front (-Y) to back, each touching the next: pin, hands and marks, dial, rim
+        _cyl("rim", [1.0, 1.0, 0.6], [0, 0.2, 0], _DARK, rotation_deg=[90, 0, 0]),
+        _cyl("face", [0.9, 0.9, 0.1], [0, -0.15, 0.05], _WHITE, rotation_deg=[90, 0, 0]),
+        *[_box(f"mark_{k}", [0.03, 0.1, 0.08 if k % 3 else 0.12],
+               [round(0.38 * math.sin(math.radians(30 * k)), 4), -0.25,
+                round(0.5 + 0.38 * math.cos(math.radians(30 * k)) - (0.04 if k % 3 else 0.06), 4)],
+               _DARK, rotation_deg=[0, -30 * k, 0]) for k in range(12)],
+        _box("hand_hour", [0.04, 0.1, 0.24], [0.06, -0.25, 0.42], _DARK, rotation_deg=[0, 40, 0]),
+        _box("hand_minute", [0.03, 0.1, 0.34], [-0.08, -0.25, 0.4], _DARK, rotation_deg=[0, -60, 0]),
+        _cyl("pin", [0.06, 0.06, 0.14], [0, -0.3, 0.47], _DARK, rotation_deg=[90, 0, 0])],
     # freestanding cooker (0.6 x 0.6 x 0.9 m): brushed body, dark glass hob with four burners
     # under cast-iron grates, a control strip with knobs, an oven door with a window and bar handle
     "stove": lambda: [
@@ -437,15 +446,23 @@ _RECIPES.update({
     "laptop": lambda: [
         _box("base", [1.0, 1.0, 0.1], [0, 0, 0], _STEEL),
         _box("screen", [1.0, 0.06, 0.9], [0, 0.47, 0.1], _DARK)],
+    # desktop printer: body, a paper tray sticking out at the front with a sheet, the output
+    # slot, a top lid and a small control panel with buttons
     "printer": lambda: [
-        _box("body", [1.0, 1.0, 0.8], [0, 0, 0], "color:#d8d8d8"),
-        _box("tray", [0.7, 0.3, 0.05], [0, -0.6, 0.35], "color:#c8c8c8"),
-        _box("lid", [1.0, 1.0, 0.2], [0, 0, 0.8], "color:#bdbdbd")],
+        {"id": "body", "shape": "rounded_slab", "size": [1.0, 0.86, 0.72], "at": [0, 0.07, 0], "corner_radius": 0.04,
+         "material": "plastic:#d8d8d6"},
+        _box("tray", [0.66, 0.16, 0.05], [0, -0.43, 0.18], "plastic:#c4c4c2"),
+        _box("paper", [0.6, 0.12, 0.012], [0, -0.43, 0.23], "plaster:#fafafa"),
+        _box("slot", [0.7, 0.02, 0.04], [0, -0.365, 0.44], "plastic:#2a2a2a"),
+        {"id": "lid", "shape": "rounded_slab", "size": [1.0, 0.86, 0.12], "at": [0, 0.07, 0.72], "corner_radius": 0.03,
+         "material": "plastic:#c9c9c7"},
+        _box("panel", [0.3, 0.14, 0.03], [0.3, -0.25, 0.84], "plastic:#2a2a2a"),
+        *[_cyl(f"button_{k}", [0.035, 0.035, 0.02], [0.2 + k * 0.08, -0.25, 0.87], "plastic:#4a90d9") for k in range(3)]],
     "book_stack": lambda: [
-        _box(f"book_{i}", [w, d, 0.25], [x, 0, 0.25 * i], c)
-        for i, (w, d, x, c) in enumerate(((1.0, 1.0, 0, "color:#7a3b2e"), (0.9, 0.9, 0.04, "color:#2e4f7a"),
-                                          (0.95, 0.85, -0.02, "color:#3b6b45"), (0.8, 0.8, 0.05, "color:#b08a3c")))],
-    # glazed ceramic vase: foot, a full body, shoulder, neck and a slightly flared lip
+        p for i, (w, d, x, c) in enumerate(((1.0, 1.0, 0, "#7a3b2e"), (0.9, 0.9, 0.04, "#2e4f7a"),
+                                            (0.95, 0.85, -0.02, "#3b6b45"), (0.8, 0.8, 0.05, "#b08a3c")))
+        for p in (_box(f"book_{i}", [w, d, 0.25], [x, 0, 0.25 * i], f"fabric:canvas:{c}"),
+                  _box(f"pages_{i}", [w - 0.04, d - 0.06, 0.19], [x + 0.02, -0.03, 0.25 * i + 0.03], "plaster:#efe6d2"))],
     "vase": lambda: [
         _cyl("foot", [0.55, 0.55, 0.06], [0, 0, 0], "ceramic:#3d5a80"),
         _sphere("body", [1.0, 1.0, 0.6], [0, 0, 0.04], "ceramic:#3d5a80"),
