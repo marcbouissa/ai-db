@@ -54,6 +54,9 @@ Optional `build_scene` arguments:
 
 1. **`get_scene_spec_schema(brief)`** returns the schema, the category vocabulary with typical
    sizes, the relations, and exemplar specs from past successful runs. Use only listed categories.
+   `room_kits` lists what rooms of the type the brief names usually hold (lighting, decor,
+   storage) and how they are arranged: complete the room with them unless the brief says otherwise.
+   `lessons` lists problems users reported before on these objects: avoid them.
 2. **Write the spec**:
    - `setting`: `kind` indoor|outdoor|tabletop|single_asset, `bounds_m` [x, y, height],
      `shape` rect|ellipse|polygon, optional `style` (modern|scandinavian|industrial|rustic|classic:

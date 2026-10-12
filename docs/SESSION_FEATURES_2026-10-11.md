@@ -31,7 +31,7 @@ are uncommitted (mixed with the owner's own work there).
 
 | Tool | Status | What it does |
 |---|---|---|
-| `get_scene_spec_schema` | [changed] | brief-relevant categories, exemplars, styles, **lessons** for the brief |
+| `get_scene_spec_schema` | [changed] | brief-relevant categories, exemplars, styles, **lessons** and **room kits** (typical contents of the room types the brief names) |
 | `submit_scene_spec`, `solve_layout`, `apply_layout`, `validate_scene` | [changed] | |
 | `build_scene` | [new] | layout + repairs + build + validator fix loop + record_run + snapshot; options below |
 | `edit_scene` | [new] | ordered edit steps, rebuild, versioned |

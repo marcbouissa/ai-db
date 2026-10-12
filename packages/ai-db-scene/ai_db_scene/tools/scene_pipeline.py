@@ -1381,6 +1381,11 @@ def _handle_validate_scene(args: dict[str, Any]) -> Any:
 
 
 
+def _room_kits(brief: str) -> list[dict[str, Any]]:
+    from ai_db_scene.room_kits import kits_for
+
+    return kits_for(brief)
+
 def _lesson_checklist(categories: set[str], brief: str, project: str) -> list[str]:
     try:
         from ai_db_scene import feedback
@@ -1415,6 +1420,8 @@ def _handle_get_scene_spec_schema(args: dict[str, Any]) -> Any:
         "setting_kinds": list(SETTING_KINDS),
         "styles": sorted(STYLE_PALETTES),
         "exemplars": exemplars[:_MAX_EXEMPLARS] or [{"brief": "a small reading corner", "spec": _EXAMPLE_SPEC}],
+        # what rooms of the types the brief names usually hold (complete the room, the brief wins)
+        "room_kits": _room_kits(str(args.get("brief", ""))),
         # problems users reported on these objects before (record_feedback): verify each one
         "lessons": _lesson_checklist(relevant, str(args.get("brief", "")), args.get("project", "default")),
         "next": "submit_scene_spec(spec) to check it, then build_scene(spec)",
