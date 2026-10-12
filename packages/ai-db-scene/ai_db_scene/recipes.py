@@ -128,6 +128,13 @@ def _kitchen_run() -> list[dict[str, Any]]:
     return parts
 
 
+def _frame(pid: str, w: float, mat: str) -> list[dict[str, Any]]:
+    """Four moulding bars round the edge of a wall piece (unit space, face toward -Y)."""
+    return [_box(f"{pid}_top", [1.0, 1.0, w], [0, 0, 1 - w], mat), _box(f"{pid}_bottom", [1.0, 1.0, w], [0, 0, 0], mat),
+            _box(f"{pid}_l", [w * 0.7, 1.0, 1 - 2 * w], [-0.5 + w * 0.35, 0, w], mat),
+            _box(f"{pid}_r", [w * 0.7, 1.0, 1 - 2 * w], [0.5 - w * 0.35, 0, w], mat)]
+
+
 def _screen() -> list[dict[str, Any]]:
     """Monitor / TV: an oval foot and neck, a thin black body, and the glass screen inset in its
     bezel (a reflective dark face reads as a screen, a matte black box does not)."""
@@ -376,12 +383,18 @@ _RECIPES.update({
         _box("riser", [0.03, 0.03, 0.88], [0.3, 0.485, 0.05], "metal:chrome"),
         _box("head_arm", [0.04, 0.2, 0.03], [0.3, 0.4, 0.9], "metal:chrome"),
         _cyl("head", [0.12, 0.12, 0.03], [0.3, 0.3, 0.88], "metal:chrome")],
+    # wall mirror: moulded frame, mirror glass inset behind it
     "mirror": lambda: [
-        _box("frame", [1.0, 1.0, 1.0], [0, 0, 0], _WALNUT),
-        _box("glass", [0.92, 0.2, 0.92], [0, -0.45, 0.04], "metal:chrome")],
+        *_frame("frame", 0.07, "wood:walnut"),
+        _box("back", [0.94, 0.4, 0.88], [0, 0.3, 0.06], "wood:dark"),
+        _box("glass", [0.9, 0.2, 0.86], [0, -0.1, 0.07], "metal:chrome")],
     "picture_frame": lambda: [
-        _box("frame", [1.0, 1.0, 1.0], [0, 0, 0], _WALNUT),
-        _box("canvas", [0.86, 0.2, 0.86], [0, -0.45, 0.07], "color:#8aa7c4")],
+        *_frame("frame", 0.09, "metal:gold"),
+        _box("back", [0.94, 0.4, 0.84], [0, 0.3, 0.08], "wood:dark"),
+        _box("mat", [0.88, 0.3, 0.82], [0, -0.05, 0.09], "plaster:#f2efe8"),
+        _box("sky", [0.76, 0.2, 0.34], [0, -0.2, 0.56], "fabric:canvas:#9fb8cf"),
+        _box("hills", [0.76, 0.2, 0.16], [0, -0.2, 0.4], "fabric:canvas:#5d7a52"),
+        _box("field", [0.76, 0.2, 0.25], [0, -0.2, 0.15], "fabric:canvas:#b59a5c")],
     "wall_clock": lambda: [
         _cyl("rim", [1.0, 1.0, 1.0], [0, 0, 0], _DARK, rotation_deg=[90, 0, 0]),
         _cyl("face", [0.9, 0.9, 0.2], [0, -0.45, 0.05], _WHITE, rotation_deg=[90, 0, 0])],
