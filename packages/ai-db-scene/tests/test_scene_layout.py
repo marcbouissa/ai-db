@@ -427,3 +427,21 @@ def test_check_layout_flags_a_blocked_doorway():
     pls = solve_layout(spec)
     moved = [replace(p, location=(p.location[0], 2.0, p.location[2])) if p.id == "dresser" else p for p in pls]
     assert any("dresser: blocks doorway 'door_a_b'" in i for i in check_layout(spec, moved))
+
+
+def test_outdoor_seating_without_relations_faces_the_centre():
+    import math
+
+    from ai_db_scene import layout as L
+    from ai_db_scene.spec import validate_spec
+
+    spec, errs = validate_spec({"setting": {"kind": "outdoor", "bounds_m": [14.0, 12.0, 5.0]},
+                                "objects": [{"id": "bench", "category": "bench", "count": 3}], "relations": []})
+    assert spec is not None, errs
+    off = 0
+    for seed in range(4):
+        for p in L.solve_layout(spec, seed=seed):
+            err = math.degrees(L._angdiff(math.radians(p.rotation_deg_z),
+                                          L._face_yaw(p.location[0], p.location[1], 7.0, 6.0)))  # frame: corner origin
+            off += abs(err) > 60
+    assert off <= 3  # nearly every bench faces the middle (one candidate in four keeps a free yaw)

@@ -331,12 +331,14 @@ class _Problem:
                     pose.y += 0.005 * n[1]
 
     def default_face(self, inst: _Inst, poses: dict[str, _Pose]) -> tuple[float, float] | None:
-        """Point an object with no orienting relation faces: the camera focus, else the room center (indoor)."""
+        """Point an object with no orienting relation faces: the camera focus, else the centre of
+        the setting - indoors and outdoors alike (park benches facing away from the fountain read
+        as a mistake)."""
         if any(r.rel in _ORIENT_RELS for r in self.by_a.get(inst.id, [])):
             return None
         if self.focus and self.focus != inst.id and self.focus in poses:
             return poses[self.focus].x, poses[self.focus].y
-        return (self.shape.cx, self.shape.cy) if self.kind == "indoor" else None
+        return (self.shape.cx, self.shape.cy) if self.kind in ("indoor", "outdoor") else None
 
     def base_z(self, inst: _Inst, poses: dict[str, _Pose]) -> float:
         sup = inst.prior.support
