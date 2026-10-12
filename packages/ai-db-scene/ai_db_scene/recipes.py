@@ -230,6 +230,25 @@ _RECIPES: dict[str, Any] = {
         _box("door_fridge", [0.99, 0.04, 0.615], [0, -0.45, 0.383], "metal:brushed"),
         *[p for k, (z, hh) in enumerate(((0.12, 0.2), (0.45, 0.32))) for p in (
             _box(f"handle_{k}", [0.03, 0.02, hh], [0.4, -0.48, z], "metal:chrome"),)]],
+    # window set in a wall opening (1.2 x 0.08 x 1.3 m): a painted frame, a glazing-bar cross,
+    # clear glass in the middle of the depth, a sill at the bottom
+    "window": lambda: [
+        _box("sill", [1.0, 1.0, 0.05], [0, 0, 0], "plaster:#f2f0ea"),
+        _box("frame_top", [1.0, 0.7, 0.05], [0, 0, 0.95], "paint:#f4f4f2"),
+        *[_box(f"frame_{s}", [0.05, 0.7, 0.9], [x, 0, 0.05], "paint:#f4f4f2") for s, x in (("l", -0.475), ("r", 0.475))],
+        _box("glass", [0.9, 0.06, 0.9], [0, 0, 0.05], "glass:clear"),
+        _box("bar_v", [0.03, 0.4, 0.9], [0, 0, 0.05], "paint:#f4f4f2"),
+        _box("bar_h", [0.9, 0.4, 0.03], [0, 0, 0.5], "paint:#f4f4f2")],
+    # interior door in its opening (0.9 x 0.05 x 2.05 m): casing round the opening, a panelled
+    # leaf, a lever handle, a threshold
+    "door": lambda: [
+        _box("threshold", [1.0, 1.0, 0.01], [0, 0, 0], "wood:oak"),
+        _box("casing_top", [1.0, 1.0, 0.04], [0, 0, 0.96], "paint:#f4f4f2"),
+        *[_box(f"casing_{s}", [0.07, 1.0, 0.95], [x, 0, 0.01], "paint:#f4f4f2") for s, x in (("l", -0.465), ("r", 0.465))],
+        {"id": "leaf", "shape": "raised_panel", "size": [0.86, 0.6, 0.95], "at": [0, 0, 0.01], "mode": "recessed",
+         "border": 0.1, "moulding": 0.02, "field_depth": 0.05, "material": "paint:#efece6"},
+        _box("lever", [0.12, 0.6, 0.012], [0.3, -0.2, 0.47], "metal:brushed"),
+        _box("rose", [0.05, 0.25, 0.03], [0.36, -0.1, 0.46], "metal:brushed")],
     "pallet_rack": _rack,
     "bench": lambda: [
         # two side frames carry the seat; posts rise from them and carry the backrest

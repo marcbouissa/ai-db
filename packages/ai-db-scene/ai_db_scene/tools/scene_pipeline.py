@@ -981,7 +981,10 @@ def build_layout_commands(
         if st.kind == "indoor":
             surfaces.append(("Room_Walls", st.wall_material or style_material(st.style, "wall") or WALL_MATERIAL))
         for obj, mat in surfaces:
-            cmds.append({"type": "apply_material", "params": {"name": obj, "material": material_for("", mat)}})
+            mat_s = material_for("", mat)
+            if mat_s.startswith("wood") and "scale=" not in mat_s:  # floor-sized figure, not room-sized swirls
+                mat_s += f":scale={SCENE_PLANK_GRAIN_SCALE}"
+            cmds.append({"type": "apply_material", "params": {"name": obj, "material": mat_s}})
         cmds += _floor_and_rug_detail(spec, placements, floor)
         # anything else of the shell (ceiling, trim) gets the neutral room material
         cmds.append({"type": "run_code", "params": {"code": _ROOM_MATERIAL}})

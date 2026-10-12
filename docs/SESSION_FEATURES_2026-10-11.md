@@ -96,6 +96,7 @@ are uncommitted (mixed with the owner's own work there).
 | Boulder (flattened mass with lumps, stone, moss); planters get leaf foliage | [new] |
 | Book stack (cloth covers, page blocks), wall clock (dial, hour marks, hands), printer (tray with paper, slot, lid, panel) | [new] |
 | Light fittings: pendant (canopy, cord, hollow dome, bulb), flush ceiling light (opal diffuser), wall sconce (hollow shade, bulb); style/spec materials keep lamp shades and bulbs | [new] |
+| Windows (frame, glazing-bar cross, glass, sill) and doors (casing, panelled leaf, lever, threshold) in wall openings; wood floors in curved rooms use the finer figure | [new] |
 | Generated furniture varies per scene and follows the style (seed + preset) | [new] |
 | Trees grown from a branching skeleton; leaf-card foliage on trees, bushes, hedges, plants | [new] (pine, birch and palm types prototyped, not committed) |
 | Material vocabulary incl. `concrete`, `stone`, `foliage`, `plastic`, `paint`, `rubber`, `pbr:<preset>` wear | [new] |

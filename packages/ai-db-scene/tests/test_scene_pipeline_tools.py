@@ -97,7 +97,7 @@ def test_build_commands_placeholder_and_mapped():
     mats = {c["params"]["name"]: c["params"]["material"] for c in cmds if c["type"] == "apply_material"}
     assert "lamp" not in mats  # generated pieces and recipes bring their own materials
     # scandinavian style: its palette paints the room
-    assert mats["Room_Floor"] == "wood:pine:proj=box" and mats["Room_Walls"] == "plaster:#f4f1ea:proj=box"
+    assert mats["Room_Floor"] == "wood:pine:proj=box:scale=2.5" and mats["Room_Walls"] == "plaster:#f4f1ea:proj=box"
     assert any(c["type"] == "run_code" and "ai_db_room" in c["params"]["code"] for c in cmds)
     cam = cmds[-2]
     assert cam["type"] == "set_camera" and cam["params"]["location"][2] == pytest.approx(1.4)
