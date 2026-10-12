@@ -395,7 +395,7 @@ _FORWARDED_TOOLS: list[tuple[str, str, dict[str, Any]]] = [
     ),
     (
         "create_primitive",
-        "Create a basic primitive object in Blender (cube, sphere, ico, cylinder, cone, torus, plane, circle)",
+        "Create a basic primitive object in Blender (cube, sphere, ico, cylinder, cone, torus, plane, circle) For a whole room or scene use build_scene (layout, real furniture, materials, light, checks) instead; this is for one-off tweaks.",
         {
             "type": "object",
             "properties": {
@@ -592,7 +592,7 @@ def _vec(desc: str) -> dict[str, Any]:
 _FORWARDED_TOOLS += [
     (
         "create_complex_asset",
-        "Create a complex parametric asset in Blender: rounded_box, pill, staircase, fence, arch, pipe, terrain, rock",
+        "Create a complex parametric asset in Blender: rounded_box, pill, staircase, fence, arch, pipe, terrain, rock For a whole room or scene use build_scene (layout, real furniture, materials, light, checks) instead; this is for one-off tweaks.",
         _obj(
             {
                 "asset": {
