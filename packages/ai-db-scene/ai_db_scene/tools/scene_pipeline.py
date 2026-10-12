@@ -715,7 +715,9 @@ for o in list(bpy.context.scene.objects):
         continue
     factory_cube = (o.name == "Cube" and o.type == "MESH" and len(o.data.vertices) == 8 and o.get("ai_db_id") is None
                     and all(abs(d - 2.0) < 1e-4 for d in o.dimensions) and o.location.length < 1e-4)
-    if factory_cube or o.name.startswith(ours) or o.name in lights or (o.get("ai_db_id") in ids and o.parent is None):
+    # any root an earlier ai-db build tagged belongs to the scene being replaced; untagged
+    # (user-made) objects are kept
+    if factory_cube or o.name.startswith(ours) or o.name in lights or (o.get("ai_db_id") is not None and o.parent is None):
         drop(o)
 result = {{"removed": gone[:50], "count": len(gone)}}
 """
@@ -1577,9 +1579,10 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
         except BlenderError as e:
             return {"status": "error", "message": f"clear_scene failed: {e}", "repairs": repairs}
     else:
-        # without clear: still drop what would collide with this build - Blender's untouched
-        # factory cube, the room shell and helpers of an earlier build, and earlier copies of the
-        # objects about to be built (a benchmark agent left all three: thousands of false clashes)
+        # without clear: build_scene replaces the previous ai-db scene - drop Blender's untouched
+        # factory cube, the room shell and helpers of an earlier build, and every object an earlier
+        # build tagged (benchmark agents left all of these: thousands of false clashes); objects
+        # the user made themselves are kept
         try:
             BlenderClient().request("run_code", {"code": _TIDY.format(payload=json.dumps(
                 [p.id for p in placements]))})

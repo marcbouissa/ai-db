@@ -320,3 +320,24 @@ def test_live_rebuild_without_clear_leaves_no_leftovers(private_blender, tmp_pat
     names = client.run_code("import bpy\nresult = sorted(o.name for o in bpy.context.scene.objects)")
     assert "Cube" not in names and not any(n.endswith((".001", "_stale")) for n in names), names
     assert not [i for i in out["issues_left"] if i.get("check") == "interpenetration"]
+
+
+@pytest.mark.blender
+def test_live_new_build_replaces_previous_ai_db_scene_keeps_user_objects(private_blender, tmp_path, monkeypatch):
+    from ai_db_scene.blender_client import BlenderClient
+    from ai_db_scene.memory import SceneMemory
+    from ai_db_scene.tools import scene_pipeline as sp
+    from ai_db_scene.tools import scene_tools
+
+    client = BlenderClient(port=private_blender, timeout=120)
+    memory = SceneMemory("json_file", {"path": str(tmp_path / "mem")})
+    memory.set_blender_client(client)
+    monkeypatch.setattr(scene_tools, "_scene_memory", memory)
+    client.run_code("import bpy\nbpy.ops.mesh.primitive_uv_sphere_add(location=(30, 30, 1))\n"
+                    "bpy.context.object.name = 'my_sculpture'\nresult = 1")
+    other = {"setting": {"kind": "indoor", "bounds_m": [6.0, 5.0, 2.7]},
+             "objects": [{"id": "old_desk", "category": "desk"}], "relations": []}
+    sp._handle_build_scene({"spec": other, "snapshot": False, "exposure_check": False})
+    sp._handle_build_scene({"spec": SPEC, "snapshot": False, "exposure_check": False})
+    names = client.run_code("import bpy\nresult = sorted(o.name for o in bpy.context.scene.objects)")
+    assert "my_sculpture" in names and not any(n.startswith("old_desk") for n in names), names
