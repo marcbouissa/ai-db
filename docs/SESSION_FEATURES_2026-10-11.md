@@ -173,6 +173,11 @@ Mean judge score 1-10 over the six briefs, same free model, same judge batch per
 
 v4 vs v3: +2.33 (lightning) and +1.33 (ultra). Full tables in `bench/REPORT.md` (git-ignored).
 
+Full-field blind judging (every model, one batch per brief, 83 scenes): nemotron v4 is the best
+nemotron arm (lightning 4.67, ultra 4.50; raw 1.67 / 3.50). Larger free models (longcat, mimo,
+space-bunny, big-pickle) score 6-8 but finished only 1-4 scenes each before rate limits, on the
+first (easier) briefs, so they are not comparable yet.
+
 ## Not finished or left for later
 
 - Tree types (pine, birch, palm): drop the paper-looking flattened sprays and scatter needles and leaflets along twigs instead.
