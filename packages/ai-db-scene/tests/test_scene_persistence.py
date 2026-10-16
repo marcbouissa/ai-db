@@ -168,6 +168,34 @@ def test_json_history_does_not_leak_between_projects_and_goes_with_the_scene(tmp
     assert memory.get_history(scene_id=a) == []
 
 
+# --- snapshots get names list_scenes can tell apart -----------------------------------------
+
+def test_snapshots_are_named_after_their_prompt_or_spec(tmp_path):
+    memory, fake = _memory(tmp_path, _scene(["a"]))
+    fake.scene.name = "Blender Scene"  # what every capture is called
+    brief = memory.snapshot_scene(prompt="  a cosy reading corner\nwith a lamp  ")
+    spec_only = memory.snapshot_scene(prompt="build_scene", metadata={"spec": {**SPEC, "setting": {
+        **SPEC["setting"], "style": "classic"}}})
+    named = memory.snapshot_scene(prompt="x", name="Client office")
+    version = memory.snapshot_scene(prompt="moved the desk", parent_scene_id=brief)
+    long = memory.snapshot_scene(prompt="word " * 40)
+    names = {s["scene_id"]: s["name"] for s in memory.list_scenes()}
+    assert names[brief] == names[version] == "a cosy reading corner with a lamp"
+    assert names[spec_only] == "classic indoor 5x4 m: desk, chair, shelf"
+    assert names[named] == "Client office"
+    assert len(names[long]) == 60 and names[long].endswith("...")
+    assert memory.restore_scene(memory.fork_scene(brief, "variant")).name == "a cosy reading corner with a lamp (fork)"
+
+
+def test_old_snapshots_named_blender_scene_are_listed_by_prompt(tmp_path):
+    memory, _ = _memory(tmp_path, _scene(["a"]), "sqlite_vec")
+    sid = memory.snapshot_scene(prompt="office for two")
+    old = memory.backend.load_scene(sid)
+    old.name = "Blender Scene"
+    memory.backend.save_scene(old)
+    assert [s["name"] for s in memory.list_scenes()] == ["office for two"]
+
+
 # --- versions keep their project ---------------------------------------------------------------
 
 def test_version_without_project_stays_in_its_parents_project(tmp_path):

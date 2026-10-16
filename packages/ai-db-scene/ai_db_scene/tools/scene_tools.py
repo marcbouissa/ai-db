@@ -79,6 +79,7 @@ def _handle_snapshot_scene(args: dict[str, Any]) -> Any:
         metadata=args.get("metadata"),
         tags=args.get("tags"),
         parent_scene_id=args.get("parent_scene_id"),
+        name=args.get("name"),
     )
     return {"scene_id": scene_id, "status": "saved"}
 
@@ -232,6 +233,10 @@ _MEMORY_TOOLS: list[tuple[str, str, dict[str, Any]]] = [
                 "project": {
                     "type": "string",
                     "description": "Project name for organization (default: the parent's, else 'default')",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Scene name shown by list_scenes (default: the parent's, else from the prompt)",
                 },
                 "operation_type": {
                     "type": "string",

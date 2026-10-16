@@ -55,12 +55,15 @@ class SceneMemory:
         metadata: dict[str, Any] | None = None,
         tags: list[str] | None = None,
         parent_scene_id: str | None = None,
+        name: str | None = None,
     ) -> str:
         """Capture current Blender scene and link to prompt.
 
         ``parent_scene_id`` records the snapshot as the next version of that scene (after an
         edit), so ``get_scene_versions`` walks back through the edits. Without ``project`` a
-        version stays in its parent's project (else ``default``).
+        version stays in its parent's project (else ``default``). Without ``name`` a version
+        keeps its parent's name and a new scene is named after its prompt (or its spec's
+        setting): every snapshot used to be called "Blender Scene".
         """
         parent = None
         if parent_scene_id is not None:
@@ -81,6 +84,10 @@ class SceneMemory:
             scene.parent_scene_id = parent.scene_id
             scene.version = parent.version + 1
             scene.name = parent.name
+        elif scene.name in _CAPTURE_NAMES:
+            scene.name = scene_name(prompt, metadata)
+        if name and name.strip():
+            scene.name = " ".join(name.split())
         
         # Create prompt context
         prompt_ctx = PromptContext(
@@ -249,8 +256,13 @@ class SceneMemory:
                 "mismatches": mismatches}
 
     def list_scenes(self, project: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
-        """List available scene snapshots."""
-        return self.backend.list_scenes(project=project, limit=limit)
+        """List available scene snapshots (snapshots stored as "Blender Scene" are listed under
+        a name made from their prompt)."""
+        scenes = self.backend.list_scenes(project=project, limit=limit)
+        for s in scenes:
+            if s.get("name") in _CAPTURE_NAMES and s.get("prompt"):
+                s["name"] = scene_name(str(s["prompt"]))
+        return scenes
     
     def delete_scene(self, scene_id: str) -> bool:
         """Delete a scene snapshot (and its stored geometry)."""
@@ -335,6 +347,33 @@ class SceneMemory:
         self, brief: str, min_score: float = 4.0, top_k: int = 3, project: str | None = None
     ) -> list[RunRecord]:
         return self.backend.search_exemplars(brief, min_score=min_score, top_k=top_k, project=project)
+
+
+#: names a capture gives every scene; a snapshot gets a real one instead
+_CAPTURE_NAMES = frozenset({"Blender Scene", "Scene", ""})
+#: prompts that say nothing about the scene (build_scene's default)
+_GENERIC_PROMPTS = frozenset({"build_scene", "edit_scene", "snapshot", "snapshot_scene", "scene"})
+_NAME_MAX = 60
+
+
+def scene_name(prompt: str, metadata: dict[str, Any] | None = None) -> str:
+    """A short, readable name for a new scene: its prompt (first 60 characters), else a summary
+    of the spec's setting (``classic indoor 5x4 m: desk, chair, shelf``), else "Scene"."""
+    text = " ".join(str(prompt or "").split())
+    if text and text.lower() not in _GENERIC_PROMPTS:
+        return text if len(text) <= _NAME_MAX else text[:_NAME_MAX - 3].rstrip() + "..."
+    spec = metadata.get("spec") if isinstance(metadata, dict) else None
+    if not isinstance(spec, dict):
+        return "Scene"
+    setting = spec.get("setting")
+    if isinstance(setting, dict):
+        bounds = setting.get("bounds_m") or []
+        size = "x".join(f"{float(b):g}" for b in bounds[:2] if isinstance(b, int | float))
+        head = " ".join(str(p) for p in (setting.get("style"), setting.get("kind"), size and f"{size} m") if p)
+        ids = [str(o.get("id")) for o in spec.get("objects") or [] if isinstance(o, dict) and o.get("id")]
+        more = f", +{len(ids) - 3}" if len(ids) > 3 else ""
+        return f"{head}: {', '.join(ids[:3])}{more}" if ids else head or "Scene"
+    return "Scene"
 
 
 def _is_fork(scene: SceneState) -> bool:

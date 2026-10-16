@@ -82,8 +82,10 @@ Spec features worth knowing:
   Each edit saves a new version linked to its parent, in the parent's project, rebuilt with the
   version's own seed, geometry mode and furniture variants (untouched objects stay as they were).
   A fork can be edited too (it uses its ancestor's spec).
-- `snapshot_scene {prompt, project?, tags?, parent_scene_id?}` saves the current Blender
-  scene by hand (after manual changes).
+- `snapshot_scene {prompt, project?, name?, tags?, parent_scene_id?}` saves the current Blender
+  scene by hand (after manual changes). A new scene is named after its prompt (a build without
+  one: after its setting, `classic indoor 5x4 m: desk, chair, shelf`), a version keeps its
+  parent's name; `list_scenes` shows the names.
 - `get_scene_versions {scene_id}` lists the version chain.
 - `diff_scenes {scene_a, scene_b}` shows added, removed and changed objects.
 - `restore_object {scene_id, name}` brings back one object from a version (with its parts:
