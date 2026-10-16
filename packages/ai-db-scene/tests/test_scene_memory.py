@@ -450,19 +450,23 @@ class _FakeBlender:
             self.scene.objects[k] = o
         return [o.name for o in stored.objects.values()]
 
-    def restore_object(self, path, name, location, rotation, scale):
+    def restore_object(self, path, name, location, rotation, scale, family=None):
         import copy
         live = {o.name: k for k, o in self.scene.objects.items()}
         if path is not None:
             stored = {o.name: (k, o) for k, o in self.files[path].objects.items()}
-            if name in live:
-                del self.scene.objects[live[name]]
-            key, obj = stored[name]
-            self.scene.objects[key] = copy.deepcopy(obj)
-            live[name] = key
+            for n in [name, *(family or [])]:
+                if n in live:
+                    del self.scene.objects[live[n]]
+                key, obj = stored[n]
+                self.scene.objects[key] = copy.deepcopy(obj)
+                live[n] = key
         obj = self.scene.objects[live[name]]
         obj.location, obj.rotation, obj.scale = tuple(location), tuple(rotation), tuple(scale)
-        return "geometry" if path is not None else "transform"
+        return {"restored": "geometry" if path is not None else "transform", "objects": [name, *(family or [])]}
+
+    def missing_files(self):
+        return []
 
 
 class TestApplyScene:

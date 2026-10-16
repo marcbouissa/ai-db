@@ -764,13 +764,20 @@ _STYLE_PRESETS: dict[str, dict[str, str]] = {
 }
 
 
-def _variation(spec: SceneSpec, family: str, base_id: str) -> dict[str, Any]:
+def variation_key(spec: SceneSpec) -> list[Any]:
+    """What makes one scene's furniture differ from another's: setting + object list."""
+    return [spec.setting.kind, list(spec.setting.bounds_m), spec.setting.style,
+            sorted([o.id, o.category] for o in spec.objects)]
+
+
+def _variation(spec: SceneSpec, family: str, base_id: str, key: list[Any] | None = None) -> dict[str, Any]:
     """Seed (and style preset) for a generated piece, so scenes do not all get the generator's
-    default sofa. The seed comes from the scene (setting + object list) and the object's base id:
-    a different scene gets a different sofa, a rebuild or edit_scene of the same scene keeps it,
-    and the copies of one spec object (armchair_1, armchair_2) stay a matching pair."""
-    sig = json.dumps([spec.setting.kind, list(spec.setting.bounds_m), spec.setting.style,
-                      sorted((o.id, o.category) for o in spec.objects), base_id])
+    default sofa. The seed comes from the scene (``key``: the first build's ``variation_key``)
+    and the object's base id: a different scene gets a different sofa, a rebuild or edit_scene
+    of the same scene keeps it (edit_scene passes the stored key: the edited object list used
+    to reseed every untouched piece), and the copies of one spec object (armchair_1,
+    armchair_2) stay a matching pair."""
+    sig = json.dumps([*(key if key is not None else variation_key(spec)), base_id])
     out: dict[str, Any] = {"seed": int(hashlib.sha1(sig.encode()).hexdigest()[:7], 16)}  # < 2**31: a C int
     from ai_db_scene.materials import style_palette
 
@@ -872,7 +879,7 @@ def _wear_command(wear: list[dict[str, Any]]) -> dict[str, Any]:
 
 def build_layout_commands(
     spec: SceneSpec, placements: list[Placement], asset_map: dict[str, Any] | None = None,
-    geometry: str = "generated", providers: list[Any] | None = None,
+    geometry: str = "generated", providers: list[Any] | None = None, variation: list[Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Blender batch for room shell + one object per placement. Returns (commands, created names).
 
@@ -952,7 +959,7 @@ def build_layout_commands(
                         "rot_z": math.radians(pl.rotation_deg_z), "props": props})
         elif geometry == "generated" and pl.category == "tree" and not user_overrides("tree"):
             loc = _shift(pl.location, off)
-            seed = (_variation(spec, "tree", base)["seed"] + zlib.crc32(pl.id.encode())) % (2**31)  # every tree differs
+            seed = (_variation(spec, "tree", base, variation)["seed"] + zlib.crc32(pl.id.encode())) % (2**31)  # every tree differs
             cmds.append({"type": "run_code", "params": {"code": _TREE.format(payload=json.dumps({
                 "name": pl.id, "dims": list(pl.dims), "seed": seed,
                 "location": [loc[0], loc[1], loc[2] - pl.dims[2] / 2], "rot_z": pl.rotation_deg_z}))}})
@@ -965,7 +972,7 @@ def build_layout_commands(
             loc = _shift(pl.location, off)
             cmds.append({"type": "generate_asset", "params": {
                 "family": family, "params": params(*pl.dims), "name": pl.id,
-                **_variation(spec, family, base),
+                **_variation(spec, family, base, variation),
                 "location": [loc[0], loc[1], loc[2] - pl.dims[2] / 2],  # base centre
                 "rotation": [0.0, 0.0, pl.rotation_deg_z]}})
             tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
@@ -1506,7 +1513,8 @@ def _handle_apply_layout(args: dict[str, Any]) -> Any:
         providers = providers_from_config()
     except AiDbConfigError as e:  # a bad plugins.scene section: say so instead of ignoring it
         return _err(str(e))
-    cmds, names = build_layout_commands(spec, pls, args.get("asset_map"), geometry, providers)
+    cmds, names = build_layout_commands(spec, pls, args.get("asset_map"), geometry, providers,
+                                        args.get("variation"))
     try:
         results = BlenderClient().batch(cmds)
     except BlenderError as e:
@@ -1549,6 +1557,8 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
     spec, errors = _parse_spec(args.get("spec"))
     if spec is None:
         return {"status": "invalid", "errors": errors}
+    # furniture variants follow the first build's spec; edit_scene passes the stored key back
+    variation = args.get("variation") if isinstance(args.get("variation"), list) else variation_key(spec)
     render_opts = None
     if args.get("render") is not None:
         render_opts, render_err = render_options(args["render"])
@@ -1589,7 +1599,8 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
         except BlenderError:
             pass
     built = _handle_apply_layout({"spec": data, "placements": [placement_to_dict(p) for p in placements],
-                                  "asset_map": args.get("asset_map"), "geometry": args.get("geometry", "generated")})
+                                  "asset_map": args.get("asset_map"), "geometry": args.get("geometry", "generated"),
+                                  "variation": variation})
     if built.get("status") not in ("success", "partial"):
         return {**built, "repairs": repairs, "spec": data}
     report = _handle_validate_scene({"spec": data})
@@ -1697,7 +1708,8 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
             out["scene_id"] = _memory().snapshot_scene(
                 prompt=str(args.get("prompt") or "build_scene"), project=args.get("project", "default"),
                 operation_type=args.get("operation_type", "build"),
-                metadata={"spec": data, "repairs": repairs, **(args.get("metadata") or {})},
+                metadata={"spec": data, "repairs": repairs, "build": build_options({**args, "variation": variation}),
+                          **(args.get("metadata") or {})},
                 tags=["build_scene"], parent_scene_id=args.get("parent_scene_id"))
         except Exception as e:  # noqa: BLE001 - the scene is built; say why it was not saved
             out["snapshot_error"] = str(e)
@@ -2090,14 +2102,37 @@ def judge_render(path: Path) -> str:
     return str(res.get("filepath") or path) if isinstance(res, dict) else str(path)
 
 
-def _stored_spec(scene_id: str) -> tuple[dict[str, Any] | None, str | None]:
-    scene = _memory().restore_scene(scene_id)
-    meta = scene.prompt_context.metadata if scene.prompt_context else {}
-    spec = meta.get("spec") if isinstance(meta, dict) else None
-    if not isinstance(spec, dict):
-        return None, (f"scene {scene_id} has no stored spec (it was not made by build_scene/edit_scene); "
-                      "pass the spec to build_scene first")
-    return spec, None
+#: build_scene options a version stores so edit_scene rebuilds it the same way (a rebuild with
+#: another seed or geometry mode changed every untouched piece of furniture)
+_BUILD_OPTIONS = ("seed", "geometry", "asset_map", "poly_budget", "physics", "variation")
+
+
+def build_options(args: dict[str, Any]) -> dict[str, Any]:
+    return {k: args[k] for k in _BUILD_OPTIONS if args.get(k) is not None}
+
+
+def _stored_spec(scene_id: str) -> tuple[dict[str, Any] | None, str | None, dict[str, Any]]:
+    """The spec a version was built from, with its build options and project.
+
+    A version without a spec of its own (a fork_scene copy, a manual snapshot_scene saved as
+    the next version) takes the nearest ancestor's: fork-then-edit used to fail with "no
+    stored spec".
+    """
+    memory = _memory()
+    scene = memory.restore_scene(scene_id)
+    project = scene.project
+    seen: set[str] = set()
+    while scene is not None and scene.scene_id not in seen:
+        seen.add(scene.scene_id)
+        meta = scene.prompt_context.metadata if scene.prompt_context else {}
+        spec = meta.get("spec") if isinstance(meta, dict) else None
+        if isinstance(spec, dict):
+            build = meta.get("build")
+            return spec, None, {**(build if isinstance(build, dict) else {}), "project": project,
+                                "spec_from": scene.scene_id}
+        scene = memory.backend.load_scene(scene.parent_scene_id) if scene.parent_scene_id else None
+    return None, (f"scene {scene_id} has no stored spec (it was not made by build_scene/edit_scene); "
+                  "pass the spec to build_scene first"), {}
 
 
 def _handle_edit_scene(args: dict[str, Any]) -> Any:
@@ -2108,11 +2143,15 @@ def _handle_edit_scene(args: dict[str, Any]) -> Any:
     if not scene_id:
         return _err("scene_id is required")
     try:
-        spec, why = _stored_spec(scene_id)
+        spec, why, stored = _stored_spec(scene_id)
     except ValueError as e:
         return _err(str(e))
     if spec is None:
         return _err(why or "no stored spec")
+    # rebuild as the version was built (seed, geometry, assets) and keep it in its project,
+    # unless the call says otherwise
+    opts = {k: args[k] if args.get(k) is not None else stored.get(k) for k in _BUILD_OPTIONS}
+    project = args.get("project") or stored.get("project") or "default"
     data, done, errors = apply_steps(spec, args.get("steps"))
     if data is None:
         return {"status": "invalid", "errors": errors, "applied_before_error": done}
@@ -2121,13 +2160,13 @@ def _handle_edit_scene(args: dict[str, Any]) -> Any:
         return {"status": "invalid", "errors": errors, "steps_applied": done}
     safety = None
     try:  # keep manual Blender edits made since the last version before the scene is cleared
-        safety = _memory().snapshot_scene(prompt=f"before edit of {scene_id}", project=args.get("project", "default"),
+        safety = _memory().snapshot_scene(prompt=f"before edit of {scene_id}", project=project,
                                           operation_type="pre_edit", tags=["pre_edit"])
     except Exception:  # noqa: BLE001 - no Blender or empty scene: nothing to keep
         safety = None
-    out = _handle_build_scene({"spec": data, "seed": args.get("seed", 0), "geometry": args.get("geometry", "generated"),
-                               "asset_map": args.get("asset_map"), "clear": True, "snapshot": True,
-                               "prompt": args.get("prompt") or "; ".join(done), "project": args.get("project", "default"),
+    out = _handle_build_scene({**{k: v for k, v in opts.items() if v is not None}, "spec": data,
+                               "clear": True, "snapshot": True,
+                               "prompt": args.get("prompt") or "; ".join(done), "project": project,
                                "operation_type": "edit", "parent_scene_id": scene_id,
                                "metadata": {"steps": args.get("steps")}})
     return {**out, "steps_applied": done, "previous_scene_id": scene_id, "safety_snapshot": safety}
@@ -2271,8 +2310,10 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
           "scene_id": {"type": "string", "description": "a version saved by build_scene or edit_scene"},
           "steps": {"type": "array", "items": {"type": "object"},
                     "description": "e.g. [{op: add_object, object: {id: lamp, category: floor_lamp}, relations: [{a: lamp, rel: beside, b: sofa}]}, {op: update_object, id: sofa, set: {material: velvet:#5b2a4a}}]"},
-          "seed": {"type": "integer"}, "geometry": {"enum": list(GEOMETRY_MODES)},
-          "prompt": {"type": "string"}, "project": {"type": "string"}},
+          "seed": {"type": "integer", "description": "default: the seed the version was built with"},
+          "geometry": {"enum": list(GEOMETRY_MODES), "description": "default: the version's own"},
+          "prompt": {"type": "string"},
+          "project": {"type": "string", "description": "default: the version's project"}},
       "required": ["scene_id", "steps"]},
      _handle_edit_scene),
     ("apply_layout",

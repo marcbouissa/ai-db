@@ -23,6 +23,22 @@ def _read_json(path: Path) -> Any:
     except json.JSONDecodeError as e:
         raise AiDbStorageError(f"corrupt scene store file {path}: {e}") from e
 
+_UNSAFE = set('%/\\*?[]\0')
+
+
+def _project_key(project: str) -> str:
+    """``project`` as a file-name part: path separators and glob characters %-escaped (a "/" in a
+    project name failed the save; "[" broke the lookups). Spaces and unicode stay readable, so
+    index files written before keep their names."""
+    return "".join(f"%{ord(ch):02X}" if ch in _UNSAFE else ch for ch in project)
+
+
+def _project_name(key: str) -> str:
+    from urllib.parse import unquote
+
+    return unquote(key)
+
+
 class JSONFileSceneBackend(SceneMemoryBackend):
     """Scene memory backend using JSON files on disk."""
     
@@ -72,7 +88,7 @@ class JSONFileSceneBackend(SceneMemoryBackend):
         scene_file = self.scenes_dir / f"{scene.scene_id}.json"
         
         # Also save a project index
-        project_file = self.scenes_dir / f".index_{scene.project}.json"
+        project_file = self.scenes_dir / f".index_{_project_key(scene.project)}.json"
         index = {}
         if project_file.exists():
             index = _read_json(project_file)
@@ -111,7 +127,7 @@ class JSONFileSceneBackend(SceneMemoryBackend):
         scenes = []
         
         if project:
-            index_files = [self.scenes_dir / f".index_{project}.json"]
+            index_files = [self.scenes_dir / f".index_{_project_key(project)}.json"]
         else:
             index_files = list(self.scenes_dir.glob(".index_*.json"))
         
@@ -120,7 +136,7 @@ class JSONFileSceneBackend(SceneMemoryBackend):
                 continue
             for scene_id, meta in _read_json(index_file).items():
                 meta["scene_id"] = scene_id
-                meta["project"] = index_file.stem.replace(".index_", "")
+                meta["project"] = _project_name(index_file.stem.removeprefix(".index_"))
                 scenes.append(meta)
         
         # Sort by timestamp desc
@@ -140,6 +156,10 @@ class JSONFileSceneBackend(SceneMemoryBackend):
         if scene_file.exists():
             scene_file.unlink()
             deleted = True
+        if deleted:  # its prompt history goes with it (as the sqlite backend's cascade does)
+            for history_file in self.history_dir.glob("*.json"):
+                if _read_json(history_file).get("scene_id") == scene_id:
+                    history_file.unlink()
         
         return deleted
     
@@ -148,7 +168,7 @@ class JSONFileSceneBackend(SceneMemoryBackend):
     def save_prompt_context(self, ctx: PromptContext) -> int:
         # Use timestamp as ID for JSON backend
         ctx.id = int(ctx.timestamp * 1000000)
-        history_file = self.history_dir / f"{ctx.project}_{ctx.id}.json"
+        history_file = self.history_dir / f"{_project_key(ctx.project)}_{ctx.id}.json"
         history_file.write_text(json.dumps(ctx.__dict__, indent=2))
         return ctx.id
     
@@ -160,16 +180,16 @@ class JSONFileSceneBackend(SceneMemoryBackend):
         limit: int = 50
     ) -> list[PromptContext]:
         history = []
-        pattern = f"{project}_*.json" if project else "*.json"
-        
-        for history_file in self.history_dir.glob(pattern):
+        # filtered on the stored project: a "<project>_*" glob also matched project "<project>_b"
+        for history_file in self.history_dir.glob("*.json"):
             data = _read_json(history_file)
-            try:
-                ctx = PromptContext(**data)
-            except TypeError as e:
-                raise AiDbStorageError(f"corrupt prompt history file {history_file}: {e}") from e
+            if not isinstance(data, dict):
+                raise AiDbStorageError(f"corrupt prompt history file {history_file}")
+            ctx = PromptContext(**{k: v for k, v in data.items() if k in PromptContext.__dataclass_fields__})
 
             # Filter
+            if project and ctx.project != project:
+                continue
             if scene_id and ctx.scene_id != scene_id:
                 continue
             if object_uuid and object_uuid not in ctx.objects_affected:

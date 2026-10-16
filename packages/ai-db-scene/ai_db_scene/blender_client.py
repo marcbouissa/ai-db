@@ -9,11 +9,44 @@ from __future__ import annotations
 import json
 import os
 import socket
+import textwrap
 import time
 from typing import Any
 
 from ai_db_scene.constants import BLENDER_OX_HOST, BLENDER_OX_PORT, BLENDER_OX_TIMEOUT_S
 from ai_db_scene.models import CameraState, MaterialState, ObjectState, SceneState
+
+
+def _indent(code: str, n: int) -> str:
+    return textwrap.indent(code, " " * n)
+
+
+#: Blender code: link object ``o`` into the collection ``write_blend`` recorded for it
+#: (created under the scene collection when missing). Needs ``bpy`` and ``scene``.
+_LINK_HOME = (
+    "cname = o.get('ai_db_collection') or ''\n"
+    "coll = scene.collection if cname in ('', scene.collection.name) else bpy.data.collections.get(cname)\n"
+    "if coll is None:\n"
+    "    coll = bpy.data.collections.new(cname)\n"
+    "    scene.collection.children.link(coll)\n"
+    "elif coll is not scene.collection and coll.name not in scene.collection.children:\n"
+    "    scene.collection.children.link(coll)\n"
+    "if o.name not in coll.objects:\n"
+    "    coll.objects.link(o)\n"
+)
+
+#: Blender code: a material the load added whose name only gained a ``.NNN`` suffix next to a
+#: material of the stored name (present before the load, pointers in ``before``) is that
+#: material: its users are moved to the original and the copy is removed.
+_DEDUP_MATERIALS = (
+    "import re as _re\n"
+    "for m in [m for m in bpy.data.materials if m.as_pointer() not in before]:\n"
+    "    base = _re.sub(r'\\.\\d{3,}$', '', m.name)\n"
+    "    old = bpy.data.materials.get(base)\n"
+    "    if base != m.name and old is not None and old.as_pointer() in before:\n"
+    "        m.user_remap(old)\n"
+    "        bpy.data.materials.remove(m)\n"
+)
 
 
 class BlenderError(RuntimeError):
@@ -144,7 +177,11 @@ class BlenderClient:
         """Write every object of the current scene (with its mesh, materials, ...) to ``path``.
 
         Uses ``bpy.data.libraries.write``: the session's own file and path are untouched,
-        unlike ``save_file``. Returns the number of objects written.
+        unlike ``save_file``. External images are packed into the snapshot for the write (and
+        unpacked again in the session): a snapshot must not depend on texture files that a
+        cache clean-up or a moved asset folder deletes later. Remaining file paths are written
+        absolute (relative ones would resolve against the snapshot folder). Returns the number
+        of objects written.
         """
         code = (
             "import bpy, os\n"
@@ -153,15 +190,32 @@ class BlenderClient:
             "objs = set(bpy.context.scene.objects)\n"
             "for o in objs:\n"
             "    o['ai_db_collection'] = o.users_collection[0].name if o.users_collection else ''\n"
-            "bpy.data.libraries.write(path, objs, fake_user=True)\n"
+            "packed = []\n"
+            "for img in bpy.data.images:\n"
+            "    if img.packed_file is None and img.source in ('FILE', 'SEQUENCE', 'TILED') and img.filepath \\\n"
+            "            and os.path.exists(bpy.path.abspath(img.filepath)):\n"
+            "        try:\n"
+            "            img.pack()\n"
+            "            packed.append(img)\n"
+            "        except RuntimeError:\n"
+            "            pass\n"
+            "try:\n"
+            "    bpy.data.libraries.write(path, objs, path_remap='ABSOLUTE', fake_user=True)\n"
+            "finally:\n"
+            "    for img in packed:\n"
+            "        img.unpack(method='REMOVE')\n"
             "result = {'objects': len(objs)}\n"
         )
-        return int(self.run_code(code)["objects"])
+        return int(self.run_code(code, timeout=120.0)["objects"])
 
     def load_blend(self, path: str, replace: bool, camera: str | None) -> list[str]:
         """Bring the objects stored by ``write_blend`` into the current scene.
 
-        ``replace`` first removes every object of the scene. Objects go back into their
+        ``replace`` first removes every object of the scene and the data only they used, so
+        the restored meshes and materials keep their stored names (a second restore used to
+        add ``.001`` copies of every material, which ``diff_scenes`` then reported as changed).
+        A loaded material whose name only gained a ``.NNN`` suffix next to a material of the
+        stored name is replaced by that one (``additive``). Objects go back into their
         original collection (created under the scene collection when missing). Returns the
         names Blender gave the restored objects.
         """
@@ -172,21 +226,17 @@ class BlenderClient:
             "if replace:\n"
             "    for o in list(scene.objects):\n"
             "        bpy.data.objects.remove(o, do_unlink=True)\n"
+            "    bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)\n"
+            "before = {m.as_pointer() for m in bpy.data.materials}\n"
             "with bpy.data.libraries.load(path, link=False) as (src, dst):\n"
             "    dst.objects = list(src.objects)\n"
+            + _DEDUP_MATERIALS +
             "names = []\n"
             "for o in dst.objects:\n"
             "    if o is None:\n"
             "        continue\n"
             "    o.use_fake_user = False\n"
-            "    cname = o.get('ai_db_collection') or ''\n"
-            "    coll = scene.collection if cname in ('', scene.collection.name) else bpy.data.collections.get(cname)\n"
-            "    if coll is None:\n"
-            "        coll = bpy.data.collections.new(cname)\n"
-            "        scene.collection.children.link(coll)\n"
-            "    elif coll is not scene.collection and coll.name not in scene.collection.children:\n"
-            "        scene.collection.children.link(coll)\n"
-            "    coll.objects.link(o)\n"
+            + _indent(_LINK_HOME, 4) +
             "    names.append(o.name)\n"
             "if camera and camera in bpy.data.objects and bpy.data.objects[camera].type == 'CAMERA':\n"
             "    scene.camera = bpy.data.objects[camera]\n"
@@ -194,41 +244,89 @@ class BlenderClient:
         )
         return list(self.run_code(code, timeout=120.0)["names"])
 
+    def missing_files(self) -> list[str]:
+        """External files the open scene needs that do not exist (images, linked libraries)."""
+        code = (
+            "import bpy, os\n"
+            "miss = []\n"
+            "for img in bpy.data.images:\n"
+            "    if img.packed_file is None and img.source in ('FILE', 'SEQUENCE', 'TILED') and img.filepath \\\n"
+            "            and img.users and not os.path.exists(bpy.path.abspath(img.filepath)):\n"
+            "        miss.append(bpy.path.abspath(img.filepath))\n"
+            "for lib in bpy.data.libraries:\n"
+            "    if not os.path.exists(bpy.path.abspath(lib.filepath)):\n"
+            "        miss.append(bpy.path.abspath(lib.filepath))\n"
+            "result = sorted(set(miss))\n"
+        )
+        return [str(m) for m in self.run_code(code)]
+
     def restore_object(
         self, path: str | None, name: str, location: list[float], rotation: list[float],
-        scale: list[float],
-    ) -> str:
+        scale: list[float], family: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Put one object back: from the .blend at ``path`` when given, then set its transform.
 
-        The live object of that name (if any) is removed first so the stored one keeps the
-        exact name; nothing else in the scene changes. ``rotation`` is Euler degrees.
-        Returns ``"geometry"`` or ``"transform"`` (what was restored).
+        ``family`` names the object's stored descendants (the parts of a generated piece of
+        furniture): they come back with it, so restoring ``desk`` restores the whole desk.
+        Live objects of those names are removed first so the stored ones keep their exact
+        names; live children that are not part of the stored family stay attached. A part
+        restored on its own is attached to its live parent (the load copies the parent too;
+        that copy is dropped, or brought back when the parent is gone as well). Materials and
+        meshes that only gained a ``.NNN`` suffix are folded back into the originals. Nothing
+        else in the scene changes. ``rotation`` is Euler degrees.
+        Returns ``{"restored": "geometry"|"transform", "objects": [names restored]}``.
         """
         code = (
-            "import bpy, math\n"
-            f"path, name = {path!r}, {name!r}\n"
+            "import bpy, math, re\n"
+            f"path, name, family = {path!r}, {name!r}, {list(family or [])!r}\n"
             f"loc, rot, scale = {location!r}, {rotation!r}, {scale!r}\n"
             "scene = bpy.context.scene\n"
-            "how = 'transform'\n"
+            "how, restored = 'transform', []\n"
+            "def home(o):\n"
+            + _indent(_LINK_HOME, 4) +
             "if path:\n"
+            "    before_objs = {o.as_pointer() for o in bpy.data.objects}\n"
+            "    before = {m.as_pointer() for m in bpy.data.materials}\n"
+            "    before_meshes = {m.as_pointer() for m in bpy.data.meshes}\n"
             "    with bpy.data.libraries.load(path, link=False) as (src, dst):\n"
             "        if name not in src.objects:\n"
             "            raise ValueError(f'object {name!r} is not in the stored geometry')\n"
-            "        dst.objects = [name]\n"
-            "    o = dst.objects[0]\n"
-            "    old = bpy.data.objects.get(name)\n"
-            "    if old is not None and old is not o:\n"
-            "        bpy.data.objects.remove(old, do_unlink=True)\n"
-            "    o.name = name\n"
-            "    o.use_fake_user = False\n"
-            "    cname = o.get('ai_db_collection') or ''\n"
-            "    coll = scene.collection if cname in ('', scene.collection.name) else bpy.data.collections.get(cname)\n"
-            "    if coll is None:\n"
-            "        coll = bpy.data.collections.new(cname)\n"
-            "        scene.collection.children.link(coll)\n"
-            "    elif coll is not scene.collection and coll.name not in scene.collection.children:\n"
-            "        scene.collection.children.link(coll)\n"
-            "    coll.objects.link(o)\n"
+            "        wanted = [name] + [n for n in family if n in src.objects and n != name]\n"
+            "        dst.objects = list(wanted)  # the load swaps the list's names for objects in place\n"
+            "    loaded = {n: o for n, o in zip(wanted, dst.objects) if o is not None}\n"
+            "    mine = {o.as_pointer() for o in loaded.values()}\n"
+            "    adopt = []\n"
+            "    for n in loaded:\n"
+            "        old = bpy.data.objects.get(n)\n"
+            "        if old is not None and old.as_pointer() not in mine:\n"
+            "            adopt += [(c, n, c.matrix_world.copy()) for c in old.children if c.name not in loaded]\n"
+            "            bpy.data.objects.remove(old, do_unlink=True)\n"
+            "    for n, o in loaded.items():\n"
+            "        o.name = n\n"
+            "        o.use_fake_user = False\n"
+            "        home(o)\n"
+            "        restored.append(n)\n"
+            "    for c, n, mw in adopt:\n"
+            "        c.parent = loaded[n]\n"
+            "        c.matrix_world = mw\n"
+            "    for o in [o for o in bpy.data.objects if o.as_pointer() not in before_objs | mine]:\n"
+            "        base = re.sub(r'\\.\\d{3,}$', '', o.name)\n"
+            "        live = scene.objects.get(base)\n"
+            "        if live is None:\n"
+            "            o.name = base\n"
+            "            o.use_fake_user = False\n"
+            "            home(o)\n"
+            "            restored.append(base)\n"
+            "            continue\n"
+            "        o.user_remap(live)  # parent pointers, modifier and constraint targets\n"
+            "        bpy.data.objects.remove(o, do_unlink=True)\n"
+            + _indent(_DEDUP_MATERIALS, 4) +
+            "    for m in [m for m in bpy.data.meshes if m.as_pointer() not in before_meshes]:\n"
+            "        base = re.sub(r'\\.\\d{3,}$', '', m.name)\n"
+            "        old = bpy.data.meshes.get(base)\n"
+            "        if base != m.name and old is not None and old.users == 0:\n"
+            "            bpy.data.meshes.remove(old)\n"
+            "            m.name = base\n"
             "    how = 'geometry'\n"
             "o = scene.objects.get(name)\n"
             "if o is None:\n"
@@ -236,9 +334,10 @@ class BlenderClient:
             "o.location = loc\n"
             "o.rotation_euler = [math.radians(a) for a in rot]\n"
             "o.scale = scale\n"
-            "result = {'restored': how}\n"
+            "result = {'restored': how, 'objects': restored or [name]}\n"
         )
-        return str(self.run_code(code, timeout=60.0)["restored"])
+        res = self.run_code(code, timeout=60.0)
+        return {"restored": str(res["restored"]), "objects": [str(n) for n in res["objects"]]}
 
     def extract_scene_state(
         self, project: str = "default", name: str = "Blender Scene"
@@ -255,13 +354,15 @@ objs = {}
 materials = {}
 collections = {}
 
+# Stable UUID custom property, given to every object first: a child read before its parent
+# used to store parent_uuid None (the parent had no uuid yet), losing the hierarchy.
+import uuid as _u
 for o in bpy.context.scene.objects:
-    # Stable UUID custom property
-    uid = o.get("uuid")
-    if not uid:
-        import uuid as _u
-        uid = f"blender-{str(_u.uuid4())[:8]}"
-        o["uuid"] = uid
+    if not o.get("uuid"):
+        o["uuid"] = f"blender-{str(_u.uuid4())[:8]}"
+
+for o in bpy.context.scene.objects:
+    uid = o["uuid"]
 
     # Rotation in Euler degrees
     if hasattr(o, "rotation_euler"):

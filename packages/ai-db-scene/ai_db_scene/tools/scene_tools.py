@@ -26,6 +26,9 @@ def get_scene_memory() -> SceneMemory:
         from ai_db_scene.memory import SceneMemory
 
         _scene_memory = SceneMemory()
+    if _scene_memory._blender is None:
+        # Checked on every call, not only at creation: the MCP server usually starts before
+        # Blender, and a memory created then could never snapshot or restore afterwards.
         client = try_get_blender_client()
         if client is not None:
             _scene_memory.set_blender_client(client)
@@ -70,7 +73,7 @@ def _handle_snapshot_scene(args: dict[str, Any]) -> Any:
     memory = get_scene_memory()
     scene_id = memory.snapshot_scene(
         prompt=args["prompt"],
-        project=args.get("project", "default"),
+        project=args.get("project"),
         operation_type=args.get("operation_type", "modify"),
         objects_affected=args.get("objects_affected"),
         metadata=args.get("metadata"),
@@ -83,7 +86,9 @@ def _handle_snapshot_scene(args: dict[str, Any]) -> Any:
 def _handle_restore_scene(args: dict[str, Any]) -> Any:
     memory = get_scene_memory()
     report = memory.apply_scene(args["scene_id"], args.get("mode", "replace"))
-    return {"status": "restored" if not report["mismatches"] else "restored_with_mismatches", **report}
+    status = ("restored_with_mismatches" if report["mismatches"]
+              else "restored_with_missing_files" if report.get("missing_files") else "restored")
+    return {"status": status, **report}
 
 
 def _handle_diff_scenes(args: dict[str, Any]) -> Any:
@@ -226,8 +231,7 @@ _MEMORY_TOOLS: list[tuple[str, str, dict[str, Any]]] = [
                 },
                 "project": {
                     "type": "string",
-                    "default": "default",
-                    "description": "Project name for organization",
+                    "description": "Project name for organization (default: the parent's, else 'default')",
                 },
                 "operation_type": {
                     "type": "string",

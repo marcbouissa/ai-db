@@ -49,7 +49,7 @@ class SceneMemory:
     def snapshot_scene(
         self, 
         prompt: str, 
-        project: str = "default",
+        project: str | None = None,
         operation_type: str = "modify",
         objects_affected: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
@@ -59,7 +59,8 @@ class SceneMemory:
         """Capture current Blender scene and link to prompt.
 
         ``parent_scene_id`` records the snapshot as the next version of that scene (after an
-        edit), so ``get_scene_versions`` walks back through the edits.
+        edit), so ``get_scene_versions`` walks back through the edits. Without ``project`` a
+        version stays in its parent's project (else ``default``).
         """
         parent = None
         if parent_scene_id is not None:
@@ -71,6 +72,7 @@ class SceneMemory:
         
         # Capture scene from Blender
         scene = self._blender_capture_func()
+        project = project or (parent.project if parent is not None else "default")
         scene.project = project
         scene.tags = tags or []
         if parent is not None:
@@ -125,31 +127,19 @@ class SceneMemory:
         if self._blender is None:
             raise AiDbError("Blender is not connected: start Blender with the ai-db addon server")
         scene = self.restore_scene(scene_id)
-        path = self._geometry_path(scene)
-        if path is None:
-            raise AiDbError(f"snapshot {scene_id} has no stored geometry (taken before geometry "
-                            f"was saved, or without Blender); take a new snapshot")
+        path = self._require_geometry(scene)
         camera = scene.camera.name if scene.camera else None
         names = self._blender.load_blend(str(path), replace=mode == "replace", camera=camera)
         live = self._blender.extract_scene_state()
         by_name = {o.name: o for o in live.objects.values()}
         mismatches: list[dict[str, Any]] = []
         for want in scene.objects.values():
-            got = by_name.get(want.name)
-            if got is None:
-                mismatches.append({"name": want.name, "problem": "missing"})
-                continue
-            for field_name in ("location", "rotation", "scale"):
-                a, b = getattr(want, field_name), getattr(got, field_name)
-                # rotation is stored in degrees, rounded to 0.01
-                limit = 0.02 if field_name == "rotation" else tol
-                if any(not math.isclose(x, y, abs_tol=limit) for x, y in zip(a, b)):
-                    mismatches.append({"name": want.name, "problem": field_name,
-                                       "stored": list(a), "live": list(b)})
+            mismatches += _compare(want, by_name.get(want.name), tol)
+        missing_files = self._blender.missing_files()
         _logger.info("Scene %s restored into Blender (%s): %d objects, %d mismatches",
                      scene_id, mode, len(names), len(mismatches))
         return {"scene_id": scene_id, "mode": mode, "restored": len(names),
-                "geometry_from": path.stem, "mismatches": mismatches}
+                "geometry_from": path.stem, "mismatches": mismatches, "missing_files": missing_files}
 
     def _load(self, scene_id: str) -> SceneState:
         scene = self.backend.load_scene(scene_id)
@@ -158,7 +148,12 @@ class SceneMemory:
         return scene
 
     def _geometry_path(self, scene: SceneState) -> Path | None:
-        """The .blend holding ``scene``'s geometry: its own, else the nearest ancestor's."""
+        """The .blend holding ``scene``'s geometry: its own; a fork (which has none of its own)
+        uses the nearest ancestor's.
+
+        Only forks borrow: an edited version whose own file is missing used to restore its
+        parent's geometry silently (other objects, other furniture) as if it were its own.
+        """
         cur: SceneState | None = scene
         visited: set[str] = set()
         while cur is not None and cur.scene_id not in visited:
@@ -166,8 +161,26 @@ class SceneMemory:
             candidate = self.blend_path(cur.scene_id)
             if candidate is not None and candidate.exists():
                 return candidate
+            if not _is_fork(cur):
+                return None
             cur = self.backend.load_scene(cur.parent_scene_id) if cur.parent_scene_id else None
         return None
+
+    def _require_geometry(self, scene: SceneState) -> Path:
+        path = self._geometry_path(scene)
+        if path is not None:
+            return path
+        owner = scene
+        while _is_fork(owner) and owner.parent_scene_id:  # name the file that is really missing
+            parent = self.backend.load_scene(owner.parent_scene_id)
+            if parent is None or parent.scene_id == owner.scene_id:
+                break
+            owner = parent
+        expected = self.blend_path(owner.scene_id)
+        raise AiDbError(
+            f"snapshot {scene.scene_id} has no stored geometry: {expected} is missing (deleted or "
+            f"moved, or the snapshot was taken without Blender). restore_object can still reset "
+            f"transforms of objects that exist; take a new snapshot to store geometry again")
 
     def diff_scenes(self, scene_a: str, scene_b: str, tol: float = 1e-3) -> dict[str, Any]:
         """What changed from snapshot ``scene_a`` to ``scene_b``, objects matched by name.
@@ -218,26 +231,21 @@ class SceneMemory:
         if want is None:
             raise AiDbError(f"object {name!r} is not in snapshot {scene_id}")
         path = self._geometry_path(scene)
-        self._blender.restore_object(
+        family = _descendants(scene, want) if path is not None else []
+        done = self._blender.restore_object(
             str(path) if path is not None else None, name, list(want.location),
-            list(want.rotation), list(want.scale),
+            list(want.rotation), list(want.scale), family=[o.name for o in family],
         )
         live = self._blender.extract_scene_state()
-        got = next((o for o in live.objects.values() if o.name == name), None)
-        mismatches: list[dict[str, Any]] = []
-        if got is None:
-            mismatches.append({"name": name, "problem": "missing"})
-        else:
-            for field_name in ("location", "rotation", "scale"):
-                a, b = getattr(want, field_name), getattr(got, field_name)
-                limit = 0.02 if field_name == "rotation" else tol
-                if any(not math.isclose(x, y, abs_tol=limit) for x, y in zip(a, b)):
-                    mismatches.append({"name": name, "problem": field_name,
-                                       "stored": list(a), "live": list(b)})
+        by_name = {o.name: o for o in live.objects.values()}
+        mismatches = _compare(want, by_name.get(name), tol)
+        for part in family:  # the parts came back too: check them as stored
+            mismatches += _compare(part, by_name.get(part.name), tol)
         _logger.info("Object %s restored from %s (%s)", name, scene_id,
                      "geometry" if path is not None else "transform only")
         return {"scene_id": scene_id, "name": name,
                 "geometry_from": path.stem if path is not None else None,
+                "objects": done.get("objects", [name]) if isinstance(done, dict) else [name],
                 "mismatches": mismatches}
 
     def list_scenes(self, project: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
@@ -294,7 +302,7 @@ class SceneMemory:
         # Create new scene with same objects but new ID
         new_scene = SceneState(
             project=project or parent.project,
-            name=f"{parent.name} (fork)",
+            name=parent.name if parent.name.endswith(" (fork)") else f"{parent.name} (fork)",
             parent_scene_id=parent.scene_id,
             version=parent.version + 1,
             objects=parent.objects.copy(),
@@ -327,3 +335,42 @@ class SceneMemory:
         self, brief: str, min_score: float = 4.0, top_k: int = 3, project: str | None = None
     ) -> list[RunRecord]:
         return self.backend.search_exemplars(brief, min_score=min_score, top_k=top_k, project=project)
+
+
+def _is_fork(scene: SceneState) -> bool:
+    """A fork_scene copy: transforms only, its geometry is its ancestor's."""
+    ctx = scene.prompt_context
+    return ctx is not None and ctx.operation_type == "fork"
+
+
+def _descendants(scene: SceneState, root: Any) -> list[Any]:
+    """Objects of ``scene`` below ``root`` (children, grandchildren, ...), by stored parent uuid."""
+    children: dict[str, list[Any]] = {}
+    for o in scene.objects.values():
+        if o.parent_uuid:
+            children.setdefault(o.parent_uuid, []).append(o)
+    out: list[Any] = []
+    stack, seen = [root.uuid], {root.uuid}
+    while stack:
+        for child in children.get(stack.pop(), []):
+            if child.uuid not in seen:
+                seen.add(child.uuid)
+                out.append(child)
+                stack.append(child.uuid)
+    return out
+
+
+def _compare(want: Any, got: Any, tol: float) -> list[dict[str, Any]]:
+    """How a live object differs from its stored state (transform, materials); [] when equal."""
+    if got is None:
+        return [{"name": want.name, "problem": "missing"}]
+    out: list[dict[str, Any]] = []
+    for field_name in ("location", "rotation", "scale"):
+        a, b = getattr(want, field_name), getattr(got, field_name)
+        limit = 0.02 if field_name == "rotation" else tol  # rotation: degrees, rounded to 0.01
+        if any(not math.isclose(x, y, abs_tol=limit) for x, y in zip(a, b)):
+            out.append({"name": want.name, "problem": field_name, "stored": list(a), "live": list(b)})
+    if list(want.materials) != list(got.materials):
+        out.append({"name": want.name, "problem": "materials", "stored": list(want.materials),
+                    "live": list(got.materials)})
+    return out

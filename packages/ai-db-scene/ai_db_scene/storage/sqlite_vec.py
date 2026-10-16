@@ -50,6 +50,9 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.execute("PRAGMA cache_size=-32768")  # 32MB cache
+        # The tables declare ON DELETE CASCADE, but SQLite ignores it unless asked per
+        # connection: delete_scene left its objects and prompt history behind.
+        self._db.execute("PRAGMA foreign_keys=ON")
         
         self._init_schema()
         _logger.info(f"SQLiteVecSceneBackend initialized at {self.db_path}")
@@ -169,10 +172,14 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
         c = self._db.cursor()
         data_json = json.dumps(scene.to_dict())
         
-        # Upsert scene
+        # Upsert scene (not INSERT OR REPLACE: with foreign keys on, REPLACE deletes the row
+        # first and the cascade would drop the scene's prompt history)
         c.execute("""
-            INSERT OR REPLACE INTO scenes (scene_id, project, name, timestamp, version, parent_scene_id, tags, data)
+            INSERT INTO scenes (scene_id, project, name, timestamp, version, parent_scene_id, tags, data)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(scene_id) DO UPDATE SET project = excluded.project, name = excluded.name,
+                timestamp = excluded.timestamp, version = excluded.version,
+                parent_scene_id = excluded.parent_scene_id, tags = excluded.tags, data = excluded.data
         """, (
             scene.scene_id, scene.project, scene.name, scene.timestamp,
             scene.version, scene.parent_scene_id, json.dumps(scene.tags), data_json

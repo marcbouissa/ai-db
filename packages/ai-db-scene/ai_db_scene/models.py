@@ -72,7 +72,8 @@ class ObjectState:
     
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ObjectState":
-        return cls(**data)
+        obj: ObjectState = _build(cls, data)
+        return obj
 
 
 @dataclass
@@ -161,22 +162,24 @@ class SceneState:
     
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SceneState":
-        scene = cls(
-            scene_id=data["scene_id"],
-            project=data["project"],
-            name=data["name"],
-            timestamp=data["timestamp"],
-            version=data["version"],
-            parent_scene_id=data.get("parent_scene_id"),
-            tags=data.get("tags", []),
-        )
-        scene.objects = {k: ObjectState.from_dict(v) for k, v in data.get("objects", {}).items()}
-        scene.materials = {k: MaterialState(**v) for k, v in data.get("materials", {}).items()}
-        scene.collections = {k: CollectionState(**v) for k, v in data.get("collections", {}).items()}
-        scene.camera = CameraState(**data.get("camera", {}))
+        # Rows written by older (or newer) versions of the plugin must still load: missing
+        # keys take their defaults, unknown keys are ignored (a stored snapshot that cannot
+        # be read can never be restored).
+        scene: SceneState = _build(cls, {k: v for k, v in data.items()
+                             if k not in ("objects", "materials", "collections", "camera", "prompt_context")})
+        scene.objects = {k: ObjectState.from_dict(v) for k, v in (data.get("objects") or {}).items()}
+        scene.materials = {k: _build(MaterialState, v) for k, v in (data.get("materials") or {}).items()}
+        scene.collections = {k: _build(CollectionState, v) for k, v in (data.get("collections") or {}).items()}
+        scene.camera = _build(CameraState, data.get("camera") or {})
         if data.get("prompt_context"):
-            scene.prompt_context = PromptContext(**data["prompt_context"])
+            scene.prompt_context = _build(PromptContext, data["prompt_context"])
         return scene
+
+
+def _build(cls: Any, data: dict[str, Any]) -> Any:
+    """``cls(**data)`` without the keys ``cls`` does not know (stored by another version)."""
+    known = set(cls.__dataclass_fields__)
+    return cls(**{k: v for k, v in data.items() if k in known})
 
 
 RUN_OUTCOMES = ("success", "failed", "partial", "aborted")
