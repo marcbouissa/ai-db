@@ -1664,7 +1664,30 @@ def _issues(res: dict[str, Any]) -> list[dict[str, Any]]:
 def _handle_build_scene(args: dict[str, Any]) -> Any:
     """spec -> layout (repairing conflicts) -> build -> validate -> apply the validator's fixes;
     the result compact, verdict and next first (see build_report)."""
-    return present_build(_build_scene(args))
+    args, lifted = lift_build_args(args)
+    res = _build_scene(args)
+    if lifted and isinstance(res.get("repairs"), list):
+        res["repairs"] = [f"spec: {lifted} are build_scene arguments, not spec fields: read as such", *res["repairs"]]
+    return present_build(res)
+
+
+#: build_scene arguments a model put inside the spec (qwen3-14b-local-aidb6: brief, project,
+#: poly_budget, exposure_check in 6 of 7 scenes' first call, each refused as an unknown field)
+_BUILD_ARGS = ("brief", "project", "prompt", "seed", "geometry", "poly_budget", "exposure_check", "judge",
+               "render", "render_path", "physics", "snapshot", "clear", "asset_map")
+
+
+def lift_build_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """(args with build arguments found inside the spec moved to the top level, their names)."""
+    raw, err = spec_arg(args)
+    if err or not isinstance(raw, dict):
+        return args, []
+    lifted = [k for k in _BUILD_ARGS if k in raw]
+    if not lifted:
+        return args, []
+    spec = {k: v for k, v in raw.items() if k not in lifted}
+    out = {**{k: raw[k] for k in lifted}, **{k: v for k, v in args.items() if k not in SPEC_KEYS}}
+    return {**out, "spec": spec}, lifted
 
 
 def _build_scene(args: dict[str, Any]) -> dict[str, Any]:

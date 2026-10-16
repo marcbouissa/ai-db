@@ -93,3 +93,17 @@ def test_vague_quantities_are_no_count():
                          "and a few rocks at the water's edge.", set(load_priors()))
     assert beach["rock"] is None
     assert brief_counts("some plants and several chairs", set(load_priors()))["chair"] is None
+
+
+def test_build_arguments_inside_the_spec_are_lifted():
+    # qwen3-14b-local-aidb6 living_room: brief, project, poly_budget, exposure_check and snapshot
+    # inside the spec, each refused as an unknown field (first call in 6 of 7 scenes)
+    call = json.loads((Path(__file__).parent / "fixtures" / "bench_qwen_living_room_aidb6_call1.json").read_text())["args"]
+    args, lifted = sp.lift_build_args(call)
+    assert lifted == ["brief", "project", "poly_budget", "exposure_check", "snapshot"]
+    assert args["brief"].startswith("A cozy living room") and set(args["spec"]) == {
+        "setting", "objects", "relations", "lighting", "camera"}
+    res = sp._handle_build_scene(call)  # still invalid: setting.kind is missing, and only that
+    assert res["status"] == "invalid" and res["errors"] == [
+        "setting.kind: None is not allowed; allowed values: ['indoor', 'outdoor', 'tabletop', 'single_asset']"]
+    assert sp.lift_build_args({"spec": {"setting": {}}, "brief": "x"}) == ({"spec": {"setting": {}}, "brief": "x"}, [])
