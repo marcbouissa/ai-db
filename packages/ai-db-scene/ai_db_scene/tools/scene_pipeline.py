@@ -2272,25 +2272,6 @@ def _handle_edit_scene(args: dict[str, Any]) -> Any:
             **({"build_inferred": stored["build_inferred"]} if stored.get("build_inferred") else {})}
 
 
-_EXPORT = """
-import bpy, os
-path, fmt = {path!r}, {fmt!r}
-os.makedirs(os.path.dirname(path), exist_ok=True)
-if fmt in ("glb", "gltf"):
-    bpy.ops.export_scene.gltf(filepath=path, export_format="GLB" if fmt == "glb" else "GLTF_SEPARATE")
-else:
-    try:
-        bpy.ops.wm.usd_export.get_rna_type()
-    except KeyError:
-        raise RuntimeError("this Blender has no USD exporter (bpy.ops.wm.usd_export)")
-    bpy.ops.wm.usd_export(filepath=path)
-files = [path] + ([path[:-5] + ".bin"] if fmt == "gltf" else [])
-result = {{"bytes": sum(os.path.getsize(f) for f in files if os.path.exists(f)),
-          "objects": len(bpy.context.scene.objects),
-          "meshes": sum(1 for o in bpy.context.scene.objects if o.type == "MESH")}}
-"""
-
-
 def export_root() -> Path:
     """The one folder export_scene writes into: $AI_DB_SCENE_EXPORT_DIR, plugins.scene.export_dir
     or SCENE_EXPORT_DIR."""
@@ -2339,12 +2320,23 @@ def _handle_export_scene(args: dict[str, Any]) -> Any:
         target, fmt = export_path(str(args.get("path") or ""), args.get("format"), root)
     except ValueError as e:
         return _err(str(e))
+    # a stored version or the live scene, exported by a separate Blender and imported back
+    from ai_db_scene.export import export_live, export_version
+
+    verify = args.get("verify", True) is not False
     try:
-        res = BlenderClient().run_code(_EXPORT.format(path=str(target), fmt=fmt), timeout=SCENE_EXPORT_TIMEOUT_S)
+        if args.get("scene_id"):
+            report = export_version(_memory(), str(args["scene_id"]), target, fmt, verify=verify,
+                                    timeout=SCENE_EXPORT_TIMEOUT_S)
+        else:
+            report = export_live(BlenderClient(), target, fmt, verify=verify, timeout=SCENE_EXPORT_TIMEOUT_S)
     except BlenderError as e:
         return {"status": "error", "message": str(e), "error_type": e.error_type or type(e).__name__, "hint": e.hint}
-    return {"status": "success", "path": str(target), "format": fmt, "bytes": res["bytes"],
-            "objects": res["objects"], "meshes": res["meshes"]}
+    except AiDbError as e:
+        return _err(str(e))
+    rt = report.get("roundtrip")
+    return {"status": "success" if rt is None or not rt["mismatch_count"] else "exported_with_mismatches",
+            **report}
 
 
 PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
@@ -2446,12 +2438,16 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
       "required": ["brief"]},
      _handle_record_run),
     ("export_scene",
-     ("Export the current Blender scene to glb, gltf, usd or usdz (format from `format` or the path's "
-      "extension). `path` is relative to the export folder (plugins.scene.export_dir); paths outside it "
-      "are refused. Returns the file size and object count"),
+     ("Export the current Blender scene, or a stored version (`scene_id`), to glb, gltf, usd, usda, usdc or "
+      "usdz (format from `format` or the path's extension). `path` is relative to the export folder "
+      "(plugins.scene.export_dir); paths outside it are refused. Returns the file size and object count; the "
+      "file is imported back and checked (roundtrip: missing objects, transforms, materials)"),
      {"type": "object",
       "properties": {"path": {"type": "string", "description": "e.g. living_room.glb"},
-                     "format": {"enum": ["glb", "gltf", "usd", "usdz"]}},
+                     "format": {"enum": ["glb", "gltf", "usd", "usda", "usdc", "usdz"]},
+                     "scene_id": {"type": "string", "description": "export this stored version instead of the live scene"},
+                     "verify": {"type": "boolean", "default": True,
+                                "description": "import the file back and compare (roundtrip)"}},
       "required": ["path"]},
      _handle_export_scene),
     ("search_exemplars",

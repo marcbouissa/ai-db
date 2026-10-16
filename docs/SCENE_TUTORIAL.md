@@ -100,8 +100,14 @@ Spec features worth knowing:
 
 ## 5. Export
 
-`export_scene {path: "living_room.glb"}` writes glb, gltf, usd or usdz (from `format` or the
-extension) under `plugins.scene.export_dir`; paths outside it are refused.
+`export_scene {path: "living_room.glb"}` writes glb, gltf, usd, usda, usdc or usdz (from `format`
+or the extension) under `plugins.scene.export_dir`; paths outside it are refused. With
+`scene_id` it exports a stored version (a fork with its own transforms) instead of the live
+scene. A separate headless Blender does the export (the live session is left as it is), then
+imports the file back: `roundtrip` lists mesh objects that are missing or whose world
+transform or materials changed (`status: exported_with_mismatches`). Geometry-nodes instances
+(tree leaves) are made real geometry first, so a park exports with its leaves (large files:
+~50 MB glb). In USD an object with children comes back as an empty holding its mesh.
 
 ## 6. Your own part recipes
 
