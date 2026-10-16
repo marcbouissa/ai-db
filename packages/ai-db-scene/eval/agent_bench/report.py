@@ -10,7 +10,7 @@ from typing import Any
 import briefs
 
 #: arm suffixes in table order: ai-db v1, ai-db v2 (build_scene/edit_scene), then without ai-db
-MODES = ("aidb", "aidb2", "aidb3", "aidb4", "aidb5", "raw")
+MODES = ("aidb", "aidb2", "aidb3", "aidb4", "aidb5", "aidb6", "raw")
 
 
 def _split(arm: str) -> tuple[str, str]:
@@ -88,7 +88,9 @@ def write(out: str) -> str:
           "Strata model (qwen3.8-flash, new generic agent), a local Qwen3-14B-AWQ (`qwen3-14b-local`: vLLM on "
           "this GPU via local_model.sh, the Strata agent, thinking on, 32k context), each with the Blender addon's tools only (raw) or those + "
           "ai-db scene tools (aidb; aidb2 = ai-db with build_scene/edit_scene; aidb3 = the same prompt on the later pipeline; aidb4 = the realism pass; "
-          "aidb5 = the weak-model fixes with a prompt hint for the current build_scene). `ai-db` = short hash of the "
+          "aidb5 = the weak-model fixes with a prompt hint for the current build_scene; aidb6 = compact results with "
+          "verdict/next first, the brief passed to build_scene, ceiling grid, seating group, tool names as the runner "
+          "offers them). `ai-db` = short hash of the "
           "ai-db-scene code a scene ran with (results of different versions must not be mixed). Same briefs, same Blender build, a fresh Blender per scene, 30 min cap."),
           ("Quality (formula v2) = 40% brief checklist + 15% size plausibility + 10% mesh coverage + 25% "
           "validator (100 - 8/blocking - 2/warning) + 10% basics (camera, lights, materials). The checklist "
@@ -125,7 +127,8 @@ def write(out: str) -> str:
           "|---|---|---|---|---|---|---|---|"]
     by = {(r["arm"], r["brief"]): r for r in rows}
     comparisons = (("aidb", "raw"), ("aidb2", "raw"), ("aidb3", "raw"), ("aidb4", "raw"), ("aidb5", "raw"),
-                   ("aidb2", "aidb"), ("aidb3", "aidb2"), ("aidb4", "aidb3"), ("aidb5", "aidb4"))
+                   ("aidb6", "raw"), ("aidb2", "aidb"), ("aidb3", "aidb2"), ("aidb4", "aidb3"), ("aidb5", "aidb4"),
+                   ("aidb6", "aidb5"))
     for model in sorted({_split(a)[0] for a in ARMS}):
         for first, second in comparisons:
             prs = [(by[(f"{model}-{first}", b)], by[(f"{model}-{second}", b)]) for b in briefs.BRIEFS

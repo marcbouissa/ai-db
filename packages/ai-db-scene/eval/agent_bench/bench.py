@@ -133,14 +133,16 @@ def _running_elsewhere(arm: str, brief: str) -> bool:
 
 def cmd_run(arm: str, brief: str) -> dict[str, Any]:
     model, mode = arm.rsplit("-", 1)
-    if mode not in ("aidb", "aidb2", "aidb3", "aidb4", "aidb5", "raw"):
-        raise SystemExit(f"arm must end in -raw, -aidb, -aidb2, -aidb3, -aidb4 or -aidb5: {arm}")
+    if mode not in ("aidb", "aidb2", "aidb3", "aidb4", "aidb5", "aidb6", "raw"):
+        raise SystemExit(f"arm must end in -raw or -aidb, -aidb2 .. -aidb6: {arm}")
     with_aidb = mode != "raw"
     # aidb3: the aidb2 prompt and tools on the later pipeline (styles, judge, doorways, recipes,
     # skill drafting); the arm's ai-db hash in metrics.json pins the code it ran on.
     # aidb4: the realism pass (2026-10-12). aidb5 (2026-10-16): the weak-model fixes, the prompt
     # hint of the current build_scene, OpenCode with direct MCP tools and every built-in denied.
-    version = {"aidb": 1, "raw": 1, "aidb5": 5}.get(mode, 2)
+    # aidb6 (2026-10-17): compact results (verdict/next first), brief passed to build_scene, ceiling
+    # grid, seating group, tool names as the runner offers them
+    version = {"aidb": 1, "raw": 1, "aidb5": 5, "aidb6": 6}.get(mode, 2)
     tools = briefs.AIDB_TOOLS if version == 1 else briefs.AIDB2_TOOLS
     rd = run_dir(arm, brief)
     if os.path.exists(os.path.join(rd, "metrics.json")):
@@ -158,7 +160,9 @@ def cmd_run(arm: str, brief: str) -> dict[str, Any]:
     cloud_free = not (model == "strata" or model in LOCAL_MODELS or model in run_claude.MODELS)
     proc = blender.start(port, os.path.join(rd, "blender.log"), sandbox_dir=rd if cloud_free else None)
     try:
-        prompt = briefs.prompt(brief, with_aidb, version)
+        runner = ("strata" if model == "strata" or model in LOCAL_MODELS else
+                  "claude" if model in run_claude.MODELS else "opencode")
+        prompt = briefs.prompt(brief, with_aidb, version, runner)
         if model == "strata" or model in LOCAL_MODELS:
             import strata_agent
             servers = run_claude.mcp_servers(port, rd, with_aidb, tools)

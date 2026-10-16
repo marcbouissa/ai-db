@@ -110,10 +110,41 @@ HINT_AIDB5 = ("ai-db tools are also available. START HERE: build_scene builds th
               "memory (snapshot_scene, restore_scene) and route_skill for Blender how-to skills.")
 
 
-def prompt(brief_id: str, with_aidb: bool, version: int = 1) -> str:
+def tool_name(server: str, tool: str, runner: str) -> str:
+    """A tool as the agent's runner offers it: OpenCode prefixes MCP tools with the server
+    (``aidb_build_scene``, ``blender_discover_servers``); the Strata agent and Claude are told
+    bare names. nemotron-3.5-lightning-aidb5 called bare discover_servers and build_scene in
+    OpenCode (6 'tool not found' errors) before it found the prefixed ones."""
+    return f"{server}_{tool}" if runner == "opencode" else tool
+
+
+def hint_aidb6(runner: str) -> str:
+    """aidb6: aidb5's hint with the runner's tool names and the brief passed to build_scene."""
+    def a(t: str) -> str:
+        return tool_name("aidb", t, runner)
+
+    return (f"ai-db tools are also available. START HERE: {a('build_scene')} builds the whole scene in one call. "
+            "Pass the scene spec's fields (setting, objects, relations) as its own top-level arguments, plus "
+            "brief: the request above, word for word (it then checks every requested object and count); "
+            f"{a('get_scene_spec_schema')} shows the fields, the object categories and example specs. "
+            f"{a('build_scene')} repairs layout conflicts, adds real furniture, materials, daylight, lamp lights "
+            "and a camera, validates, fixes and saves a version (scene_id). Read its result's verdict and next "
+            "(they come first): when the verdict says done, stop and reply DONE; otherwise do what next says "
+            f"(usually {a('edit_scene')}(scene_id, steps) for the named fixes). Also scene memory "
+            f"({a('snapshot_scene')}, {a('restore_scene')}) and {a('route_skill')} for Blender how-to skills.")
+
+
+def prompt(brief_id: str, with_aidb: bool, version: int = 1, runner: str = "strata") -> str:
     """version 1: the aidb arm; 2: aidb2..aidb4 (``build_scene(spec)``); 5: aidb5 (the current
-    build_scene: top-level spec fields or spec_id, START HERE, verdict/next)."""
-    text = TASK.format(brief=BRIEFS[brief_id]["brief"]) + "\n\n" + HINT_BLENDER
+    build_scene: top-level spec fields or spec_id, START HERE, verdict/next); 6: aidb6 (tool names
+    as ``runner`` offers them - opencode, strata, claude - and brief passed to build_scene).
+    Versions up to 5 keep their exact text (bare names) so earlier arms stay comparable."""
+    text = TASK.format(brief=BRIEFS[brief_id]["brief"]) + "\n\n"
+    if version >= 6:
+        b = [tool_name("blender", t, runner) for t in ("discover_servers", "discover_tools", "get_tool_schema", "invoke_tool")]
+        text += f"Blender tools are reached through {' / '.join(b)}."
+    else:
+        text += HINT_BLENDER
     if not with_aidb:
         return text
-    return text + " " + {1: HINT_AIDB, 2: HINT_AIDB2, 5: HINT_AIDB5}[version]
+    return text + " " + (hint_aidb6(runner) if version >= 6 else {1: HINT_AIDB, 2: HINT_AIDB2, 5: HINT_AIDB5}[version])
