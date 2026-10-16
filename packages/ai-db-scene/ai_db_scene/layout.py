@@ -13,6 +13,7 @@ Conventions
   polygons have ``wall_<n>`` (edge n, 1-based) and ``wall`` with ``at_deg`` (ray from the center). ``location`` is the center of the bounding box (z included).
 * ``A above B``: A is wall-mounted (support ``wall``, with its against_wall relation) straight
   above B: the same position along the wall, A's base ``gap_m`` (default 0.25 m) over B's top.
+  A ceiling-hung A (pendant lamp) hangs from the ceiling straight over B's centre.
 * ``count > 1`` expands an object into instances ``<id>_1 .. <id>_n``. Relations of the
   object apply to every instance; a target with several instances is paired by index.
 """
@@ -275,6 +276,8 @@ class _Problem:
                     raise LayoutError(f"relation '{r.label}': '{r.a}' is {self.insts[r.a].prior.support}-mounted and cannot rest on an object", [r.label])
             if r.rel == "above":
                 a = self.insts[r.a]
+                if a.prior.support == "ceiling" and indoor:
+                    continue  # hangs over B's centre (a pendant over the dining table)
                 if a.prior.support != "wall" or a.id not in has_wall:
                     raise LayoutError(
                         f"relation '{r.label}': 'above' places a wall-mounted object over another; '{r.a}' "
@@ -397,6 +400,9 @@ class _Problem:
             if not _inside(pa, a.dims, pb, b.dims, LAYOUT_EPS_M):
                 return f"'{r.label}': not within the footprint of '{r.b}'"
             return None
+        if r.rel == "above" and a.prior.support == "ceiling":
+            off = math.hypot(pa.x - pb.x, pa.y - pb.y)
+            return f"'{r.label}': {off:.3f} m off the centre of '{r.b}'" if off > tol else None
         if r.rel == "above":
             ra, fa = _axes(pa.yaw)
             d = (pb.x - pa.x, pb.y - pa.y)

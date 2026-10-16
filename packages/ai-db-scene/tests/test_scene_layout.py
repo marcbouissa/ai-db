@@ -253,10 +253,11 @@ def test_grid_places_rows_of_desks_as_one_block():
 
 def test_grid_count_must_match():
     from ai_db_scene.spec import validate_spec
-    _spec, errors = validate_spec({"setting": {"kind": "indoor", "bounds_m": [6, 6, 3]},
+    # weak models wrote count next to grid (bench: count 1 with grid 3x4): the grid wins, with a note
+    spec, _errors = validate_spec({"setting": {"kind": "indoor", "bounds_m": [6, 6, 3]},
                                    "objects": [{"id": "t", "category": "desk", "count": 5,
                                                 "grid": {"rows": 2, "cols": 2}}]})
-    assert any("does not match grid 2x2" in e for e in errors)
+    assert spec is not None and spec.objects[0].count == 4 and "grid 2x2 decides" in spec.notes[0]
 
 
 def test_facing_relations_hold_across_seeds():

@@ -548,8 +548,10 @@ def validate_spec(data: Any) -> tuple[SceneSpec | None, list[str]]:
     """Validate a dict. Returns (spec, []) or (None, errors); errors are 'path: problem; allowed'."""
     if not isinstance(data, dict):
         return None, [f"<root>: expected object, got {_typename(data)}"]
+    from ai_db_scene.normalize import normalize_spec
+
+    data, notes = normalize_spec(data)  # unambiguous model-side slips are rewritten, with a note
     errors: list[str] = []
-    notes: list[str] = []
     _unknown_keys("<root>", data, ("setting", "objects", "relations", "lighting", "camera"), errors)
     if "setting" not in data:
         errors.append("setting: required field is missing")
