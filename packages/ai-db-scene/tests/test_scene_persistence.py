@@ -134,6 +134,20 @@ def test_sqlite_delete_removes_objects_and_history_and_resave_keeps_it(tmp_path)
         r["scene_id"] == keep for r in backend.search_objects_by_description("a"))
 
 
+@pytest.mark.parametrize("backend", ["json_file", "sqlite_vec"])
+def test_resaving_a_version_keeps_one_history_row_and_one_listing(tmp_path, backend):
+    memory, _ = _memory(tmp_path, _scene(["a"]), backend)
+    sid = memory.snapshot_scene(prompt="v1", project="p1")
+    for _ in range(2):
+        memory.backend.save_scene(memory.backend.load_scene(sid))
+    assert [h.prompt for h in memory.get_history(scene_id=sid)] == ["v1"]
+    moved = memory.backend.load_scene(sid)
+    moved.project = "p2"
+    memory.backend.save_scene(moved)
+    assert [s["project"] for s in memory.list_scenes() if s["scene_id"] == sid] == ["p2"]
+    assert len(memory.get_history(scene_id=sid)) == 1
+
+
 # --- json store: project names that are not file names ---------------------------------------
 
 @pytest.mark.parametrize("project", ["client/a", "rooms [draft]", "Büro 2", "50% done"])

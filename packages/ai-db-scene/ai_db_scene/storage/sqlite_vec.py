@@ -202,10 +202,17 @@ class SQLiteVecSceneBackend(SceneMemoryBackend):
         
         self._db.commit()
         
-        # Save prompt context if present
-        if scene.prompt_context:
-            scene.prompt_context.scene_id = scene.scene_id
-            self.save_prompt_context(scene.prompt_context)
+        # Save prompt context if present; a re-save of the same version (same prompt, same
+        # time) must not add a second history row
+        ctx = scene.prompt_context
+        if ctx:
+            ctx.scene_id = scene.scene_id
+            row = c.execute("SELECT id FROM prompt_contexts WHERE scene_id = ? AND timestamp = ? AND prompt = ?",
+                            (ctx.scene_id, ctx.timestamp, ctx.prompt)).fetchone()
+            if row is None:
+                self.save_prompt_context(ctx)
+            else:
+                ctx.id = row[0]
         
         return scene.scene_id
     

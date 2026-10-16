@@ -105,6 +105,11 @@ class JSONFileSceneBackend(SceneMemoryBackend):
         # Write files
         scene_file.write_text(json.dumps(scene.to_dict(), indent=2))
         project_file.write_text(json.dumps(index, indent=2))
+        # a re-save into another project moves the scene: it was listed under both
+        for other in self.scenes_dir.glob(".index_*.json"):
+            if other != project_file and scene.scene_id in (old := _read_json(other)):
+                del old[scene.scene_id]
+                other.write_text(json.dumps(old, indent=2))
         
         # Save prompt context separately for history
         if scene.prompt_context:
@@ -166,7 +171,8 @@ class JSONFileSceneBackend(SceneMemoryBackend):
     # --- Prompt-aware history ---
     
     def save_prompt_context(self, ctx: PromptContext) -> int:
-        # Use timestamp as ID for JSON backend
+        # Use timestamp as ID for JSON backend: a re-save of the same version (same time)
+        # overwrites its file instead of adding a second history entry
         ctx.id = int(ctx.timestamp * 1000000)
         history_file = self.history_dir / f"{_project_key(ctx.project)}_{ctx.id}.json"
         history_file.write_text(json.dumps(ctx.__dict__, indent=2))
