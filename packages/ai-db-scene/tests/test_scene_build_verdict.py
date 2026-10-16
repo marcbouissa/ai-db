@@ -30,7 +30,8 @@ def fake_blender(monkeypatch):
 
 
 def test_a_clean_build_says_done_and_stop(fake_blender):
-    out = sp._handle_build_scene({"spec": SPEC, "snapshot": False, "exposure_check": False})
+    out = sp._handle_build_scene({"spec": SPEC, "snapshot": False, "exposure_check": False,
+                                  "brief": "a sofa and a coffee table"})
     assert out["verdict"].startswith("done: 2 objects built")
     assert "Stop here and reply DONE" in out["next"]
 

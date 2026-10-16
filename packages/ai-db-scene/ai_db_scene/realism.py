@@ -89,21 +89,29 @@ _NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 
 
 
 def brief_counts(brief: str, categories: set[str]) -> dict[str, int | None]:
-    """Categories a brief names, with the count it asks for when one is stated ("two armchairs")."""
+    """Categories a brief names, with the count it asks for when one is stated ("two armchairs").
+
+    Numbered mentions of one category add up ("a teacher desk ... twelve student desks" is 13
+    desks); a count followed by "each" ("two chairs each") is per something else: no count."""
     from ai_db_scene.feedback import ALIASES
 
-    low = " " + re.sub(r"[^a-z0-9 ]+", " ", brief.lower()) + " "
-    out: dict[str, int | None] = {}
+    low = " " + re.sub(r"[^a-z0-9 ,]+", " ", brief.lower()).replace(",", " , ") + " "
+    mentions: dict[str, list[int | None]] = {}
     names = {c.replace("_", " "): c for c in categories}
     names.update({w: c for w, c in ALIASES.items() if c in categories})
     for name, cat in sorted(names.items(), key=lambda kv: -len(kv[0])):
         for m in re.finditer(rf"\b{re.escape(name)}(e?s)?\b", low):
             before = low[:m.start()].split()[-2:]
+            before = before[before.index(",") + 1:] if "," in before else before  # "a workbench, safety barriers"
             n = next((int(w) if w.isdigit() else _NUMBERS[w] for w in reversed(before)
                       if w.isdigit() or w in _NUMBERS), None)
-            if cat not in out or (n is not None and out[cat] is None):
-                out[cat] = n
+            each = low[m.end():].split()[:1] == ["each"]
+            mentions.setdefault(cat, []).append(-1 if each else n)
             low = low[:m.start()] + " " * (m.end() - m.start()) + low[m.end():]  # "coffee table" not also "table"
+    out: dict[str, int | None] = {}
+    for cat, ns in mentions.items():
+        nums = [n for n in ns if n is not None]
+        out[cat] = None if not nums or -1 in nums else sum(nums)  # type: ignore[arg-type]
     return out
 
 

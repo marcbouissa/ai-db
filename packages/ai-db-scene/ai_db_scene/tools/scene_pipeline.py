@@ -1656,6 +1656,7 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
     if spec is None:
         return {"status": "invalid", "errors": errors, "hint": _INVALID_HINT}
     spec_id = remember_spec(spec)
+    asked = spec  # before repairs: what the model asked for
     # furniture variants follow the first build's spec; edit_scene passes the stored key back
     variation = args.get("variation") if isinstance(args.get("variation"), list) else variation_key(spec)
     render_opts = None
@@ -1743,6 +1744,7 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
         left += realism.check(spec, placements)
         if args.get("brief"):
             left += realism.check_brief(str(args["brief"]), placements)
+        left += count_issues(asked, placements)
     except Exception as e:  # noqa: BLE001 - a check must never fail a finished build
         left.append({"check": "ergonomics", "severity": "warning", "message": f"not checked: {e}"})
     try:
@@ -1811,11 +1813,32 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
                 tags=["build_scene"], parent_scene_id=args.get("parent_scene_id"))
         except Exception as e:  # noqa: BLE001 - the scene is built; say why it was not saved
             out["snapshot_error"] = str(e)
-    out["verdict"], out["next"] = build_verdict(out)
+    out["verdict"], out["next"] = build_verdict(out, brief_given=bool(args.get("brief")))
     return out
 
 
-def build_verdict(out: dict[str, Any]) -> tuple[str, str]:
+def count_issues(asked: SceneSpec, placements: list[Placement]) -> list[dict[str, Any]]:
+    """Objects the spec's own ``count`` (or grid) asks for that the build placed fewer of (the
+    repair loop places one fewer when the room is full): the model would believe they exist."""
+    issues = []
+    for o in asked.objects:
+        pat = re.compile(rf"{re.escape(o.id)}(?:_\d+)?")
+        got = sum(1 for p in placements if pat.fullmatch(p.id))
+        if got < o.count:
+            issues.append({"check": "count", "severity": "warning", "objects": [o.id],
+                           "message": (f"the spec asks for {o.count} '{o.id}' ({o.category}), {got} were placed "
+                                       "(no room for the rest): use a grid, a bigger setting or fewer")})
+    return issues
+
+
+#: verdict/next tail when build_scene had no brief: it could not compare counts with the request
+_NO_BRIEF = ("no brief given, so counts against the request were not checked")
+_NO_BRIEF_NEXT = (" Before replying DONE, check created against every object and count the request asks for "
+                  "and add what is missing with edit_scene; pass brief (the request text) to build_scene and it "
+                  "checks this itself.")
+
+
+def build_verdict(out: dict[str, Any], brief_given: bool = True) -> tuple[str, str]:
     """(verdict, next): a one-line stopping rule for the calling model.
 
     Weak models never stopped after a good build (mimo: 21-57 calls of renders and bounds
@@ -1826,7 +1849,7 @@ def build_verdict(out: dict[str, Any]) -> tuple[str, str]:
     failed = out.get("failed_commands") or []
     order = ([i for i in left if i.get("severity") == "blocking"]
              + [i for i in left if i.get("check") == "dropped_relation"]
-             + [i for i in left if "the brief asks" in str(i.get("message", ""))])
+             + [i for i in left if "the brief asks" in str(i.get("message", "")) or i.get("check") == "count"])
     sid = out.get("scene_id")
     edit = f"edit_scene({{scene_id: '{sid}', steps: [...]}})" if sid else "build_scene with the fixed spec"
     unsaved = ("" if sid or not out.get("snapshot_error") else
@@ -1841,10 +1864,15 @@ def build_verdict(out: dict[str, Any]) -> tuple[str, str]:
         rest = f"; {len(left)} advisory warning(s) you may ignore" if left else ""
         verdict = f"done: {out.get('objects')} objects built, nothing blocking{rest}"
         where = f" and saved as {sid}" if sid else ""
+        if not brief_given:
+            return f"{verdict}; {_NO_BRIEF}", (f"The scene is built{where}; do not rebuild, re-render or "
+                                               f"re-validate it.{_NO_BRIEF_NEXT}{unsaved}")
         return verdict, (f"The scene is finished{where}. Stop here and reply DONE: do not rebuild, "
                          f"re-render or re-validate it.{unsaved}")
     more = len(order) + len(failed) - 1
     verdict = f"one thing to fix: {thing}" + (f" (+{more} more)" if more > 0 else "")
+    if not brief_given:
+        verdict += f"; {_NO_BRIEF}"
     return verdict, (f"Fix only that with {edit} (ops: move, update_object, add_object, remove_object, "
                      f"add_relation), then stop. If it does not matter for the brief, reply DONE.{unsaved}")
 
@@ -2237,7 +2265,8 @@ def judge_render(path: Path) -> str:
 
 #: build_scene options a version stores so edit_scene rebuilds it the same way (a rebuild with
 #: another seed or geometry mode changed every untouched piece of furniture)
-_BUILD_OPTIONS = ("seed", "geometry", "asset_map", "poly_budget", "physics", "variation")
+#: build_scene arguments a version keeps: edit_scene rebuilds with them (the brief keeps its counts checked)
+_BUILD_OPTIONS = ("seed", "geometry", "asset_map", "poly_budget", "physics", "variation", "brief")
 
 
 def build_options(args: dict[str, Any]) -> dict[str, Any]:
@@ -2415,8 +2444,9 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
                      "properties": {"engine": {"enum": ["cycles", "eevee"]}, "samples": {"type": "integer", "minimum": 1},
                                     "sky": {"type": "boolean"}, "resolution": {"type": "array", "items": {"type": "integer"}},
                                     "path": {"type": "string"}}},
-          "brief": {"type": "string", "description": "the user's brief: warns about objects it asks for that are "
-                                                      "missing and counts that differ ('two armchairs')"},
+          "brief": {"type": "string", "description": "pass the user's request text: build_scene then checks the "
+                                                      "objects it asks for and their counts ('twelve desks'); "
+                                                      "without it counts are not checked"},
           "exposure_check": {"type": "boolean",
                              "description": ("default true: a tiny probe render from the camera; the view exposure is "
                                              "adjusted until the image is neither black nor blown out (report: exposure)")}}},
@@ -2453,6 +2483,8 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
                                     "{op: update_object, id: sofa, set: {material: velvet:#5b2a4a}}, {op: move, id: table, to: {in_front_of: sofa}}]")},
           "seed": {"type": "integer", "description": "default: the seed the version was built with"},
           "geometry": {"enum": list(GEOMETRY_MODES), "description": "default: the version's own"},
+          "brief": {"type": "string", "description": ("the user's request: counts are checked against it "
+                                                      "(default: the brief the version was built with)")},
           "prompt": {"type": "string"},
           "project": {"type": "string", "description": "default: the version's project"}},
       "required": ["scene_id", "steps"]},
