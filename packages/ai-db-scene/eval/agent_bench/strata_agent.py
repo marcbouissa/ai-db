@@ -28,6 +28,10 @@ TOOL_TIMEOUT_S = 180.0  # a single MCP tool call (Blender can hang on a bad requ
 SERVER_WAIT_S = 3 * 3600  # how long to wait out a Strata server outage before giving up
 MAX_TURNS = 400  # effectively unbounded: the 30 min wall-clock cap applies to every arm
 MAX_MALFORMED = 3  # tool calls in a row the server could not parse before the session ends
+MAX_TOKENS = 4096  # one reply, thinking included
+MAX_CONTINUE = 3  # replies in a row cut off while thinking (empty, no call) that get a "continue" nudge
+CONTINUE_NUDGE = ("Your reply ran out of room while thinking, before any answer or tool call. Continue: keep the "
+                  "thinking short and call the next tool now, or reply DONE with the summary if the scene is complete.")
 
 
 class ServerUnavailable(RuntimeError):
@@ -108,8 +112,9 @@ class RequestRejected(RuntimeError):
 
 def _chat(messages: list[dict[str, Any]], tools: list[dict[str, Any]], base_url: str = BASE_URL,
           model: str = MODEL) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The reply message and the usage, with the choice's ``finish_reason`` added to the usage."""
     body = json.dumps({"model": model, "messages": messages, "tools": tools, "tool_choice": "auto",
-                       "temperature": 0.2, "max_tokens": 4096}).encode()
+                       "temperature": 0.2, "max_tokens": MAX_TOKENS}).encode()
     req = urllib.request.Request(f"{base_url}/chat/completions", data=body,
                                  headers={"Content-Type": "application/json"})
     try:
@@ -119,7 +124,8 @@ def _chat(messages: list[dict[str, Any]], tools: list[dict[str, Any]], base_url:
         if 400 <= e.code < 500 and e.code != 429:
             raise RequestRejected(f"HTTP {e.code}: {e.read()[:500].decode(errors='replace')}") from e
         raise
-    return data["choices"][0]["message"], data.get("usage", {})
+    choice = data["choices"][0]
+    return choice["message"], {**(data.get("usage") or {}), "finish_reason": choice.get("finish_reason")}
 
 
 def _call_error(content: str) -> str:
@@ -181,6 +187,7 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
     outages = 0
     final, ok, timed_out, rejected = "", False, False, None
     malformed = bad_streak = salvaged = 0
+    cut_streak = continued = 0
     with open(transcript_path, "w", encoding="utf-8") as tr:
         for _turn in range(MAX_TURNS):
             if time.monotonic() - t0 > timeout_s:
@@ -235,6 +242,15 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
                 messages.append({"role": "user", "content": "Your last tool call could not be parsed: "
                                  + _call_error(content) + " Call the tool again with valid JSON."})
                 continue
+            cut_off = usage.get("finish_reason") == "length" or usage.get("completion_tokens", 0) >= MAX_TOKENS
+            if not calls and not content.strip() and cut_off and cut_streak < MAX_CONTINUE:
+                # the thinking used the whole reply budget: not an answer, so nudge instead of ending
+                cut_streak += 1
+                continued += 1
+                messages.append({"role": "user", "content": CONTINUE_NUDGE})
+                tr.write(json.dumps({"t": round(time.monotonic() - t0, 2), "continue_nudge": cut_streak}) + "\n")
+                continue
+            cut_streak = 0
             if not calls:
                 final = content
                 ok = "DONE" in final.upper()
@@ -287,7 +303,7 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
         "tokens": {"input": sum(c["input"] for c in per_call), "output": sum(c["output"] for c in per_call),
                    "cache_write": 0, "cache_read": 0},
         "per_call": per_call, "server_outages": outages, "rejected": rejected,
-        "malformed_calls": malformed, "salvaged_calls": salvaged, "outage_s_excluded": round(outage_s, 1),
+        "malformed_calls": malformed, "salvaged_calls": salvaged, "continue_nudges": continued, "outage_s_excluded": round(outage_s, 1),
         "tools": {k: {"calls": int(v["calls"]), "seconds": round(v["seconds"], 1), "errors": int(v["errors"])}
                   for k, v in sorted(stats.items(), key=lambda kv: -kv[1]["seconds"])},
         "final_text": final[-1500:],
