@@ -82,7 +82,8 @@ def write(out: str) -> str:
     L: list[str] = ["# Agent benchmark: with vs without ai-db", ""]
     L += ["Arms: every free OpenCode model that was available (OpenCode headless, isolated home, file/web tools "
           "off; the shell has to stay for OpenCode's free tier, the prompt forbids it, see Shell use) and the "
-          "Strata model (qwen3.8-flash, new generic agent), each with the Blender addon's tools only (raw) or those + "
+          "Strata model (qwen3.8-flash, new generic agent), a local Qwen3-14B-AWQ (`qwen3-14b-local`: vLLM on "
+          "this GPU via local_model.sh, the Strata agent, thinking on, 32k context), each with the Blender addon's tools only (raw) or those + "
           "ai-db scene tools (aidb; aidb2 = ai-db with build_scene/edit_scene; aidb3 = the same prompt on the later pipeline). `ai-db` = short hash of the "
           "ai-db-scene code a scene ran with (results of different versions must not be mixed). Same briefs, same Blender build, a fresh Blender per scene, 30 min cap.",
           "Quality (formula v2) = 40% brief checklist + 15% size plausibility + 10% mesh coverage + 25% "

@@ -5,7 +5,8 @@
     python bench.py rescore                quality of every finished scene with the current score()
     python bench.py report                 bench/REPORT.md
 
-Arms: <model>-aidb / <model>-raw, model = strata, one of OPENCODE_FREE, or opus/sonnet (Claude CLI).
+Arms: <model>-aidb / <model>-raw, model = strata, one of OPENCODE_FREE, one of LOCAL_MODELS (start
+its server with local_model.sh first), or opus/sonnet (Claude CLI).
 Outputs (kept, never committed): <repo>/bench/<arm>/<brief>/{scene.blend, *.png, metrics.json,
 transcript.jsonl, judge_*.json}.
 """
@@ -32,6 +33,10 @@ OPENCODE_FREE = ("big-pickle", "longcat-2.5-preview-free", "mimo-v2.6-flash-free
                  "nemotron-3-ultra-free", "nemotron-3.5-lightning-free", "space-bunny-free")
 #: offered by `opencode models` on 2026-10-11 but refused by the router ("Model unavailable")
 OPENCODE_UNAVAILABLE = ("exo-free", "ling-3.0-flash-fin-free", "ling-3.1-flash-free", "step-5-preview-free")
+#: models served on this GPU by local_model.sh (vLLM, OpenAI-compatible), run by the Strata agent:
+#: OpenCode 2 reaches MCP tools only through Code Mode (JS in one `execute` tool, ~10k tokens of
+#: system prompt), which a 14B model with 32k context could not drive in the smoke test.
+LOCAL_MODELS = {"qwen3-14b-local": (os.environ.get("LOCAL_MODEL_BASE_URL", "http://127.0.0.1:8011/v1"), "qwen3-14b")}
 TIMEOUT_S = 30 * 60
 USER_SKILLS = os.path.expanduser("~/.local/share/blender-ai/skills")
 
@@ -145,10 +150,12 @@ def cmd_run(arm: str, brief: str) -> dict[str, Any]:
     proc = blender.start(port, os.path.join(rd, "blender.log"))
     try:
         prompt = briefs.prompt(brief, with_aidb, version)
-        if model == "strata":
+        if model == "strata" or model in LOCAL_MODELS:
             import strata_agent
             servers = run_claude.mcp_servers(port, rd, with_aidb, tools)
-            agent = strata_agent.run(prompt, servers, os.path.join(rd, "transcript.jsonl"), TIMEOUT_S)
+            base_url, served = LOCAL_MODELS.get(model, (None, None))
+            agent = strata_agent.run(prompt, servers, os.path.join(rd, "transcript.jsonl"), TIMEOUT_S,
+                                     base_url=base_url, model=served)
         elif model in run_claude.MODELS:
             agent = run_claude.run(model, prompt, port, rd, with_aidb, tools, TIMEOUT_S)
         else:  # a free OpenCode model, e.g. big-pickle, mimo-v2.6-flash-free
@@ -179,7 +186,7 @@ def cmd_run(arm: str, brief: str) -> dict[str, Any]:
         release_port(port)
     quality = score(brief, fin["inventory"], validation)
     metrics = {"arm": arm, "brief": brief, "model": model, "with_aidb": with_aidb, "port": port,
-               "harness": "strata-agent" if model == "strata" else ("claude-cli" if model in run_claude.MODELS else "opencode"),
+               "harness": "strata-agent" if model == "strata" or model in LOCAL_MODELS else ("claude-cli" if model in run_claude.MODELS else "opencode"),
                "setup": setup, "aidb_version": aidb_version() if with_aidb else None, "agent": agent, "harness_s": round(harness_s, 1),
                "renders": fin["renders"], "inventory": fin["inventory"], "validation": validation,
                "quality": quality, "finished_at": time.strftime("%Y-%m-%d %H:%M:%S")}

@@ -15,6 +15,7 @@ import queue
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 from typing import Any
 
@@ -94,13 +95,23 @@ class MCPClient:
         self.proc.terminate()
 
 
-def _chat(messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
-    body = json.dumps({"model": MODEL, "messages": messages, "tools": tools, "tool_choice": "auto",
+class RequestRejected(RuntimeError):
+    """The server refused the request itself (HTTP 4xx, e.g. the context is full): not an outage."""
+
+
+def _chat(messages: list[dict[str, Any]], tools: list[dict[str, Any]], base_url: str = BASE_URL,
+          model: str = MODEL) -> tuple[dict[str, Any], dict[str, Any]]:
+    body = json.dumps({"model": model, "messages": messages, "tools": tools, "tool_choice": "auto",
                        "temperature": 0.2, "max_tokens": 4096}).encode()
-    req = urllib.request.Request(f"{BASE_URL}/chat/completions", data=body,
+    req = urllib.request.Request(f"{base_url}/chat/completions", data=body,
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=600) as resp:
-        data = json.load(resp)
+    try:
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            data = json.load(resp)
+    except urllib.error.HTTPError as e:
+        if 400 <= e.code < 500 and e.code != 429:
+            raise RequestRejected(f"HTTP {e.code}: {e.read()[:500].decode(errors='replace')}") from e
+        raise
     return data["choices"][0]["message"], data.get("usage", {})
 
 
@@ -112,7 +123,10 @@ def _trim(messages: list[dict[str, Any]]) -> None:
             messages[i]["content"] = c[:OLD_RESULT_CHARS] + " …[trimmed]"
 
 
-def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, timeout_s: float) -> dict[str, Any]:
+def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, timeout_s: float,
+        base_url: str | None = None, model: str | None = None) -> dict[str, Any]:
+    """One session against ``base_url``/``model`` (default: the Strata server)."""
+    base_url, model = base_url or BASE_URL, model or MODEL
     clients = {name: MCPClient(s["command"], s["args"], s.get("env", {})) for name, s in servers.items()}
     route: dict[str, tuple[str, str]] = {}
     tools: list[dict[str, Any]] = []
@@ -131,7 +145,7 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
     t0 = time.monotonic()
     llm_s = tool_s = outage_s = 0.0
     outages = 0
-    final, ok, timed_out = "", False, False
+    final, ok, timed_out, rejected = "", False, False, None
     with open(transcript_path, "w", encoding="utf-8") as tr:
         for _turn in range(MAX_TURNS):
             if time.monotonic() - t0 > timeout_s:
@@ -143,7 +157,11 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
             while msg is None:
                 a = time.monotonic()
                 try:
-                    msg, usage = _chat(messages, tools)
+                    msg, usage = _chat(messages, tools, base_url, model)
+                except RequestRejected as e:  # e.g. the context is full: the session ends here
+                    rejected = str(e)[:500]
+                    tr.write(json.dumps({"t": round(a - t0, 2), "rejected": rejected}) + "\n")
+                    break
                 except (OSError, http.client.HTTPException) as e:
                     # Server outage (refused, reset, 5xx): wait it out, and keep the waiting out
                     # of every timing, so an outage pauses the scene instead of failing it.
@@ -158,7 +176,7 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
                     t0 += time.monotonic() - a
                     outages += 1
                     delay = min(delay * 2, 120.0)
-            if msg is None:
+            if msg is None or usage is None:
                 break
             dt = time.monotonic() - a
             llm_s += dt
@@ -214,7 +232,7 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
         "model_s": round(llm_s, 1), "api_s": round(llm_s, 1), "turns": len(per_call), "cost_usd": 0.0,
         "tokens": {"input": sum(c["input"] for c in per_call), "output": sum(c["output"] for c in per_call),
                    "cache_write": 0, "cache_read": 0},
-        "per_call": per_call, "server_outages": outages, "outage_s_excluded": round(outage_s, 1),
+        "per_call": per_call, "server_outages": outages, "rejected": rejected, "outage_s_excluded": round(outage_s, 1),
         "tools": {k: {"calls": int(v["calls"]), "seconds": round(v["seconds"], 1), "errors": int(v["errors"])}
                   for k, v in sorted(stats.items(), key=lambda kv: -kv[1]["seconds"])},
         "final_text": final[-1500:],
