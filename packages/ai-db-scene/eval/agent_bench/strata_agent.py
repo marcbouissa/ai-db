@@ -34,13 +34,19 @@ class ServerUnavailable(RuntimeError):
     """The model server stayed down: the scene has no result and must be run again."""
 
 
+def _inherited_env() -> dict[str, str]:
+    """This process's environment without ai-db settings: an inherited AI_DB_DAEMON_URL would
+    send the run's ai-db calls to the user's daemon (its code, scene memory and Blender port)."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("AI_DB_")}
+
+
 class MCPClient:
     """Minimal MCP stdio client: initialize, tools/list, tools/call (line-delimited JSON-RPC)."""
 
     def __init__(self, command: str, args: list[str], env: dict[str, str]) -> None:
         self.proc = subprocess.Popen([command, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL, text=True, bufsize=1,
-                                     env={**os.environ, **env})
+                                     env={**_inherited_env(), **env})
         self._id = 0
         self._lines: queue.Queue[str | None] = queue.Queue()
         threading.Thread(target=self._pump, daemon=True).start()
