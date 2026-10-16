@@ -18,13 +18,42 @@ def _port_open(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def _listener_pid(port: int) -> int | None:
+    """The pid of the process holding the IPv4 listening socket on ``port`` (Linux /proc)."""
+    inode = None
+    with open("/proc/net/tcp", encoding="ascii") as f:
+        for line in f.readlines()[1:]:
+            parts = line.split()
+            if parts[1].endswith(f":{port:04X}") and parts[3] == "0A":  # 0A = LISTEN
+                inode = parts[9]
+                break
+    if inode is None:
+        return None
+    target = f"socket:[{inode}]"
+    for pid in filter(str.isdigit, os.listdir("/proc")):
+        try:
+            for fd in os.listdir(f"/proc/{pid}/fd"):
+                if os.readlink(f"/proc/{pid}/fd/{fd}") == target:
+                    return int(pid)
+        except OSError:
+            continue
+    return None
+
+
+def _pgid(pid: int) -> int | None:
+    try:
+        return os.getpgid(pid)
+    except OSError:
+        return None
+
+
 def start(port: int, log_path: str, blend: str | None = None) -> subprocess.Popen:
     """A fresh Blender listening on ``port``. Fails rather than hand back another run's Blender:
-    the port must be free before, and the new process must be the one that bound it."""
+    the port must be free before, and the process listening on it must be in the new process's
+    session (start_new_session: its process group is the Popen pid)."""
     if _port_open(port):
         raise RuntimeError(f"port {port} is already in use: refusing to share another run's Blender")
     log = open(log_path, "ab")  # noqa: SIM115 - lives as long as the process
-    log_start = log.tell()
     proc = subprocess.Popen(
         [BLENDER, "-b", *([blend] if blend else ["--factory-startup"]), "-P", "tools/serve_headless.py", "--",
          "--port", str(port), "--from-repo"],
@@ -34,10 +63,9 @@ def start(port: int, log_path: str, blend: str | None = None) -> subprocess.Pope
         if proc.poll() is not None:
             raise RuntimeError(f"Blender exited early (see {log_path})")
         if _port_open(port):
-            with open(log_path, "rb") as f:  # this process's own log says it bound the port
-                f.seek(log_start)
-                if f"listening on localhost:{port}".encode() in f.read():
-                    return proc
+            owner = _listener_pid(port)
+            if owner is not None and _pgid(owner) == proc.pid:  # our Blender (its own session) bound it
+                return proc
         time.sleep(0.5)
     proc.kill()
     raise RuntimeError(f"Blender did not listen on :{port} within 90 s")
