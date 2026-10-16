@@ -106,13 +106,59 @@ def spec_arg(args: dict[str, Any]) -> tuple[Any, str | None]:
     return raw, None
 
 
-def _spec_from_args(args: dict[str, Any]) -> tuple[SceneSpec | None, list[str]]:
+#: valid specs this server has seen (submit_scene_spec, solve_layout, build_scene), newest last.
+#: OpenCode's Code Mode runs every tool call in a fresh JS sandbox, so a model that validated
+#: its spec in one call had no ``spec`` variable left for build_scene in the next (13 calls,
+#: 9 bench scenes): build_scene({spec_id}) or build_scene() builds the remembered one.
+_REMEMBERED: dict[str, dict[str, Any]] = {}
+_REMEMBER_MAX = 32
+
+
+def remember_spec(spec: SceneSpec) -> str:
+    """Keep a valid spec for later calls; returns its ``spec_id`` (same spec, same id)."""
+    data = spec.to_dict()
+    sid = "spec_" + hashlib.sha1(json.dumps(data, sort_keys=True).encode()).hexdigest()[:10]
+    _REMEMBERED.pop(sid, None)
+    _REMEMBERED[sid] = data
+    while len(_REMEMBERED) > _REMEMBER_MAX:
+        _REMEMBERED.pop(next(iter(_REMEMBERED)))
+    return sid
+
+
+def remembered_spec(spec_id: Any = None) -> tuple[dict[str, Any] | None, str | None]:
+    """(spec, error): the spec with ``spec_id``, or the last valid one when it is None."""
+    if spec_id is not None:
+        if spec_id in _REMEMBERED:
+            return _REMEMBERED[spec_id], None
+        return None, (f"spec_id: unknown {spec_id!r} (known: {list(_REMEMBERED)[-5:]}); "
+                      "pass the spec itself, or submit_scene_spec it first")
+    if not _REMEMBERED:
+        return None, ("spec: missing, and no valid spec was submitted yet; pass {spec: {setting, objects, "
+                      "relations}} (see get_scene_spec_schema); after that build_scene() alone rebuilds it")
+    return _REMEMBERED[next(reversed(_REMEMBERED))], None
+
+
+def _spec_from_args(args: dict[str, Any], remembered: bool = False) -> tuple[SceneSpec | None, list[str]]:
+    """The call's spec, parsed. ``remembered``: with no spec in the call, the one ``spec_id``
+    names, else the last valid spec. A valid spec is remembered for the next call."""
     raw, err = spec_arg(args)
     if err:
         return None, [err]
+    if raw is None and (remembered or args.get("spec_id") is not None):
+        raw, err = remembered_spec(args.get("spec_id"))
+        if err:
+            return None, [err]
     if raw is None:
         return None, ["spec: missing; pass {spec: {setting, objects, relations}} (see get_scene_spec_schema)"]
-    return _parse_spec(raw)
+    spec, errors = _parse_spec(raw)
+    if spec is not None:
+        remember_spec(spec)
+    return spec, errors
+
+
+#: the invalid reply's hint: fix only what the errors name, then build without resending the spec
+_INVALID_HINT = ("fix what the errors name and resubmit; once a spec is valid, build_scene() with no "
+                 "arguments (or {spec_id}) builds it")
 
 
 def parse_placements(raw: Any) -> list[Placement]:
@@ -1507,14 +1553,15 @@ _EXAMPLE_SPEC: dict[str, Any] = {
 def _handle_submit_scene_spec(args: dict[str, Any]) -> Any:
     spec, errors = _spec_from_args(args)
     if spec is None:
-        return {"status": "invalid", "errors": errors}
-    return {"status": "ok", "spec": spec.to_dict()}
+        return {"status": "invalid", "errors": errors, "hint": _INVALID_HINT}
+    return {"status": "ok", "spec_id": remember_spec(spec), "spec": spec.to_dict(),
+            "next": "build_scene() (no arguments) builds this spec"}
 
 
 def _handle_solve_layout(args: dict[str, Any]) -> Any:
-    spec, errors = _spec_from_args(args)
+    spec, errors = _spec_from_args(args, remembered=True)
     if spec is None:
-        return {"status": "invalid", "errors": errors}
+        return {"status": "invalid", "errors": errors, "hint": _INVALID_HINT}
     kw: dict[str, Any] = {}
     if args.get("seed") is not None:
         kw["seed"] = int(args["seed"])
@@ -1577,6 +1624,8 @@ def _handle_search_exemplars(args: dict[str, Any]) -> Any:
 
 _SPEC = {"type": ["object", "string"],
          "description": "SceneSpec {setting, objects, relations} (see get_scene_spec_schema); a JSON string also works"}
+_SPEC_ID = {"type": "string", "description": ("a spec_id from submit_scene_spec / build_scene; with neither spec "
+                                              "nor spec_id the last valid spec is used")}
 #: the spec's own fields, accepted at the top level when ``spec`` is left out
 _SPEC_FIELDS: dict[str, Any] = {
     "spec": _SPEC,
@@ -1595,9 +1644,10 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
     from ai_db_scene.constants import BUILD_FIX_ROUNDS, BUILD_MAX_REPAIRS
     from ai_db_scene.repair import relax
 
-    spec, errors = _spec_from_args(args)
+    spec, errors = _spec_from_args(args, remembered=True)
     if spec is None:
-        return {"status": "invalid", "errors": errors}
+        return {"status": "invalid", "errors": errors, "hint": _INVALID_HINT}
+    spec_id = remember_spec(spec)
     # furniture variants follow the first build's spec; edit_scene passes the stored key back
     variation = args.get("variation") if isinstance(args.get("variation"), list) else variation_key(spec)
     render_opts = None
@@ -1698,7 +1748,7 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
     out = {"status": "built" if not any(i.get("severity") == "blocking" for i in left) else "built_with_issues",
            "objects": len(placements), "created": built.get("created"), "failed_commands": built.get("failed"),
            "repairs": repairs, "fixes_applied": applied, "issues_found": len(first),
-           "issues_left": left[:20], "spec": data if repairs else None}
+           "issues_left": left[:20], "spec": data if repairs else None, "spec_id": spec_id}
     if camera is not None:
         out["camera"] = camera
     if render_opts is not None:
@@ -2295,12 +2345,13 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
                                        "project": {"type": "string", "description": "lessons of this project (and global ones)"}}},
      _handle_get_scene_spec_schema),
     ("submit_scene_spec",
-     "Validate a SceneSpec; returns exact errors, or ok + the normalized spec",
+     ("Validate a SceneSpec; returns exact errors, or ok + the normalized spec + a spec_id. The valid spec is "
+      "remembered: build_scene() with no arguments builds it"),
      {"type": "object", "properties": {**_SPEC_FIELDS}},
      _handle_submit_scene_spec),
     ("solve_layout",
      "Deterministically place every object of a SceneSpec; returns placements or the conflicting relations",
-     {"type": "object", "properties": {**_SPEC_FIELDS, "seed": {"type": "integer"}}},
+     {"type": "object", "properties": {**_SPEC_FIELDS, "spec_id": _SPEC_ID, "seed": {"type": "integer"}}},
      _handle_solve_layout),
     ("build_scene",
      ("One call from SceneSpec to finished scene: validates the spec, lays it out (repairing conflicts by "
@@ -2310,6 +2361,7 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
      {"type": "object",
       "properties": {
           **_SPEC_FIELDS,
+          "spec_id": _SPEC_ID,
           "seed": {"type": "integer"},
           "geometry": {"enum": list(GEOMETRY_MODES)},
           "asset_map": {"type": "object", "description": "id|category -> {filepath, asset_name}"},
