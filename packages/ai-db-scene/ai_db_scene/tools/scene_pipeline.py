@@ -2220,9 +2220,16 @@ def _stored_spec(scene_id: str) -> tuple[dict[str, Any] | None, str | None, dict
         meta = scene.prompt_context.metadata if scene.prompt_context else {}
         spec = meta.get("spec") if isinstance(meta, dict) else None
         if isinstance(spec, dict):
-            build = meta.get("build")
-            return spec, None, {**(build if isinstance(build, dict) else {}), "project": project,
-                                "spec_from": scene.scene_id}
+            raw = meta.get("build")
+            build: dict[str, Any] = raw if isinstance(raw, dict) else {}
+            inferred = None
+            if "variation" not in build:  # saved before versions stored their build options
+                from ai_db_scene.legacy_build import infer_build_options
+
+                guessed, inferred = infer_build_options(spec, scene)
+                build = {**guessed, **build}
+            return spec, None, {**build, "project": project, "spec_from": scene.scene_id,
+                                **({"build_inferred": inferred} if inferred else {})}
         scene = memory.backend.load_scene(scene.parent_scene_id) if scene.parent_scene_id else None
     return None, (f"scene {scene_id} has no stored spec (it was not made by build_scene/edit_scene); "
                   "pass the spec to build_scene first"), {}
@@ -2262,7 +2269,8 @@ def _handle_edit_scene(args: dict[str, Any]) -> Any:
                                "prompt": args.get("prompt") or "; ".join(done), "project": project,
                                "operation_type": "edit", "parent_scene_id": scene_id,
                                "metadata": {"steps": args.get("steps")}})
-    return {**out, "steps_applied": done, "previous_scene_id": scene_id, "safety_snapshot": safety}
+    return {**out, "steps_applied": done, "previous_scene_id": scene_id, "safety_snapshot": safety,
+            **({"build_inferred": stored["build_inferred"]} if stored.get("build_inferred") else {})}
 
 
 _EXPORT = """

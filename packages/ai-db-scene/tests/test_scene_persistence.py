@@ -310,6 +310,42 @@ def test_edit_scene_on_a_fork_uses_the_ancestors_spec(built):
     assert {o["id"] for o in calls[0]["spec"]["objects"]} == {"desk", "chair", "shelf", "lamp"}
 
 
+def _legacy_version(tmp_path, monkeypatch, seed: int, vertices: int, shift: float = 0.0):
+    """A version saved before build options were stored: spec only, objects as seed placed them."""
+    from ai_db_scene.layout import solve_layout
+
+    spec = sp._parse_spec(SPEC)[0]
+    assert spec is not None
+    off = sp.frame_offset(spec)
+    scene = SceneState(project="old")
+    for p in solve_layout(spec, seed=seed):
+        o = ObjectState(name=p.id, location=(p.location[0] + off[0] + shift, p.location[1] + off[1], 0.0),
+                        vertices=vertices)
+        scene.objects[o.uuid] = o
+    memory, _fake = _memory(tmp_path, scene)
+    monkeypatch.setattr(scene_tools, "_scene_memory", memory)
+    sid = memory.snapshot_scene(prompt="old office", operation_type="build", metadata={"spec": SPEC})
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(sp, "_handle_build_scene", lambda args: calls.append(args) or {"status": "built"})
+    return sid, calls, spec
+
+
+def test_edit_of_a_version_without_build_options_recovers_seed_geometry_and_variation(tmp_path, monkeypatch):
+    sid, calls, spec = _legacy_version(tmp_path, monkeypatch, seed=5, vertices=8)
+    out = sp._handle_edit_scene({"scene_id": sid, "steps": [{"op": "remove_object", "id": "shelf"}]})
+    args = calls[0]
+    assert (args["seed"], args["geometry"], args["variation"]) == (5, "boxes", sp.variation_key(spec))
+    assert "seed 5 inferred" in out["build_inferred"] and "'boxes'" in out["build_inferred"]
+
+
+def test_edit_of_a_version_without_build_options_warns_when_the_seed_is_lost(tmp_path, monkeypatch):
+    sid, calls, spec = _legacy_version(tmp_path, monkeypatch, seed=0, vertices=480, shift=0.7)
+    out = sp._handle_edit_scene({"scene_id": sid, "steps": [{"op": "remove_object", "id": "shelf"}]})
+    args = calls[0]
+    assert "seed" not in args and args["geometry"] == "generated" and args["variation"] == sp.variation_key(spec)
+    assert "untouched objects may move" in out["build_inferred"]
+
+
 def test_furniture_variation_follows_the_first_builds_key():
     spec = sp._parse_spec(SPEC)[0]
     edited = sp._parse_spec({**SPEC, "objects": SPEC["objects"][:2],
@@ -415,3 +451,30 @@ result = 1
     report = memory.apply_scene(sid)
     assert report["mismatches"] == [] and report["missing_files"] == []
     assert client.run_code(packed) == [True]
+
+
+@pytest.mark.blender
+def test_live_edit_of_a_version_saved_without_build_options_keeps_untouched_objects(
+        private_blender, tmp_path, monkeypatch):
+    from ai_db_scene.blender_client import BlenderClient
+
+    client = BlenderClient(port=private_blender, timeout=120)
+    memory = SceneMemory("json_file", {"path": str(tmp_path / "mem")})
+    memory.set_blender_client(client)
+    monkeypatch.setattr(scene_tools, "_scene_memory", memory)
+    built = sp._handle_build_scene({"spec": SPEC, "clear": True, "seed": 4, "prompt": "old office"})
+    assert built["status"] == "built", built
+    v1 = built["scene_id"]
+    # what a version saved before e8d3761 looks like: the spec, no build options
+    row = memory.backend.scenes_dir / f"{v1}.json"
+    data = json.loads(row.read_text())
+    data["prompt_context"]["metadata"].pop("build")
+    row.write_text(json.dumps(data))
+    edited = sp._handle_edit_scene({"scene_id": v1, "steps": [
+        {"op": "update_object", "id": "chair", "set": {"material": "velvet:#5b2a4a"}}]})
+    assert edited["status"] == "built", edited
+    assert "seed 4 inferred" in edited["build_inferred"] and "'generated'" in edited["build_inferred"]
+    diff = memory.diff_scenes(v1, edited["scene_id"])
+    assert not diff["added"] and not diff["removed"]
+    untouched = [c for c in diff["moved"] + diff["reshaped"] if not c["name"].startswith("chair")]
+    assert untouched == []
