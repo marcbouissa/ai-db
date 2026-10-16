@@ -120,6 +120,7 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             r.pop("at_deg")
         out.append(r)
     out = _rugs(out, ids, prior, notes)
+    _spread_centered(out, objs, setting, prior, notes)
     if indoor:
         out = _wall_mounts(out, objs, shape, prior, notes)
     d["relations"] = out
@@ -157,6 +158,34 @@ def _rugs(rels: list[Any], ids: set[str], prior: Any, notes: list[str]) -> list[
             out[i] = {"a": rug, "rel": "centered_in", "b": x}
             notes.append(f"'{r['a']} {rel} {r['b']}' read as '{rug} centered_in {x}' (the rug lies under it)")
     return out
+
+
+def _spread_centered(rels: list[Any], objs: list[dict[str, Any]], setting: dict[str, Any], prior: Any,
+                     notes: list[str]) -> None:
+    """``ceiling_lights (count 6) centered_in room``: six copies cannot share the centre (bench:
+    the repair loop grew a warehouse to 69 x 104 m). The copies become a grid spread over the
+    middle of the room, still centred."""
+    bounds = setting.get("bounds_m")
+    if not (isinstance(bounds, list) and len(bounds) == 3 and all(_num(v) for v in bounds)):
+        return
+    w, d = float(bounds[0]), float(bounds[1])
+    for o in objs:
+        n, oid = o.get("count"), o.get("id")
+        if not isinstance(n, int) or n < 2 or o.get("grid") is not None or prior(oid) is None:
+            continue
+        mine = [r for r in rels if isinstance(r, dict) and r.get("a") == oid]
+        if not any(r.get("rel") == "centered_in" and r.get("b") == "room" for r in mine) \
+                or any(r.get("rel") not in ("centered_in", "facing") for r in mine):
+            continue
+        # rows x cols == n, the block's aspect close to the room's
+        rows, cols = min(((r, n // r) for r in range(1, n + 1) if n % r == 0),
+                         key=lambda rc: abs(math.log((rc[1] / rc[0]) / (w / d))))
+        cw, cd = prior(oid).typical_m[:2]
+        gx = max(0.3, (0.6 * w - cols * cw) / (cols - 1)) if cols > 1 else 0.5
+        gy = max(0.3, (0.6 * d - rows * cd) / (rows - 1)) if rows > 1 else 0.8
+        o["grid"] = {"rows": rows, "cols": cols, "gap_m": [round(gx, 2), round(gy, 2)]}
+        o.pop("count")
+        notes.append(f"'{oid}': {n} copies centered_in room spread as a {rows}x{cols} grid in the middle of the room")
 
 
 def _wall_mounts(rels: list[Any], objs: list[dict[str, Any]], shape: Any, prior: Any, notes: list[str]) -> list[Any]:

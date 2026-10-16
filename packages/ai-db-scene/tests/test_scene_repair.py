@@ -23,11 +23,11 @@ def test_drops_the_named_positional_relation_before_walls():
 
 
 def test_enlarges_then_drops_copies_when_nothing_is_named():
-    err = LayoutError("cannot place 'chair_3' (...)", ["sofa"])
+    err = LayoutError("cannot place 'chair_3' (...); main blockers: 40x out of bounds", ["sofa"])
     data, note = relax(SPEC, err, [4.0, 3.0, 2.6])
     assert data["setting"]["bounds_m"] == [4.8, 3.6, 2.6] and "enlarged" in note
     big = {**SPEC, "setting": {"kind": "indoor", "bounds_m": [7.2, 5.4, 2.6]}}
-    data, note = relax(big, err, [4.0, 3.0, 2.6])  # already 1.8x: no more growth
+    data, note = relax(big, err, [4.0, 3.0, 2.6])  # already 3.2x the area: no more growth
     assert next(o for o in data["objects"] if o["id"] == "chair")["count"] == 2 and "fewer" in note
 
 

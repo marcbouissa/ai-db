@@ -1644,7 +1644,7 @@ def _issues(res: dict[str, Any]) -> list[dict[str, Any]]:
 def _handle_build_scene(args: dict[str, Any]) -> Any:
     """spec -> layout (repairing conflicts) -> build -> validate -> apply the validator's fixes."""
     from ai_db_scene.constants import BUILD_FIX_ROUNDS, BUILD_MAX_REPAIRS
-    from ai_db_scene.repair import relax
+    from ai_db_scene.repair import solve_with_repairs
 
     spec, errors = _spec_from_args(args, remembered=True)
     if spec is None:
@@ -1657,24 +1657,17 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
         render_opts, render_err = render_options(args["render"])
         if render_opts is None:
             return {"status": "invalid", "errors": [render_err]}
-    data = spec.to_dict()
-    original = list(spec.setting.bounds_m)
-    repairs: list[str] = list(spec.notes)  # what validation coerced (materials, relations) comes first
     seed = int(args.get("seed", 0))
-    while True:
-        spec, errors = _parse_spec(data)
-        if spec is None:  # a repair must never produce an invalid spec; report it if it does
-            return {"status": "invalid", "errors": errors, "repairs": repairs}
-        try:
-            placements = solve_layout(spec, seed=seed)
-            break
-        except LayoutError as e:
-            fix = relax(data, e, original) if len(repairs) < BUILD_MAX_REPAIRS else None
-            if fix is None:
-                return {"status": "conflict", "message": str(e), "conflicts": e.conflicts, "repairs": repairs,
-                        "spec": data}
-            data, note = fix
-            repairs.append(note)
+    fixed = solve_with_repairs(spec.to_dict(), seed, BUILD_MAX_REPAIRS)
+    data = fixed.data
+    repairs: list[str] = [*spec.notes, *fixed.repairs]  # what validation coerced (materials, relations) first
+    if fixed.errors or fixed.spec is None:  # a repair must never produce an invalid spec; report it if it does
+        return {"status": "invalid", "errors": fixed.errors, "repairs": repairs}
+    if fixed.error is not None or fixed.placements is None:
+        e = fixed.error
+        return {"status": "conflict", "message": str(e), "conflicts": e.conflicts if e else [], "repairs": repairs,
+                "spec": data, "hint": fixed.hint}
+    spec, placements = fixed.spec, fixed.placements
     if args.get("clear"):
         try:
             BlenderClient().request("clear_scene", {"keep_camera": False, "purge_orphans": True})
@@ -1711,6 +1704,11 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
                 applied.append(f"fix failed for {issue.get('check')}: {e}")
         report = _handle_validate_scene({"spec": data})
     left = _issues(report)
+    # a relation the repair loop had to drop is not "built": the model treated it as success and
+    # judges named exactly those (sofa not facing the TV, chairs unpaired)
+    left += [{"check": "dropped_relation", "severity": "warning",
+              "message": f"relation '{lbl}' could not be kept (dropped so the scene could be laid out); "
+                         "change it (edit_scene: move, or a bigger setting) if it matters"} for lbl in fixed.dropped]
     from ai_db_scene import constants as _c
 
     camera: dict[str, Any] | None = None
@@ -1747,7 +1745,8 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
         left += feedback.apply(left, placements, args.get("project", "default"))
     except Exception as e:  # noqa: BLE001 - a lesson must never fail a finished build
         left.append({"check": "lesson_error", "severity": "warning", "message": f"lessons not applied: {e}"})
-    out = {"status": "built" if not any(i.get("severity") == "blocking" for i in left) else "built_with_issues",
+    clean = not fixed.dropped and not any(i.get("severity") == "blocking" for i in left)
+    out = {"status": "built" if clean else "built_with_issues",
            "objects": len(placements), "created": built.get("created"), "failed_commands": built.get("failed"),
            "repairs": repairs, "fixes_applied": applied, "issues_found": len(first),
            "issues_left": left[:20], "spec": data if repairs else None, "spec_id": spec_id}

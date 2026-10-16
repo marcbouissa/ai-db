@@ -45,7 +45,7 @@ SCENE_CAMERA_HEIGHT_M = 1.4  # indoors (outdoors: 2.5 m); interior photographers
 SCENE_CAMERA_LENS_MM = 20.0  # indoors; wider than ~16 mm distorts the corners (outdoors: 24 mm)
 SCENE_CAMERA_MAX_SHIFT = 0.35  # lens shift that frames the subject while the camera stays level
 REPAIR_GROWTH = 1.2  # build_scene: room x/y growth per repair step
-REPAIR_MAX_GROWTH = 1.8  # build_scene: never more than this times the requested size
+REPAIR_MAX_AREA_GROWTH = 2.25  # build_scene: the floor area never grows past this times the requested one
 BUILD_MAX_REPAIRS = 6  # build_scene: spec edits before giving up
 BUILD_FIX_ROUNDS = 2  # build_scene: rounds of applying validate_scene's fix actions
 BUILD_POLY_BUDGET: int | None = None  # build_scene: default total-face budget (None: no budget)
@@ -68,7 +68,7 @@ BUILD_RENDER_SAMPLES = 64  # build_scene render: {...}: the optional final rende
 BUILD_RENDER_RESOLUTION = (1280, 720)
 BUILD_RENDER_SKY_STRENGTH = 1.0  # render.sky: world strength at least this
 SCENE_EXPORT_DIR = "~/ai-db-exports"  # export_scene's folder; override: plugins.scene.export_dir, AI_DB_SCENE_EXPORT_DIR
-SCENE_EXPORT_FORMATS = {"glb": ".glb", "gltf": ".gltf", "usd": ".usd", "usdz": ".usdz"}
+SCENE_EXPORT_FORMATS = {"glb": ".glb", "gltf": ".gltf", "usd": ".usd", "usda": ".usda", "usdc": ".usdc", "usdz": ".usdz"}
 SCENE_EXPORT_TIMEOUT_S = 300.0
 
 # --- Recipe realism (ai_db_scene/recipes.py) ---
