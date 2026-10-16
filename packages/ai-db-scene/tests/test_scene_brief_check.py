@@ -85,3 +85,11 @@ def test_spec_count_placed_fewer_is_reported():
 
 def test_edit_scene_keeps_the_brief():
     assert sp.build_options({"brief": "two armchairs", "seed": 1}) == {"seed": 1, "brief": "two armchairs"}
+
+
+def test_vague_quantities_are_no_count():
+    # qwen3-14b-local-aidb6 beach_cove: "a few rocks" read as 1 rock; the model cut 4 rocks to 1
+    beach = brief_counts("a wooden boardwalk from the bushes to the water, two sun loungers under a parasol, "
+                         "and a few rocks at the water's edge.", set(load_priors()))
+    assert beach["rock"] is None
+    assert brief_counts("some plants and several chairs", set(load_priors()))["chair"] is None

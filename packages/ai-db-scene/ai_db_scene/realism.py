@@ -88,6 +88,10 @@ _NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 
             "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "pair": 2, "couple": 2}
 
 
+#: quantity words with no exact count ("a few rocks", "some plants")
+_VAGUE = ("few", "several", "some", "many", "lots", "various", "assorted", "more", "dense", "multiple")
+
+
 def brief_counts(brief: str, categories: set[str]) -> dict[str, int | None]:
     """Categories a brief names, with the count it asks for when one is stated ("two armchairs").
 
@@ -105,6 +109,8 @@ def brief_counts(brief: str, categories: set[str]) -> dict[str, int | None]:
             before = before[before.index(",") + 1:] if "," in before else before  # "a workbench, safety barriers"
             n = next((int(w) if w.isdigit() else _NUMBERS[w] for w in reversed(before)
                       if w.isdigit() or w in _NUMBERS), None)
+            if any(w in _VAGUE for w in before):
+                n = None  # "a few rocks" is not one rock
             each = low[m.end():].split()[:1] == ["each"]
             mentions.setdefault(cat, []).append(-1 if each else n)
             low = low[:m.start()] + " " * (m.end() - m.start()) + low[m.end():]  # "coffee table" not also "table"
