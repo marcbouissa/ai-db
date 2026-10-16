@@ -1,11 +1,14 @@
 """Run one OpenCode headless session (``opencode run``) with a free OpenCode model.
 
 Every run gets its own empty HOME (no global config, MCP servers, AGENTS.md or skills leak in;
-the free models need no login), a project config with exactly the arm's MCP servers, and
-OpenCode's built-in tools switched off. Usage comes from the run's own session store:
+the free models need no login) whose config has exactly the arm's MCP servers, and an empty
+temporary working folder. OpenCode 2 ignores ``"tools": {...: false}``, so the built-in tools
+(read, edit, write, glob, grep, shell, webfetch, subagent, ...) are denied through
+``permission``: everything is denied except the MCP tools (see _config). Usage comes from the run's own session store:
 tokens per model call (input, output, reasoning, cache read/write) and per-call timings.
-OpenCode 2 calls MCP tools through "Code Mode" (one ``execute`` tool running JS that calls
-``tools["<server>"].<tool>(...)``), so the inner tool names are read from that code.
+The MCP tools are offered directly (``<server>_<tool>``, Code Mode off; see _config). Older
+runs called them through Code Mode (one ``execute`` tool running JS); their inner tool names
+are read from that code. Calls OpenCode refused (permission denied) are listed in ``denied``.
 """
 
 from __future__ import annotations
@@ -15,19 +18,14 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import time
 from typing import Any
 
 import run_claude
 
 OPENCODE = os.path.expanduser("~/.opencode/bin/opencode")
-SANDBOX = os.path.expanduser("~/.cache/ai-db-bench/cwd")
-# OpenCode 1 and 2 names of the built-in tools: agents get only their MCP servers
-_OFF = ("bash", "edit", "write", "read", "glob", "grep", "list", "patch", "webfetch", "websearch",
-        "task", "todowrite", "todoread", "skill")
-# OpenCode's free tier refuses requests that do not offer a usable `shell` tool ("free tier can
-# only be used from within OpenCode"; a permission deny hides it too). So shell stays: the task
-# prompt forbids it, and every shell command is recorded and flagged in the report.
+# Shell commands are denied (see _config); any that still ran are recorded and flagged.
 _SHELL_FLAGS = ("blender", "ai-db", "aidb", "bpy", "9877", "110", "/dev/tcp", "socket", "python")
 
 
@@ -57,21 +55,40 @@ def _env(home: str) -> dict[str, str]:
             "XDG_STATE_HOME": f"{home}/.local/state", "LANG": "C.UTF-8"}
 
 
-def _home(run_dir: str) -> str:
+def _home(run_dir: str, servers: dict[str, Any]) -> str:
+    """The run's HOME with the catalogue cache and the config as the *global* config, so the
+    working folder stays empty."""
     home = os.path.join(run_dir, "oc_home")
     os.makedirs(os.path.join(home, ".cache", "opencode"), exist_ok=True)
     cache = os.path.expanduser("~/.cache/opencode/models.json")
     if os.path.exists(cache):  # the model catalogue: saves a fetch per run
         shutil.copy(cache, os.path.join(home, ".cache", "opencode", "models.json"))
+    os.makedirs(os.path.join(home, ".config", "opencode"), exist_ok=True)
+    with open(os.path.join(home, ".config", "opencode", "opencode.json"), "w", encoding="utf-8") as f:
+        json.dump(_config(servers), f, indent=1)
     return home
 
 
+#: the free tier refuses sessions that do not offer the ``read`` tool ("free tier can only be used
+#: from within OpenCode"); a rule on this path keeps it offered while every real path is denied
+_READ_DECOY = "/nonexistent-aidb-bench/*"
+
+
 def _config(servers: dict[str, Any]) -> dict[str, Any]:
-    mcp = {name: {"type": "local", "enabled": True, "command": [s["command"], *s["args"]],
+    """Only the MCP tools. OpenCode 2 ignores ``tools: {name: false}`` and offered every built-in
+    tool under ``permission {"*": "allow"}`` (read, edit, shell, webfetch, subagent, ...): a free
+    model could read the private repo. Now every permission is denied (``--auto`` approves only
+    what is not explicitly denied) except the arm's MCP tools (``<server>_<tool>``).
+
+    The MCP servers run with ``codemode: false``: their tools are offered directly instead of
+    through Code Mode's ``execute``, and ``execute`` stays denied, because its JS runtime has an
+    unchecked ``fetch`` that reads ``file://`` URLs and reaches any host (OpenCode 2.0.20)."""
+    mcp = {name: {"type": "local", "enabled": True, "codemode": False, "command": [s["command"], *s["args"]],
                   "environment": s.get("env", {})} for name, s in servers.items()}
-    return {"$schema": "https://opencode.ai/config.json", "mcp": mcp,
-            "tools": dict.fromkeys(_OFF, False),
-            "permission": {"*": "allow"}}
+    permission: dict[str, Any] = {"*": "deny", "read": {"*": "deny", _READ_DECOY: "allow"}}
+    permission.update({f"{name}_*": "allow" for name in servers})
+    return {"$schema": "https://opencode.ai/config.json", "mcp": mcp, "permission": permission,
+            "autoupdate": False, "share": "disabled", "snapshot": False}
 
 
 def run(model: str, prompt: str, port: int, run_dir: str, with_aidb: bool, aidb_tools: str,
@@ -90,18 +107,12 @@ def run(model: str, prompt: str, port: int, run_dir: str, with_aidb: bool, aidb_
 
 def _run_once(model: str, prompt: str, port: int, run_dir: str, with_aidb: bool, aidb_tools: str,
               timeout_s: float, files: list[str] | None, servers: dict[str, Any] | None) -> dict[str, Any]:
-    home = _home(run_dir)
-    # OpenCode treats the enclosing git repository as the project: it snapshots it every step
-    # and reads its instruction files. bench/ lives in the ai-db repo, so the session's working
-    # folder must be outside any repository.
-    work = os.path.join(SANDBOX, os.path.relpath(run_dir, "/").replace(os.sep, "__"))
-    if os.path.isdir(work):
-        shutil.rmtree(work)
-    os.makedirs(work)
     if servers is None:
         servers = run_claude.mcp_servers(port, run_dir, with_aidb, aidb_tools)
-    with open(os.path.join(work, "opencode.json"), "w", encoding="utf-8") as f:
-        json.dump(_config(servers), f, indent=1)
+    home = _home(run_dir, servers)
+    # An empty temporary working folder outside any repository: OpenCode treats the enclosing
+    # git repository as the project (bench/ lives in the private ai-db repo).
+    work = tempfile.mkdtemp(prefix="aidb-bench-oc-")
     cmd = [OPENCODE, "run", "--standalone", "--auto", "-m", f"opencode/{model}", "--format", "json"]
     for path in files or []:
         cmd += ["-f", path]
@@ -111,11 +122,12 @@ def _run_once(model: str, prompt: str, port: int, run_dir: str, with_aidb: bool,
             open(os.path.join(run_dir, "opencode_stderr.txt"), "w", encoding="utf-8") as err:
         try:
             proc = subprocess.run(cmd, cwd=work, env=_env(home), stdin=subprocess.DEVNULL, stdout=out,
-                                  stderr=err, timeout=timeout_s)
+                                  stderr=err, timeout=timeout_s, check=False)
             rc, timed_out = proc.returncode, False
         except subprocess.TimeoutExpired:
             rc, timed_out = -9, True
     wall = time.time() - t0
+    shutil.rmtree(work, ignore_errors=True)
     res = summarize(os.path.join(home, ".local", "share", "opencode", "opencode.db"), wall, rc, timed_out,
                      os.path.join(run_dir, "transcript.jsonl"))
     err = _provider_error(os.path.join(run_dir, "opencode_events.jsonl"))
@@ -126,11 +138,21 @@ def _run_once(model: str, prompt: str, port: int, run_dir: str, with_aidb: bool,
     return res
 
 
+def _direct_label(name: str, inp: Any) -> str:
+    """``blender_invoke_tool`` {tool: x} -> ``blender:x``; ``aidb_build_scene`` -> ``aidb:build_scene``."""
+    server, sep, tool = name.partition("_")
+    if not sep or server not in ("blender", "aidb"):
+        return name
+    inner = inp.get("tool") if isinstance(inp, dict) else None
+    return f"{server}:{inner}" if tool == "invoke_tool" and isinstance(inner, str) else f"{server}:{tool}"
+
+
 def summarize(db_path: str, wall: float, rc: int, timed_out: bool, transcript_path: str) -> dict[str, Any]:
     per_call: list[dict[str, Any]] = []
     tools: dict[str, dict[str, float]] = {}
     final, outcome = "", None
     shell_cmds: list[dict[str, Any]] = []
+    denied: list[dict[str, Any]] = []
     if os.path.exists(db_path):
         c = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         rows = c.execute("select type, data from session_message order by time_created, seq").fetchall()
@@ -165,6 +187,9 @@ def summarize(db_path: str, wall: float, rc: int, timed_out: bool, transcript_pa
                     shell_cmds.append({"command": command[:500],
                                        "flagged": any(f in command.lower() for f in _SHELL_FLAGS)})
                 st = item.get("state") or {}
+                if (st.get("error") or {}).get("type") == "permission.rejected":
+                    denied.append({"tool": item.get("name"), "input": json.dumps(st.get("input"))[:300],
+                                   "message": st["error"].get("message", "")})
                 names = []
                 for call in (st.get("metadata") or {}).get("toolCalls") or []:
                     name = str(call.get("tool", "?"))
@@ -173,7 +198,7 @@ def summarize(db_path: str, wall: float, rc: int, timed_out: bool, transcript_pa
                                  else name.replace(".", ":"))
                 tt = item.get("time") or {}
                 secs = ((tt.get("completed") or 0) - (tt.get("ran") or tt.get("created") or 0)) / 1000
-                label = "+".join(sorted(set(names))) or item.get("name", "?")
+                label = "+".join(sorted(set(names))) or _direct_label(item.get("name", "?"), st.get("input"))
                 s = tools.setdefault(label, {"calls": 0, "seconds": 0.0, "errors": 0})
                 s["calls"] += 1
                 s["seconds"] += max(secs, 0.0)
@@ -189,7 +214,7 @@ def summarize(db_path: str, wall: float, rc: int, timed_out: bool, transcript_pa
                    "reasoning": sum(p["reasoning"] for p in per_call),
                    "cache_write": sum(p["cache_write"] for p in per_call),
                    "cache_read": sum(p["cache_read"] for p in per_call)},
-        "per_call": per_call, "shell_commands": shell_cmds,
+        "per_call": per_call, "shell_commands": shell_cmds, "denied": denied,
         "shell_flagged": sum(1 for c in shell_cmds if c["flagged"]),
         "tools": {k: {"calls": int(v["calls"]), "seconds": round(v["seconds"], 1), "errors": int(v["errors"])}
                   for k, v in sorted(tools.items(), key=lambda kv: -kv[1]["seconds"])},
