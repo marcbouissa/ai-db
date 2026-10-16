@@ -89,8 +89,20 @@ HINT_AIDB2 = ("ai-db tools are also available: get_scene_spec_schema, then build
 AIDB2_TOOLS = AIDB_TOOLS + ",build_scene,edit_scene"
 
 
+HINT_AIDB5 = ("ai-db tools are also available. START HERE: build_scene builds the whole scene in one call. "
+              "Pass the scene spec's fields (setting, objects, relations) as build_scene's own top-level "
+              "arguments, or the spec_id that submit_scene_spec returned; get_scene_spec_schema shows the "
+              "fields, the object categories and example specs. build_scene repairs layout conflicts, adds real "
+              "furniture, materials, daylight, lamp lights and a camera, validates, fixes and saves a version "
+              "(scene_id). Read its result's verdict and next: when the verdict says done, stop and reply DONE; "
+              "otherwise do what next says (usually edit_scene(scene_id, steps) for the named fixes). Also scene "
+              "memory (snapshot_scene, restore_scene) and route_skill for Blender how-to skills.")
+
+
 def prompt(brief_id: str, with_aidb: bool, version: int = 1) -> str:
+    """version 1: the aidb arm; 2: aidb2..aidb4 (``build_scene(spec)``); 5: aidb5 (the current
+    build_scene: top-level spec fields or spec_id, START HERE, verdict/next)."""
     text = TASK.format(brief=BRIEFS[brief_id]["brief"]) + "\n\n" + HINT_BLENDER
     if not with_aidb:
         return text
-    return text + " " + (HINT_AIDB2 if version == 2 else HINT_AIDB)
+    return text + " " + {1: HINT_AIDB, 2: HINT_AIDB2, 5: HINT_AIDB5}[version]

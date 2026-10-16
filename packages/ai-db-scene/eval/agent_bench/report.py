@@ -10,7 +10,7 @@ from typing import Any
 import briefs
 
 #: arm suffixes in table order: ai-db v1, ai-db v2 (build_scene/edit_scene), then without ai-db
-MODES = ("aidb", "aidb2", "aidb3", "aidb4", "raw")
+MODES = ("aidb", "aidb2", "aidb3", "aidb4", "aidb5", "raw")
 
 
 def _split(arm: str) -> tuple[str, str]:
@@ -80,13 +80,17 @@ def write(out: str) -> str:
     judges = ", ".join(sorted({(r.get("judge") or {}).get(m, {}).get("model", "?") for r in rows
                                for m in ("aidb", "plain") if (r.get("judge") or {}).get(m)})) or "none yet"
     L: list[str] = ["# Agent benchmark: with vs without ai-db", ""]
-    L += ["Arms: every free OpenCode model that was available (OpenCode headless, isolated home, file/web tools "
-          "off; the shell has to stay for OpenCode's free tier, the prompt forbids it, see Shell use) and the "
+    L += [("Arms: every free OpenCode model that was available (OpenCode headless, isolated home; up to aidb4 "
+          "OpenCode's built-in tools (read, shell, webfetch, ...) were still offered and the prompt forbade them, "
+          "see Shell use; from aidb5 every built-in is denied, the MCP tools are offered directly instead of "
+          "through Code Mode's `execute` (whose `fetch` reads local files), the working folder is an empty "
+          "temporary one) and the "
           "Strata model (qwen3.8-flash, new generic agent), a local Qwen3-14B-AWQ (`qwen3-14b-local`: vLLM on "
           "this GPU via local_model.sh, the Strata agent, thinking on, 32k context), each with the Blender addon's tools only (raw) or those + "
-          "ai-db scene tools (aidb; aidb2 = ai-db with build_scene/edit_scene; aidb3 = the same prompt on the later pipeline). `ai-db` = short hash of the "
-          "ai-db-scene code a scene ran with (results of different versions must not be mixed). Same briefs, same Blender build, a fresh Blender per scene, 30 min cap.",
-          "Quality (formula v2) = 40% brief checklist + 15% size plausibility + 10% mesh coverage + 25% "
+          "ai-db scene tools (aidb; aidb2 = ai-db with build_scene/edit_scene; aidb3 = the same prompt on the later pipeline; aidb4 = the realism pass; "
+          "aidb5 = the weak-model fixes with a prompt hint for the current build_scene). `ai-db` = short hash of the "
+          "ai-db-scene code a scene ran with (results of different versions must not be mixed). Same briefs, same Blender build, a fresh Blender per scene, 30 min cap."),
+          ("Quality (formula v2) = 40% brief checklist + 15% size plausibility + 10% mesh coverage + 25% "
           "validator (100 - 8/blocking - 2/warning) + 10% basics (camera, lights, materials). The checklist "
           "counts an object matched by name or category only for real geometry: an asset root with >= 2 mesh "
           "parts or one mesh with > 12 faces counts 1, a lone box 0.5, an empty 0. Size = share of matched "
@@ -97,7 +101,7 @@ def write(out: str) -> str:
           "run `bench.py rescore` to put every scene on v2. "
           f"Judges: {judges}; blind (scenes anonymised, one judge per brief and "
           "mode, comparing all scenes of the brief). `aidb` = ai-db rubric + ai-db measurements, `plain` = "
-          "renders + brief only.", ""]
+          "renders + brief only."), ""]
     L += ["## Summary per arm", "",
           "| arm | ai-db | scenes | quality | judge aidb | judge plain | wall min | model min | tool min | tokens (k) | cost $ |",
           "|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -114,14 +118,14 @@ def write(out: str) -> str:
                  f"{mean(r['agent']['tool_s'] for r in rs) / 60:.1f} | {mean(_tok(r['agent']['tokens']) for r in rs) / 1000:.0f} | "
                  f"{sum((r['agent'].get('cost_usd') or 0) for r in rs):.2f} |")
     L += ["", "## With vs without ai-db, paired (same model, same brief: first arm minus second arm)", "",
-          "Arm averages above mix different brief sets (rate-limited models finished only the first briefs); "
+          ("Arm averages above mix different brief sets (rate-limited models finished only the first briefs); "
           "this table compares like with like. `aidb2` is ai-db after the benchmark-driven fixes "
-          "(build_scene, edit_scene); `aidb2 vs aidb` isolates what those fixes changed.", "",
+          "(build_scene, edit_scene); `aidb2 vs aidb` isolates what those fixes changed."), "",
           "| model | comparison | pairs | judge aidb Δ | judge plain Δ | quality Δ | wall min Δ | tokens k Δ |",
           "|---|---|---|---|---|---|---|---|"]
     by = {(r["arm"], r["brief"]): r for r in rows}
-    comparisons = (("aidb", "raw"), ("aidb2", "raw"), ("aidb3", "raw"), ("aidb4", "raw"), ("aidb2", "aidb"),
-                   ("aidb3", "aidb2"), ("aidb4", "aidb3"))
+    comparisons = (("aidb", "raw"), ("aidb2", "raw"), ("aidb3", "raw"), ("aidb4", "raw"), ("aidb5", "raw"),
+                   ("aidb2", "aidb"), ("aidb3", "aidb2"), ("aidb4", "aidb3"), ("aidb5", "aidb4"))
     for model in sorted({_split(a)[0] for a in ARMS}):
         for first, second in comparisons:
             prs = [(by[(f"{model}-{first}", b)], by[(f"{model}-{second}", b)]) for b in briefs.BRIEFS
@@ -141,8 +145,8 @@ def write(out: str) -> str:
     paired = [r for r in rows if r.get("judge_pairs")]
     if paired:
         L += ["", "## Paired judging (one blind batch per brief over the same models' arms)", "",
-              "Judged by `opus_judge.py --pairs`: each brief's scenes from only these models, in one batch, "
-              "so every arm of a model is scored side by side by the same judge.", "",
+              ("Judged by `opus_judge.py --pairs`: each brief's scenes from only these models, in one batch, "
+              "so every arm of a model is scored side by side by the same judge."), "",
               "| model | comparison | pairs | judge Δ (plain) | judge Δ (aidb) |", "|---|---|---|---|---|"]
         pby = {(r["arm"], r["brief"]): r for r in paired}
         for model in sorted({_split(r["arm"])[0] for r in paired}):
@@ -167,13 +171,13 @@ def write(out: str) -> str:
         L.append(f"| {brief} | **{best['arm']}** | {_fmt(_j(best, 'aidb'))} | {_fmt(_j(best, 'plain'))} | "
                  f"{best['quality']['score']} | `{os.path.relpath(best['dir'], out)}/scene.blend` |")
     L += ["", "## Every scene", "",
-          "| arm | brief | ai-db | view | done | quality | checklist | blocking | judge aidb | judge plain | wall s | model s | tool s | turns | in | out | cache w | cache r | cost $ |",
-          "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+          "| arm | brief | ai-db | view | done | quality | checklist | blocking | tool errors | judge aidb | judge plain | wall s | model s | tool s | turns | in | out | cache w | cache r | cost $ |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         a, q, t = r["agent"], r["quality"], r["agent"]["tokens"]
         L.append(f"| {r['arm']} | {r['brief']} | {_version(r)} | {_thumb(out, r)} | "
                  f"{'yes' if a['ok'] else ('timeout' if a.get('timed_out') else 'no')} | "
-                 f"{q['score']} | {q['checklist_pct']}% | {q['blocking']} | {_fmt(_j(r, 'aidb'))} | {_fmt(_j(r, 'plain'))} | "
+                 f"{q['score']} | {q['checklist_pct']}% | {q['blocking']} | {sum(v['errors'] for v in a['tools'].values())} | {_fmt(_j(r, 'aidb'))} | {_fmt(_j(r, 'plain'))} | "
                  f"{a['wall_s']:.0f} | {a['model_s']:.0f} | {a['tool_s']:.0f} | {a.get('turns')} | {t['input']} | {t['output']} | "
                  f"{t['cache_write']} | {t['cache_read']} | {_fmt(a.get('cost_usd'), 3)} |")
     L += ["", "## Where the time went (per arm, all scenes)", ""]
@@ -200,7 +204,7 @@ def write(out: str) -> str:
     flagged = [(r["arm"], r["brief"], c["command"]) for r in rows
                for c in r["agent"].get("shell_commands", []) if c.get("flagged")]
     shells = sum(len(r["agent"].get("shell_commands", [])) for r in rows)
-    L += ["## Shell use (forbidden by the prompt; OpenCode's free tier cannot run without the tool)", "",
+    L += ["## Shell use (forbidden by the prompt; offered to OpenCode arms up to aidb4, denied from aidb5)", "",
           f"{shells} shell commands in all runs; {len(flagged)} touched Blender, ai-db or Python and are listed:", ""]
     L += [f"- {a}/{b}: `{c[:160]}`" for a, b, c in flagged] or ["- none"]
     L.append("")
@@ -219,9 +223,9 @@ def write(out: str) -> str:
         agree = sum(1 for a, b in pairs if abs(a - b) <= 1)
         L.append(f"{len(pairs)} scenes judged both ways: mean |aidb - plain| = {diff:.2f} points; within 1 point on "
                  f"{agree}/{len(pairs)}. Mean aidb {mean(a for a, _ in pairs):.2f}, mean plain {mean(b for _, b in pairs):.2f}.")
-    L += ["", "## Files", "", "Each scene folder holds `scene.blend` (saved before any probe camera was added), "
+    L += ["", "## Files", "", ("Each scene folder holds `scene.blend` (saved before any probe camera was added), "
           "`agent_camera.png` (the agent's own camera, if any), `probe_interior.png` (eye height from a corner), `probe_plan.png` (top view cut at 2.5 m), "
-          "`metrics.json`, `transcript.jsonl` and `judge.json`.", ""]
+          "`metrics.json`, `transcript.jsonl` and `judge.json`."), ""]
     path = os.path.join(out, "REPORT.md")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(L) + "\n")

@@ -133,13 +133,15 @@ def _running_elsewhere(arm: str, brief: str) -> bool:
 
 def cmd_run(arm: str, brief: str) -> dict[str, Any]:
     model, mode = arm.rsplit("-", 1)
-    if mode not in ("aidb", "aidb2", "aidb3", "aidb4", "raw"):
-        raise SystemExit(f"arm must end in -raw, -aidb, -aidb2, -aidb3 or -aidb4: {arm}")
+    if mode not in ("aidb", "aidb2", "aidb3", "aidb4", "aidb5", "raw"):
+        raise SystemExit(f"arm must end in -raw, -aidb, -aidb2, -aidb3, -aidb4 or -aidb5: {arm}")
     with_aidb = mode != "raw"
     # aidb3: the aidb2 prompt and tools on the later pipeline (styles, judge, doorways, recipes,
-    # skill drafting); the arm's ai-db hash in metrics.json pins the code it ran on
-    version = 2 if mode in ("aidb2", "aidb3", "aidb4") else 1  # aidb4: the realism pass (2026-10-12)
-    tools = briefs.AIDB2_TOOLS if version == 2 else briefs.AIDB_TOOLS
+    # skill drafting); the arm's ai-db hash in metrics.json pins the code it ran on.
+    # aidb4: the realism pass (2026-10-12). aidb5 (2026-10-16): the weak-model fixes, the prompt
+    # hint of the current build_scene, OpenCode with direct MCP tools and every built-in denied.
+    version = {"aidb": 1, "raw": 1, "aidb5": 5}.get(mode, 2)
+    tools = briefs.AIDB_TOOLS if version == 1 else briefs.AIDB2_TOOLS
     rd = run_dir(arm, brief)
     if os.path.exists(os.path.join(rd, "metrics.json")):
         raise SystemExit(f"{arm}/{brief} is already done (delete its metrics.json to rerun)")
