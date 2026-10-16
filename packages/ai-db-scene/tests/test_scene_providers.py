@@ -305,7 +305,7 @@ def test_user_aliases_override_and_extend(tmp_path):
         (lib / n).write_bytes(b"glb")
     idx = pv.LocalLibrary([str(lib)], aliases={"loungeChair": "sofa", "coat_rack": "wardrobe"}).index()
     assert {c: [Path(f.filepath).name for f in fs] for c, fs in idx.items()} == {
-        "sofa": ["loungeChair.glb"], "stool": ["stoolBar.glb"], "wardrobe": ["coatRack.glb"]}
+        "sofa": ["loungeChair.glb"], "bar_stool": ["stoolBar.glb"], "wardrobe": ["coatRack.glb"]}  # a bar stool now
 
 
 def test_aliases_config_validated():

@@ -56,9 +56,17 @@ KITS: dict[str, tuple[tuple[str, ...], list[tuple[str, int, str]], list[str]]] =
         ["a teacher desk in front of the board, aisles between rows"]),
     "cafe": (("cafe", "café", "coffee shop", "bistro", "restaurant"), [
         ("dining_table", 4, "small tables in a loose grid, each with seats: 2 (the chairs come with the tables)"),
-        ("kitchen_counter", 1, "the service counter against a wall"), ("pendant_lamp", 3, "over the counter and tables"),
+        ("bar_counter", 1, "the service counter against a wall (seats: 3 adds bar stools)"),
+        ("pendant_lamp", 3, "above the counter and the tables"),
         ("potted_plant", 2, "by the windows"), ("picture_frame", 2, "on the walls")],
         ["leave a clear path from the door to the counter"]),
+    "lobby": (("lobby", "reception", "foyer", "entrance hall", "front desk"), [
+        ("reception_desk", 1, "hero; facing the entrance, a few metres in from it"),
+        ("office_chair", 1, "behind the reception desk (reception_desk seats: 1 does this)"),
+        ("sofa", 2, "a waiting group to one side, facing each other"), ("coffee_table", 1, "between the sofas"),
+        ("potted_plant", 2, "flanking the desk or the entrance"), ("pendant_lamp", 2, "above the desk"),
+        ("picture_frame", 2, "on the walls")],
+        ["keep a clear walk from the entrance to the desk"]),
     "warehouse": (("warehouse", "storage hall", "distribution center", "depot"), [
         ("pallet_rack", 4, "in rows (grid) with 3 m aisles"), ("forklift", 1, "in an aisle"),
         ("pallet", 4, "on the floor near the racks"), ("crate", 4, "stacked on pallets"),

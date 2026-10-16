@@ -128,6 +128,47 @@ def _kitchen_run() -> list[dict[str, Any]]:
     return parts
 
 
+def _bar_counter() -> list[dict[str, Any]]:
+    """Service / bar counter (2.4 x 0.75 x 1.08 m), customers at the front (-Y): a recessed plinth,
+    a carcass set back so the top overhangs the front for knees and stools, a slatted front panel,
+    a brass foot rail on brackets, brackets under the overhang and a thick worktop. Taller than a
+    kitchen run (0.9 m): judges read a cafe counter built as kitchen_counter as "a low sideboard"."""
+    wood, top = "wood:walnut", "wood:dark"
+    parts = [_box("plinth", [0.98, 0.58, 0.07], [0, 0.17, 0], _DARK),
+             _box("carcass", [1.0, 0.64, 0.86], [0, 0.18, 0.07], wood),
+             _box("worktop", [1.0, 1.0, 0.07], [0, 0, 0.93], top)]
+    n = 16
+    for k in range(n):  # vertical slats on the front face (y = -0.14)
+        x = -0.5 + (k + 0.5) / n
+        parts.append(_box(f"slat_{k}", [0.8 / n, 0.04, 0.84], [round(x, 4), -0.16, 0.08], _VENEER))
+    for k, x in enumerate((-0.42, 0.0, 0.42)):
+        parts += [_box(f"bracket_{k}", [0.012, 0.32, 0.05], [x, -0.33, 0.88], _DARK),
+                  _box(f"rail_post_{k}", [0.012, 0.03, 0.17], [x, -0.3, 0.0], "brass"),
+                  _box(f"rail_arm_{k}", [0.012, 0.14, 0.02], [x, -0.23, 0.15], "brass")]
+    parts.append(_box("foot_rail", [0.96, 0.04, 0.03], [0, -0.3, 0.14], "brass"))
+    return parts
+
+
+def _reception_desk() -> list[dict[str, Any]]:
+    """Reception desk (2.2 x 0.9 x 1.08 m), visitors at the front (-Y): a tall front panel with a
+    stone transaction ledge on top (1.05-1.1 m), returns at both ends, and behind it the staff's
+    work surface at desk height (0.75 m) with a modesty board. A desk or console stood in for it,
+    and judges named it "a thin console table" in four lobbies."""
+    wood = "wood:oak"
+    return [
+        _box("plinth", [0.98, 0.1, 0.04], [0, -0.42, 0], _DARK),
+        {"id": "front", "shape": "raised_panel", "size": [1.0, 0.08, 0.92], "at": [0, -0.42, 0.04],
+         "mode": "recessed", "border": 0.08, "moulding": 0.015, "field_depth": 0.02, "material": wood},
+        _box("ledge", [1.0, 0.3, 0.04], [0, -0.36, 0.96], "marble:carrara"),
+        _box("light_strip", [0.96, 0.02, 0.012], [0, -0.48, 0.945], "plastic:#fff4dc"),
+        *[_box(f"return_{s}", [0.04, 0.88, 0.69], [x, 0.06, 0.0], wood) for s, x in (("l", -0.48), ("r", 0.48))],
+        _box("work_top", [1.0, 0.62, 0.03], [0, 0.19, 0.69], wood),
+        _box("modesty", [0.92, 0.03, 0.5], [0, -0.1, 0.12], wood),
+        _box("pedestal", [0.22, 0.55, 0.66], [0.32, 0.2, 0.03], wood),
+        *[_box(f"drawer_pull_{k}", [0.1, 0.02, 0.012], [0.32, 0.465, z], _STEEL) for k, z in enumerate((0.55, 0.35, 0.15))],
+    ]
+
+
 def _frame(pid: str, w: float, mat: str) -> list[dict[str, Any]]:
     """Four moulding bars round the edge of a wall piece (unit space, face toward -Y)."""
     return [_box(f"{pid}_top", [1.0, 1.0, w], [0, 0, 1 - w], mat), _box(f"{pid}_bottom", [1.0, 1.0, w], [0, 0, 0], mat),
@@ -250,6 +291,17 @@ _RECIPES: dict[str, Any] = {
         _box("lever", [0.12, 0.6, 0.012], [0.3, -0.2, 0.47], "metal:brushed"),
         _box("rose", [0.05, 0.25, 0.03], [0.36, -0.1, 0.46], "metal:brushed")],
     "pallet_rack": _rack,
+    "bar_counter": _bar_counter,
+    "reception_desk": _reception_desk,
+    # bar stool (0.4 x 0.4 x 0.76 m): an upholstered round seat on four steel legs tied by a
+    # footrest ring a third of the way up
+    "bar_stool": lambda: [
+        _cyl("seat", [1.0, 1.0, 0.07], [0, 0, 0.93], "leather"),
+        _cyl("seat_plate", [0.6, 0.6, 0.02], [0, 0, 0.91], _DARK),
+        *[_box(f"leg_{i}", [0.07, 0.07, 0.91], [x, y, 0], _DARK)
+          for i, (x, y) in enumerate(((-0.3, -0.3), (0.3, -0.3), (-0.3, 0.3), (0.3, 0.3)))],
+        *[_box(f"footrest_{s}", [0.67, 0.05, 0.03], [0, y, 0.33], _STEEL) for s, y in (("f", -0.3), ("b", 0.3))],
+        *[_box(f"footrest_{s}", [0.05, 0.55, 0.03], [x, 0, 0.33], _STEEL) for s, x in (("l", -0.3), ("r", 0.3))]],
     "bench": lambda: [
         # two side frames carry the seat; posts rise from them and carry the backrest
         _box("frame_l", [0.05, 0.55, 0.42], [-0.47, 0.02, 0], _DARK),

@@ -25,6 +25,19 @@ _WALL_DEG = {"wall_east": 0.0, "wall_north": 90.0, "wall_west": 180.0, "wall_sou
 _RECT_WALLS = ("wall_north", "wall_east", "wall_west", "wall_south")  # tie order for a free wall
 _FLOOR_WORDS = ("room", "floor", "ground", "the_floor", "the_room")
 _COPY = re.compile(r"^(.+?)_?(\d+)$")
+#: category names weak models wrote -> the category (bench: a cafe counter as kitchen_counter or
+#: "counter", a reception desk as desk or "front_desk")
+CATEGORY_ALIASES = {
+    "counter": "bar_counter", "bar": "bar_counter", "cafe_counter": "bar_counter", "service_counter": "bar_counter",
+    "coffee_counter": "bar_counter", "serving_counter": "bar_counter", "checkout_counter": "bar_counter",
+    "front_desk": "reception_desk", "reception": "reception_desk", "reception_counter": "reception_desk",
+    "receptionist_desk": "reception_desk", "help_desk": "reception_desk", "information_desk": "reception_desk",
+    "barstool": "bar_stool", "counter_stool": "bar_stool", "high_stool": "bar_stool",
+    "couch": "sofa", "settee": "sofa", "loveseat": "sofa", "television": "tv", "fridge": "refrigerator",
+    "bookcase": "bookshelf", "plant": "potted_plant", "carpet": "rug", "cupboard": "cabinet",
+    "table": "dining_table", "lamp": "floor_lamp", "light": "ceiling_light", "painting": "picture_frame",
+    "picture": "picture_frame", "artwork": "picture_frame", "art": "picture_frame", "clock": "wall_clock",
+}
 
 
 def _num(v: Any) -> bool:
@@ -78,6 +91,13 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     def prior(oid: Any) -> Any:
         return priors.get(cat.get(oid)) if isinstance(oid, str) else None  # type: ignore[arg-type]
 
+    for i, o in enumerate(objs):  # names models use for a category: the category
+        c = o.get("category")
+        alias = CATEGORY_ALIASES.get(c.strip().lower().replace(" ", "_")) if isinstance(c, str) else None
+        if alias and c not in priors and alias in priors:
+            o["category"] = alias
+            cat[o.get("id")] = alias
+            notes.append(f"objects[{i}].category: '{c}' read as '{alias}'")
     for i, o in enumerate(objs):  # count next to grid: the grid decides
         g = o.get("grid")
         if isinstance(g, dict) and isinstance(g.get("rows"), int) and isinstance(g.get("cols"), int) \

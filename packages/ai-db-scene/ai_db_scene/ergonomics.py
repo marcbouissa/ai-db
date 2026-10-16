@@ -62,7 +62,7 @@ def check(spec: Any, placements: list[Any]) -> list[dict[str, Any]]:
                                         f"({lo:.2f}-{hi:.2f} m)"))
     # every desk (or dining table) needs a chair at it: chairs placed as a block elsewhere read as
     # storage, not seating (a judge's complaint about a classroom)
-    chairs_all = [p for p in placements if p.category in ("chair", "office_chair", "dining_chair", "stool")]
+    chairs_all = [p for p in placements if p.category in ("chair", "office_chair", "dining_chair", "stool", "bar_stool")]
     if chairs_all:
         lonely = [d.id for d in placements if d.category == "desk" and min(_gap(c, d) for c in chairs_all) > SEAT_REACH_M]
         if lonely:
