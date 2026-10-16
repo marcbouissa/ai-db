@@ -78,8 +78,8 @@ def test_edit_steps_apply_in_order_and_name_the_failing_step():
     assert all("table" not in (r["a"], r["b"]) for r in data["relations"])
     assert next(o for o in data["objects"] if o["id"] == "sofa")["material"] == "fabric:velvet"
     _d, _done, errors = apply_steps(SPEC, [{"op": "remove_object", "id": "sofa"}, {"op": "update_object", "id": "x", "set": {"count": 2}}])
-    assert errors == ["steps[1]: no object 'x'"]
-    assert apply_steps(SPEC, [{"op": "explode"}])[2][0].startswith("steps[0].op")
+    assert errors[0].startswith("steps[1]: no object 'x'") and len(errors) == 1
+    assert apply_steps(SPEC, [{"op": "explode"}])[2][0].startswith("steps[0]: op 'explode'")
 
 
 def test_edit_scene_rebuilds_from_the_stored_spec_as_the_next_version(monkeypatch, tmp_path):

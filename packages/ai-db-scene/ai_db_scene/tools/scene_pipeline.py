@@ -2392,16 +2392,20 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
                                              "adjusted until the image is neither black nor blown out (report: exposure)")}}},
      _handle_build_scene),
     ("edit_scene",
-     ("Refactor a scene made by build_scene in ordered steps: add_object, remove_object, update_object "
-      "{set: count|material|hero|grid|category|detail}, add_relation, remove_relation, update_setting "
-      "{set: bounds_m|style|floor_material|wall_material|shape|points|kind}. Applies them to the scene's stored "
+     ("Refactor a scene made by build_scene in ordered steps: add_object {object: {id, category}, relations}, "
+      "remove_object {id}, update_object {id, set: count|material|hero|grid|category|detail}, "
+      "move {id, to: {against_wall: wall_south} | {beside: sofa, gap_m: 0.5}} (replaces the object's own "
+      "relations; positions always come from relations), add_relation {relation: {a, rel, b}}, "
+      "remove_relation {a, rel, b}, update_setting {set: bounds_m|style|floor_material|wall_material|shape|points|kind}. "
+      "Common aliases (delete, add, target/name for id, flat fields) are accepted. Applies them to the scene's stored "
       "spec, rebuilds the scene (same seed: untouched objects mostly stay), validates, and saves the result as the "
       "next version (restore_scene on an earlier id undoes it). The current Blender scene is snapshotted first"),
      {"type": "object",
       "properties": {
           "scene_id": {"type": "string", "description": "a version saved by build_scene or edit_scene"},
           "steps": {"type": "array", "items": {"type": "object"},
-                    "description": "e.g. [{op: add_object, object: {id: lamp, category: floor_lamp}, relations: [{a: lamp, rel: beside, b: sofa}]}, {op: update_object, id: sofa, set: {material: velvet:#5b2a4a}}]"},
+                    "description": ("e.g. [{op: add_object, object: {id: lamp, category: floor_lamp}, relations: [{a: lamp, rel: beside, b: sofa}]}, "
+                                    "{op: update_object, id: sofa, set: {material: velvet:#5b2a4a}}, {op: move, id: table, to: {in_front_of: sofa}}]")},
           "seed": {"type": "integer", "description": "default: the seed the version was built with"},
           "geometry": {"enum": list(GEOMETRY_MODES), "description": "default: the version's own"},
           "prompt": {"type": "string"},
