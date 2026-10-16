@@ -132,6 +132,9 @@ def _run_once(model: str, prompt: str, port: int, run_dir: str, with_aidb: bool,
     res = summarize(os.path.join(home, ".local", "share", "opencode", "opencode.db"), wall, rc, timed_out,
                      os.path.join(run_dir, "transcript.jsonl"))
     err = _provider_error(os.path.join(run_dir, "opencode_events.jsonl"))
+    if res["timed_out"] and not res["tokens"]["output"]:
+        # the provider never answered (a hung free endpoint): no result of the model
+        raise ModelUnavailable(f"opencode/{model}: no model output within {timeout_s:.0f} s ({err or 'no error'})")
     if err and not res["timed_out"] and "DONE" not in (res["final_text"] or "").upper():
         # the provider ended the session (rate limit, outage), not the model: no result
         res["provider_error"] = err
