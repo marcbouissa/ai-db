@@ -207,7 +207,10 @@ def summarize(db_path: str, wall: float, rc: int, timed_out: bool, transcript_pa
     model_s = sum(p["seconds"] for p in per_call)
     tool_s = sum(v["seconds"] for v in tools.values())
     return {
-        "ok": rc == 0 and not timed_out and "DONE" in final.upper(), "returncode": rc, "timed_out": timed_out,
+        # a provider error the session recovered from (e.g. a 504 that OpenCode retried) makes the
+        # exit code 1 although the session succeeded: the session's own outcome counts too
+        "ok": (rc == 0 or outcome == "succeeded") and not timed_out and "DONE" in final.upper(),
+        "returncode": rc, "timed_out": timed_out,
         "outcome": outcome, "wall_s": round(wall, 1), "model_s": round(model_s, 1),
         "tool_s": round(tool_s if tool_s else max(wall - model_s, 0.0), 1), "api_s": round(model_s, 1),
         "turns": len(per_call), "cost_usd": 0.0,
