@@ -1731,7 +1731,7 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
     try:
         from ai_db_scene import ergonomics
 
-        left += ergonomics.check(spec, placements)
+        left += ergonomics.check(spec, placements, centred=False)  # solver placements: x in [0, W]
         from ai_db_scene import realism
 
         left += realism.check(spec, placements)

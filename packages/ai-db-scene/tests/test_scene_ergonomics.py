@@ -38,3 +38,12 @@ def test_desks_without_chairs_at_them_are_flagged():
     assert "3 desk(s) with no chair" in msgs
     seated = [_p(f"chair_{i}", "chair", x, -0.6, (0.45, 0.5, 0.9)) for i, x in enumerate((-2.0, 0.0, 2.0))]
     assert not [i for i in ergonomics.check(_spec(), desks + seated) if "no chair" in i["message"]]
+
+
+def test_dining_clearance_in_the_solver_frame():
+    # build_scene passes solver placements (x in [0, W]): a table mid-room was reported
+    # "-3.51 m from the table edge to the wall"
+    pls = [_p("dt", "dining_table", 3.0, 2.5, (1.6, 0.9, 0.75)), _p("ch", "dining_chair", 3.0, 1.75, (0.45, 0.5, 0.9))]
+    assert ergonomics.check(_spec(), pls, centred=False) == []
+    near = [_p("dt", "dining_table", 3.0, 0.9, (1.6, 0.9, 0.75)), _p("ch", "dining_chair", 3.0, 0.2, (0.45, 0.5, 0.9))]
+    assert "pulling a chair out" in " ".join(i["message"] for i in ergonomics.check(_spec(), near, centred=False))

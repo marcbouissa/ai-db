@@ -40,7 +40,9 @@ def _warn(objects: list[str], message: str) -> dict[str, Any]:
     return {"check": "ergonomics", "severity": "warning", "objects": objects, "message": message}
 
 
-def check(spec: Any, placements: list[Any]) -> list[dict[str, Any]]:
+def check(spec: Any, placements: list[Any], centred: bool = True) -> list[dict[str, Any]]:
+    """``centred``: placements in a frame centred on the room (Blender); False: the layout
+    solver's frame, x in [0, W] and y in [0, D] (build_scene passes its solver placements)."""
     issues: list[dict[str, Any]] = []
     seats = [p for p in placements if p.category in SEATING]
     for t in (p for p in placements if p.category == "coffee_table"):
@@ -71,13 +73,15 @@ def check(spec: Any, placements: list[Any]) -> list[dict[str, Any]]:
     st = spec.setting
     if st.kind == "indoor" and st.shape == "rect" and not st.rooms:
         hw, hd = st.bounds_m[0] / 2, st.bounds_m[1] / 2
+        sx, sy = (0.0, 0.0) if centred else (hw, hd)  # shift into the centred frame
         chairs = [p for p in placements if p.category in ("dining_chair", "chair")]
         for t in (p for p in placements if p.category in ("dining_table", "conference_table")):
             x0, x1, y0, y1 = _footprint(t)
+            x0, x1, y0, y1 = x0 - sx, x1 - sx, y0 - sy, y1 - sy
             # sides that have a chair need room behind it
             for side, clear in (("x-", x0 + hw), ("x+", hw - x1), ("y-", y0 + hd), ("y+", hd - y1)):
-                has_chair = any((side == "x-" and c.location[0] < x0) or (side == "x+" and c.location[0] > x1)
-                                or (side == "y-" and c.location[1] < y0) or (side == "y+" and c.location[1] > y1)
+                has_chair = any((side == "x-" and c.location[0] - sx < x0) or (side == "x+" and c.location[0] - sx > x1)
+                                or (side == "y-" and c.location[1] - sy < y0) or (side == "y+" and c.location[1] - sy > y1)
                                 for c in chairs if _gap(c, t) < 0.6)
                 if has_chair and clear < DINING_WALL_CLEAR_M:
                     issues.append(_warn([t.id], f"{t.id}: {clear:.2f} m from the table edge to the wall behind its "
