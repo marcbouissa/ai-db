@@ -27,6 +27,7 @@ KEEP_FULL = 4
 TOOL_TIMEOUT_S = 180.0  # a single MCP tool call (Blender can hang on a bad request)
 SERVER_WAIT_S = 3 * 3600  # how long to wait out a Strata server outage before giving up
 MAX_TURNS = 400  # effectively unbounded: the 30 min wall-clock cap applies to every arm
+MAX_MALFORMED = 3  # tool calls in a row the server could not parse before the session ends
 
 
 class ServerUnavailable(RuntimeError):
@@ -115,6 +116,18 @@ def _chat(messages: list[dict[str, Any]], tools: list[dict[str, Any]], base_url:
     return data["choices"][0]["message"], data.get("usage", {})
 
 
+def _call_error(content: str) -> str:
+    """Why the text of a <tool_call> block is not a usable call."""
+    body = content.split("<tool_call>", 1)[1].split("</tool_call>", 1)[0].strip()
+    try:
+        call = json.loads(body)
+    except json.JSONDecodeError as e:
+        return f"invalid JSON ({e})."
+    if not isinstance(call, dict) or "name" not in call:
+        return 'it needs {"name": ..., "arguments": {...}}.'
+    return "the call was not recognised."
+
+
 def _trim(messages: list[dict[str, Any]]) -> None:
     tool_idx = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
     for i in tool_idx[:-KEEP_FULL]:
@@ -146,6 +159,7 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
     llm_s = tool_s = outage_s = 0.0
     outages = 0
     final, ok, timed_out, rejected = "", False, False, None
+    malformed = bad_streak = 0
     with open(transcript_path, "w", encoding="utf-8") as tr:
         for _turn in range(MAX_TURNS):
             if time.monotonic() - t0 > timeout_s:
@@ -186,10 +200,20 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
             calls = msg.get("tool_calls") or []
             messages.append({"role": "assistant", "content": msg.get("content") or "",
                              **({"tool_calls": calls} if calls else {})})
+            content = msg.get("content") or ""
+            if not calls and "<tool_call>" in content and bad_streak < MAX_MALFORMED:
+                # a tool call the server's parser could not read (e.g. unbalanced JSON): say so,
+                # as a harness does for a bad call, instead of taking it as the final answer
+                bad_streak += 1
+                malformed += 1
+                messages.append({"role": "user", "content": "Your last tool call could not be parsed: "
+                                 + _call_error(content) + " Call the tool again with valid JSON."})
+                continue
             if not calls:
-                final = msg.get("content") or ""
+                final = content
                 ok = "DONE" in final.upper()
                 break
+            bad_streak = 0
             for call in calls:
                 if time.monotonic() - t0 > timeout_s:  # the cap holds inside a turn too
                     timed_out = True
@@ -199,8 +223,10 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
                 fname = call["function"]["name"]
                 try:
                     args = json.loads(call["function"].get("arguments") or "{}")
-                except json.JSONDecodeError:
-                    args = {}
+                    bad_args = None if isinstance(args, dict) else "arguments must be a JSON object"
+                    args = args if isinstance(args, dict) else {}
+                except json.JSONDecodeError as e:
+                    args, bad_args = {}, f"arguments are not valid JSON ({e})"
                 sname, tname = route.get(fname, ("?", fname))
                 label = f"{sname}:{tname}"
                 inner = args.get("tool") or args.get("name")
@@ -209,6 +235,8 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
                 b = time.monotonic()
                 if sname == "?":
                     text, err = f"unknown tool {fname}", True
+                elif bad_args:
+                    text, err = f"not run: {bad_args}", True
                 else:
                     try:
                         text, err = clients[sname].call(tname, args)
@@ -232,7 +260,8 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
         "model_s": round(llm_s, 1), "api_s": round(llm_s, 1), "turns": len(per_call), "cost_usd": 0.0,
         "tokens": {"input": sum(c["input"] for c in per_call), "output": sum(c["output"] for c in per_call),
                    "cache_write": 0, "cache_read": 0},
-        "per_call": per_call, "server_outages": outages, "rejected": rejected, "outage_s_excluded": round(outage_s, 1),
+        "per_call": per_call, "server_outages": outages, "rejected": rejected,
+        "malformed_calls": malformed, "outage_s_excluded": round(outage_s, 1),
         "tools": {k: {"calls": int(v["calls"]), "seconds": round(v["seconds"], 1), "errors": int(v["errors"])}
                   for k, v in sorted(stats.items(), key=lambda kv: -kv[1]["seconds"])},
         "final_text": final[-1500:],
