@@ -134,6 +134,21 @@ def _call_error(content: str) -> str:
     return "the call was not recognised."
 
 
+def _salvage_call(content: str, n: int) -> dict[str, Any] | None:
+    """A <tool_call> block whose JSON is complete but followed by surplus closing braces (a common
+    slip of small models on deeply nested arguments) as an OpenAI tool call; None otherwise."""
+    body = content.split("<tool_call>", 1)[1].split("</tool_call>", 1)[0].strip()
+    try:
+        call, end = json.JSONDecoder().raw_decode(body)
+    except json.JSONDecodeError:
+        return None
+    if body[end:].strip(" \n\t}") or not isinstance(call, dict) or not isinstance(call.get("name"), str):
+        return None
+    args = call.get("arguments", {})
+    return {"id": f"salvaged-{n}", "type": "function",
+            "function": {"name": call["name"], "arguments": json.dumps(args)}}
+
+
 def _trim(messages: list[dict[str, Any]]) -> None:
     tool_idx = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
     for i in tool_idx[:-KEEP_FULL]:
@@ -165,7 +180,7 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
     llm_s = tool_s = outage_s = 0.0
     outages = 0
     final, ok, timed_out, rejected = "", False, False, None
-    malformed = bad_streak = 0
+    malformed = bad_streak = salvaged = 0
     with open(transcript_path, "w", encoding="utf-8") as tr:
         for _turn in range(MAX_TURNS):
             if time.monotonic() - t0 > timeout_s:
@@ -204,9 +219,14 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
                              "input": usage.get("prompt_tokens", 0), "output": usage.get("completion_tokens", 0)})
             tr.write(json.dumps({"t": round(a - t0, 2), "assistant": msg, "usage": usage}) + "\n")
             calls = msg.get("tool_calls") or []
-            messages.append({"role": "assistant", "content": msg.get("content") or "",
-                             **({"tool_calls": calls} if calls else {})})
             content = msg.get("content") or ""
+            if not calls and "<tool_call>" in content:
+                fixed = _salvage_call(content, len(per_call))
+                if fixed:  # only surplus closing braces were wrong: run it as the call it is
+                    calls, content = [fixed], content.split("<tool_call>", 1)[0]
+                    salvaged += 1
+            messages.append({"role": "assistant", "content": content,
+                             **({"tool_calls": calls} if calls else {})})
             if not calls and "<tool_call>" in content and bad_streak < MAX_MALFORMED:
                 # a tool call the server's parser could not read (e.g. unbalanced JSON): say so,
                 # as a harness does for a bad call, instead of taking it as the final answer
@@ -267,7 +287,7 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
         "tokens": {"input": sum(c["input"] for c in per_call), "output": sum(c["output"] for c in per_call),
                    "cache_write": 0, "cache_read": 0},
         "per_call": per_call, "server_outages": outages, "rejected": rejected,
-        "malformed_calls": malformed, "outage_s_excluded": round(outage_s, 1),
+        "malformed_calls": malformed, "salvaged_calls": salvaged, "outage_s_excluded": round(outage_s, 1),
         "tools": {k: {"calls": int(v["calls"]), "seconds": round(v["seconds"], 1), "errors": int(v["errors"])}
                   for k, v in sorted(stats.items(), key=lambda kv: -kv[1]["seconds"])},
         "final_text": final[-1500:],
