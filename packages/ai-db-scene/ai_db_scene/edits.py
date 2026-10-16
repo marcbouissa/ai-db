@@ -30,7 +30,7 @@ from typing import Any
 OPS = ("add_object", "remove_object", "update_object", "move", "add_relation", "remove_relation",
        "update_setting")
 _OBJECT_FIELDS = ("category", "count", "hero", "detail", "grid", "material", "dynamic", "room", "seats",
-                  "seat_category")
+                  "seat_category", "variant")
 _SETTING_FIELDS = ("kind", "bounds_m", "style", "shape", "points", "floor_material", "wall_material", "rooms",
                    "mouldings")
 _RELATION_FIELDS = ("a", "rel", "b", "gap_m", "at_deg")

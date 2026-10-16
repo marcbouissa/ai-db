@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ai_db_scene.constants import LAYOUT_GRID_GAP_M, LAYOUT_MAX_BOUND_M, LAYOUT_MAX_COUNT
+from ai_db_scene.furniture_variants import coerce_variant, families
 from ai_db_scene.materials import STYLE_PALETTES, coerce_material, material_vocabulary, style_error
 from ai_db_scene.priors import SUPPORTS, categories
 from ai_db_scene.shapes import polygon_wall_names
@@ -79,6 +80,8 @@ class ObjectSpec:
     #: its chair (chairs solved as a separate block never ended up at the desks); 0 = none
     seats: int = 0
     seat_category: str | None = None  # default: the table's usual seat (layout.SEAT_CATEGORY)
+    #: design family of generated seating/tables (furniture_variants.FAMILIES); None = the scene's
+    variant: str | None = None
 
 
 @dataclass(frozen=True)
@@ -130,7 +133,8 @@ class SceneSpec:
                  **({"dynamic": True} if o.dynamic else {}),
                  **({"room": o.room} if o.room else {}),
                  **({"seats": o.seats} if o.seats else {}),
-                 **({"seat_category": o.seat_category} if o.seat_category else {})}
+                 **({"seat_category": o.seat_category} if o.seat_category else {}),
+                 **({"variant": o.variant} if o.variant else {})}
                 for o in self.objects
             ],
             "relations": [
@@ -220,6 +224,10 @@ def spec_schema() -> dict[str, Any]:
                         "seat_category": {"type": "string",
                                           "description": "the seats' category (default: the table's usual chair)"},
                         "detail": {"enum": list(DETAILS), "description": "modeling detail level; default standard"},
+                        "variant": {"type": "string",
+                                    "description": ("sofa/armchair/table/chair design (also as 'style'): one of "
+                                                    f"{families()}; default: one the setting.style suits, the "
+                                                    "same for the whole room")},
                         "material": {"type": "string", "description": ("surface material: kind or kind:variant, optional "
                                                                 ":#rrggbb tint, e.g. wood:walnut, fabric:linen:#6b7f99. "
                                                                 "Omit for the category default. Allowed: "
@@ -422,7 +430,10 @@ def _parse_objects(raw: Any, errors: list[str], notes: list[str] | None = None) 
             errors.append(f"{p}: expected object, got {_typename(o)}")
             continue
         _unknown_keys(p, o, ("id", "category", "count", "hero", "detail", "grid", "material", "dynamic", "room",
-                             "seats", "seat_category"), errors)
+                             "seats", "seat_category", "variant", "style"), errors)
+        variant, vnote = coerce_variant(o.get("variant", o.get("style")))
+        if vnote and notes is not None:
+            notes.append(f"{p}.variant: {vnote}")
         material = o.get("material")
         if material is not None:  # never refuse a spec over a material: coerce it, say so
             material, note = coerce_material(material)
@@ -474,7 +485,7 @@ def _parse_objects(raw: Any, errors: list[str], notes: list[str] | None = None) 
             seen.add(oid)
         if ok and grid_ok and mat_ok:
             out.append(ObjectSpec(str(oid), str(cat), count, hero, str(detail), grid, material, dynamic, room,
-                                  seats, seat_cat))
+                                  seats, seat_cat, variant))
     return out
 
 

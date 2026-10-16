@@ -64,6 +64,10 @@ Spec features worth knowing:
 
 - **Styles**: `setting.style` is one of `modern`, `scandinavian`, `industrial`, `rustic`,
   `classic`; it picks floor, wall and per-category materials. Explicit materials win.
+- **Furniture design**: sofas, armchairs, tables and dining chairs of one room share a design
+  family (`mid_century`, `chesterfield`, `lawson`, `modern_track`, `lounge`, `scandinavian`,
+  `bauhaus`, `danish_frame`, `glam`, `farmhouse`): one that `setting.style` suits, picked per scene
+  and build seed, so scenes differ and an edit keeps it. An object's `variant` (or `style`) names one.
 - **Materials**: `kind[:variant][:#hex]` strings (`wood:oak`, `fabric:weave:#5a5f66`,
   `metal:steel`), or `pbr:<preset>` for worn PBR looks (`pbr:worn_metal`, `pbr:rusty_steel`,
   `pbr:aged_brass`, `pbr:weathered_wood`, `pbr:scuffed_leather`, `pbr:dusty_plaster`, ...;

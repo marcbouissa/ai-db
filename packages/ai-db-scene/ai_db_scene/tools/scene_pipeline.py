@@ -868,7 +868,8 @@ def _variation(spec: SceneSpec, family: str, base_id: str, key: list[Any] | None
 
 GEOMETRY_MODES = ("generated", "boxes")
 #: parts a spec material must not repaint on generated furniture (wooden legs, the books)
-_KEEP_PARTS = {"sofa": ("leg",), "armchair": ("leg",), "bookshelf": ("book",),
+_KEEP_PARTS = {**{c: ("leg", "arm_frame", "arm_rib", "base_rail", "plinth", "pillow") for c in ("sofa", "armchair")},
+               "bookshelf": ("book",),
                # lamps: a "brass lamp" is brass metalwork under a fabric shade and a bulb
                **{c: ("shade", "bulb", "diffuser") for c in ("floor_lamp", "table_lamp", "pendant_lamp",
                                                              "wall_sconce", "ceiling_light")}}
@@ -969,6 +970,8 @@ def build_layout_commands(
     """
     import math
 
+    from ai_db_scene.furniture_variants import CATEGORY_FAMILY, fit_command, uses_families
+    from ai_db_scene.furniture_variants import piece as family_piece
     from ai_db_scene.providers import AssetFile, find_asset
 
     asset_map = asset_map or {}
@@ -1001,6 +1004,10 @@ def build_layout_commands(
     off = frame_offset(spec)
     reskin: list[dict[str, Any]] = []
     tag: list[dict[str, Any]] = []
+    fit: list[dict[str, Any]] = []
+    by_id = {o.id: o for o in spec.objects}
+    # pieces without a design family hash the key as before: the marker leaves them unchanged
+    plain_key = variation[:-1] if variation is not None and uses_families(variation) else variation
     for pl in placements:
         base = _SUFFIX.sub("", pl.id) if pl.id not in {o.id for o in spec.objects} else pl.id
         prior = priors.get(pl.category)
@@ -1038,7 +1045,7 @@ def build_layout_commands(
                         "rot_z": math.radians(pl.rotation_deg_z), "props": props})
         elif geometry == "generated" and pl.category == "tree" and not user_overrides("tree"):
             loc = _shift(pl.location, off)
-            seed = (_variation(spec, "tree", base, variation)["seed"] + zlib.crc32(pl.id.encode())) % (2**31)  # every tree differs
+            seed = (_variation(spec, "tree", base, plain_key)["seed"] + zlib.crc32(pl.id.encode())) % (2**31)  # every tree differs
             cmds.append({"type": "run_code", "params": {"code": _TREE.format(payload=json.dumps({
                 "name": pl.id, "dims": list(pl.dims), "seed": seed,
                 "location": [loc[0], loc[1], loc[2] - pl.dims[2] / 2], "rot_z": pl.rotation_deg_z}))}})
@@ -1047,11 +1054,21 @@ def build_layout_commands(
                 "name": f"{pl.id}_leaves", "material": material_for("tree", materials.get(base))}})
             tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
         elif geometry == "generated" and pl.category in _GENERATED and not user_overrides(pl.category):
-            family, params = _GENERATED[pl.category]
             loc = _shift(pl.location, off)
+            ospec = by_id.get(base)
+            if uses_families(variation) and pl.category in CATEGORY_FAMILY:  # a design family (furniture_variants)
+                got = family_piece(variation or [], pl.category, pl.dims, spec.setting.style,
+                                   ospec.variant if ospec else None, ospec.room if ospec else None)
+                gen = {"family": got["family"], "params": got["params"], "seed": got["seed"]}
+                props["design"] = got["design"]
+                fit.append({"name": pl.id, "dims": list(pl.dims)})
+                if ospec is not None and ospec.material is None and got["family"] in ("sofa", "armchair"):
+                    materials[base] = None  # the family's upholstery beats the style palette's one colour
+            else:
+                family, params = _GENERATED[pl.category]
+                gen = {"family": family, "params": params(*pl.dims), **_variation(spec, family, base, plain_key)}
             cmds.append({"type": "generate_asset", "params": {
-                "family": family, "params": params(*pl.dims), "name": pl.id,
-                **_variation(spec, family, base, variation),
+                **gen, "name": pl.id,
                 "location": [loc[0], loc[1], loc[2] - pl.dims[2] / 2],  # base centre
                 "rotation": [0.0, 0.0, pl.rotation_deg_z]}})
             tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
@@ -1079,6 +1096,8 @@ def build_layout_commands(
             cmds.append({"type": "apply_material", "params": {
                 "name": pl.id, "material": material_for(pl.category, materials.get(base))}})
         names.append(pl.id)
+    if fit:
+        cmds.append(fit_command(fit))
     if tag:
         cmds.append({"type": "run_code", "params": {"code": _FINALIZE.format(payload=json.dumps(tag))}})
     if reskin:
@@ -1658,7 +1677,11 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
     spec_id = remember_spec(spec)
     asked = spec  # before repairs: what the model asked for
     # furniture variants follow the first build's spec; edit_scene passes the stored key back
-    variation = args.get("variation") if isinstance(args.get("variation"), list) else variation_key(spec)
+    variation = args.get("variation") if isinstance(args.get("variation"), list) else None
+    if variation is None:  # a new scene: design families, seeded by the build (furniture_variants)
+        from ai_db_scene.furniture_variants import variation_marker
+
+        variation = [*variation_key(spec), variation_marker(int(args.get("seed", 0)))]
     render_opts = None
     if args.get("render") is not None:
         render_opts, render_err = render_options(args["render"])
