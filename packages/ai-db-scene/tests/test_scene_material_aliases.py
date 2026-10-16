@@ -57,3 +57,20 @@ def test_build_and_submit_report_the_coercion():
                                                  "objects": [{"id": "lamp", "category": "floor_lamp",
                                                               "material": "metal:brass"}]}})
     assert out["status"] == "ok" and out["notes"] == ["objects[0].material: material 'metal:brass' read as 'brass'"]
+
+
+@pytest.mark.parametrize(("raw", "want"), [
+    # qwen3-14b-local-aidb5 classroom: 28 of these fell back to the category default
+    ("wood_oak", "wood:oak"), ("fabric_black", "fabric:#151515"), ("plastic_blue", "plastic:#2f5d9e"),
+    ("glossy_white", "paint:#f2f2f0"), ("laminate_brown", "paint:#6b4a2f"), ("drywall", "plaster"),
+])
+def test_kind_underscore_variant_and_colour_are_read(raw, want):
+    got, note = coerce_material(raw)
+    assert got == want and note == f"material {raw!r} read as {want!r}"
+    assert material_error(got) is None
+
+
+def test_known_underscore_aliases_keep_their_reading():
+    assert coerce_material("stainless_steel")[0] == "metal:brushed"
+    assert coerce_material("unobtainium_metal")[0] is not None  # 'metal' is a kind: the kind itself
+    assert coerce_material("foo_bar")[0] is None

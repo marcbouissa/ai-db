@@ -205,6 +205,7 @@ MATERIAL_ALIASES: dict[str, str] = {
     "pine": "wood:pine", "mahogany": "wood:mahogany", "cherry": "wood:cherry", "beech": "wood:oak",
     "glass:mirror": "chrome", "mirror": "chrome", "acrylic": "plastic", "vinyl": "plastic", "asphalt": "concrete:#2f2f31",
     "cement": "concrete", "sand": "paint:#d8c49a", "water": "glass:tinted", "metal:gold_leaf": "gold",
+    "drywall": "plaster", "gypsum": "plaster",
 }
 
 
@@ -221,6 +222,16 @@ def coerce_material(value: object) -> tuple[str | None, str | None]:
     if not isinstance(value, str) or not value.strip():
         return None, f"material {value!r} is not a string; used the category default"
     raw = value.strip().lower().replace(" ", "_").replace("-", "_")
+    out, note = _coerce(raw, value)
+    if out is None and ":" not in raw and "_" in raw:
+        # kind_variant (qwen3-14b classroom: wood_oak, fabric_black, plastic_blue, glossy_white)
+        under, _ = _coerce(raw.replace("_", ":"), value)
+        if under is not None:
+            return under, f"material {value!r} read as {under!r}"
+    return out, note
+
+
+def _coerce(raw: str, value: str) -> tuple[str | None, str]:
     parts = raw.split(":")
     tints = [p for p in parts[1:] if _HEX.match(p)]
     names = [p for p in parts if not _HEX.match(p)]
@@ -244,6 +255,8 @@ def coerce_material(value: object) -> tuple[str | None, str | None]:
         out = names[0]  # an unknown variant: the kind itself
     if out is None and names and names[0] == "color" and tint:
         out = "color"
+    if out is None and tint:  # an unknown kind with a known colour (laminate:brown): keep the colour
+        out = "paint"
     if out is None:
         return None, (f"material {value!r} is not in the vocabulary; used the category default "
                       f"(kinds: {sorted(MATERIAL_KINDS)}, e.g. wood:walnut, fabric:linen:#6b7f99)")
