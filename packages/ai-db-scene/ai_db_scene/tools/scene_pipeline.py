@@ -83,6 +83,38 @@ def _parse_spec(raw: Any) -> tuple[SceneSpec | None, list[str]]:
     return validate_spec(raw)
 
 
+#: SceneSpec fields a call may pass at its top level instead of inside ``spec``
+SPEC_KEYS = ("setting", "objects", "relations", "lighting", "camera")
+
+
+def spec_arg(args: dict[str, Any]) -> tuple[Any, str | None]:
+    """(the spec a call passes, error). Weak models wrote ``build_scene({setting, objects})``
+    (26 calls rejected with "spec: Missing key") and ``spec`` as a JSON string: both are
+    accepted. A JSON error names its line and column."""
+    raw = args.get("spec")
+    for _ in range(2):  # a JSON string, or {"spec": {...}} wrapped twice
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError as e:
+                return None, (f"spec: not valid JSON ({e.msg} at line {e.lineno} column {e.colno}); "
+                              "pass the spec as an object")
+        if isinstance(raw, dict) and set(raw) == {"spec"}:
+            raw = raw["spec"]
+    if raw is None and any(k in args for k in SPEC_KEYS):
+        raw = {k: args[k] for k in SPEC_KEYS if k in args}
+    return raw, None
+
+
+def _spec_from_args(args: dict[str, Any]) -> tuple[SceneSpec | None, list[str]]:
+    raw, err = spec_arg(args)
+    if err:
+        return None, [err]
+    if raw is None:
+        return None, ["spec: missing; pass {spec: {setting, objects, relations}} (see get_scene_spec_schema)"]
+    return _parse_spec(raw)
+
+
 def parse_placements(raw: Any) -> list[Placement]:
     out = []
     for p in raw or []:
@@ -1473,14 +1505,14 @@ _EXAMPLE_SPEC: dict[str, Any] = {
 
 
 def _handle_submit_scene_spec(args: dict[str, Any]) -> Any:
-    spec, errors = _parse_spec(args.get("spec"))
+    spec, errors = _spec_from_args(args)
     if spec is None:
         return {"status": "invalid", "errors": errors}
     return {"status": "ok", "spec": spec.to_dict()}
 
 
 def _handle_solve_layout(args: dict[str, Any]) -> Any:
-    spec, errors = _parse_spec(args.get("spec"))
+    spec, errors = _spec_from_args(args)
     if spec is None:
         return {"status": "invalid", "errors": errors}
     kw: dict[str, Any] = {}
@@ -1497,7 +1529,7 @@ def _handle_solve_layout(args: dict[str, Any]) -> Any:
 
 
 def _handle_apply_layout(args: dict[str, Any]) -> Any:
-    spec, errors = _parse_spec(args.get("spec"))
+    spec, errors = _spec_from_args(args)
     if spec is None:
         return {"status": "invalid", "errors": errors}
     try:
@@ -1543,7 +1575,16 @@ def _handle_search_exemplars(args: dict[str, Any]) -> Any:
     return {"count": len(runs), "exemplars": [r.to_dict() | {"score": r.score} for r in runs]}
 
 
-_SPEC = {"type": "object", "description": "SceneSpec (see get_scene_spec_schema)"}
+_SPEC = {"type": ["object", "string"],
+         "description": "SceneSpec {setting, objects, relations} (see get_scene_spec_schema); a JSON string also works"}
+#: the spec's own fields, accepted at the top level when ``spec`` is left out
+_SPEC_FIELDS: dict[str, Any] = {
+    "spec": _SPEC,
+    "setting": {"type": "object", "description": "instead of spec: the spec's setting at the top level"},
+    "objects": {"type": "array", "items": {"type": "object"}, "description": "instead of spec: the spec's objects"},
+    "relations": {"type": "array", "items": {"type": "object"}, "description": "instead of spec: the spec's relations"},
+    "lighting": {"type": "object"}, "camera": {"type": "object"},
+}
 
 def _issues(res: dict[str, Any]) -> list[dict[str, Any]]:
     return list(((res or {}).get("result") or {}).get("issues", []))
@@ -1554,7 +1595,7 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
     from ai_db_scene.constants import BUILD_FIX_ROUNDS, BUILD_MAX_REPAIRS
     from ai_db_scene.repair import relax
 
-    spec, errors = _parse_spec(args.get("spec"))
+    spec, errors = _spec_from_args(args)
     if spec is None:
         return {"status": "invalid", "errors": errors}
     # furniture variants follow the first build's spec; edit_scene passes the stored key back
@@ -2255,11 +2296,11 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
      _handle_get_scene_spec_schema),
     ("submit_scene_spec",
      "Validate a SceneSpec; returns exact errors, or ok + the normalized spec",
-     {"type": "object", "properties": {"spec": _SPEC}, "required": ["spec"]},
+     {"type": "object", "properties": {**_SPEC_FIELDS}},
      _handle_submit_scene_spec),
     ("solve_layout",
      "Deterministically place every object of a SceneSpec; returns placements or the conflicting relations",
-     {"type": "object", "properties": {"spec": _SPEC, "seed": {"type": "integer"}}, "required": ["spec"]},
+     {"type": "object", "properties": {**_SPEC_FIELDS, "seed": {"type": "integer"}}},
      _handle_solve_layout),
     ("build_scene",
      ("One call from SceneSpec to finished scene: validates the spec, lays it out (repairing conflicts by "
@@ -2268,7 +2309,7 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
       "applies the validator's own fixes. Prefer this to solve_layout + apply_layout"),
      {"type": "object",
       "properties": {
-          "spec": _SPEC,
+          **_SPEC_FIELDS,
           "seed": {"type": "integer"},
           "geometry": {"enum": list(GEOMETRY_MODES)},
           "asset_map": {"type": "object", "description": "id|category -> {filepath, asset_name}"},
@@ -2296,8 +2337,7 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
                                                       "missing and counts that differ ('two armchairs')"},
           "exposure_check": {"type": "boolean",
                              "description": ("default true: a tiny probe render from the camera; the view exposure is "
-                                             "adjusted until the image is neither black nor blown out (report: exposure)")}},
-      "required": ["spec"]},
+                                             "adjusted until the image is neither black nor blown out (report: exposure)")}}},
      _handle_build_scene),
     ("edit_scene",
      ("Refactor a scene made by build_scene in ordered steps: add_object, remove_object, update_object "
@@ -2322,12 +2362,12 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
       "Tags custom props category/hero/support"),
      {"type": "object",
       "properties": {
-          "spec": _SPEC,
+          **_SPEC_FIELDS,
           "placements": {"type": "array", "items": {"type": "object"}, "description": "From solve_layout"},
           "asset_map": {"type": "object", "description": "id|category -> {filepath, asset_name}"},
           "geometry": {"enum": list(GEOMETRY_MODES),
                        "description": "generated (default): parametric furniture where a generator exists; boxes: placeholders only"}},
-      "required": ["spec", "placements"]},
+      "required": ["placements"]},
      _handle_apply_layout),
     ("record_run",
      "Persist a pipeline run record (brief, spec, placements, actions, validation reports, judge scores, cost, outcome)",
