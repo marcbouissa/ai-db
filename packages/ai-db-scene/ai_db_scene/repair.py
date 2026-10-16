@@ -81,6 +81,8 @@ def _grow(data: dict[str, Any], err: LayoutError, original_bounds: list[float]) 
 def relax(spec: dict[str, Any], err: LayoutError, original_bounds: list[float]) -> tuple[dict[str, Any], str] | None:
     """One edit that makes the conflict go away, as (new spec, description); None if out of ideas."""
     data = copy.deepcopy(spec)
+    if _ceiling_object(err) is not None:
+        return _relax_ceiling(data, err)
     m = re.search(r"main blockers: \d+x ([^;.]+)", str(err))
     if m and m.group(1).startswith("out of bounds"):
         # the object does not fit anywhere: dropping its relations cannot help, space can
@@ -104,8 +106,41 @@ def relax(spec: dict[str, Any], err: LayoutError, original_bounds: list[float]) 
     return None
 
 
+def _ceiling_object(err: LayoutError) -> str | None:
+    """The id of the ceiling-mounted object the solver could not place, if that is what failed."""
+    from ai_db_scene.priors import load_priors
+
+    m = re.search(r"cannot place '([^']+)' \((\w+),", str(err))
+    pr = load_priors().get(m.group(2)) if m else None
+    return m.group(1) if m and pr is not None and pr.support == "ceiling" else None
+
+
+def _relax_ceiling(data: dict[str, Any], err: LayoutError) -> tuple[dict[str, Any], str] | None:
+    """A ceiling object never grows the room (lightning aidb5: four lights centered_in room grew
+    a 50 x 30 m warehouse to 72 x 43 m and still failed). Drop its own relations (a free ceiling
+    object is spread over an even grid), else hang one fewer, else give up with a clear hint."""
+    iid = _ceiling_object(err)
+    ids = {o["id"] for o in data.get("objects", [])}
+    base = _base(iid or "", ids)
+    rels = data.get("relations", [])
+    mine = [r for r in rels if r.get("a") == base]
+    if mine:
+        data["relations"] = [r for r in rels if r.get("a") != base]
+        labels = ", ".join(f"'{r.get('a')} {r.get('rel')} {r.get('b')}'" for r in mine)
+        return data, f"'{base}' hangs on the ceiling grid instead of {labels} (a ceiling object never grows the room)"
+    for o in data.get("objects", []):
+        if o["id"] == base and o.get("count", 1) > 1 and not o.get("grid"):
+            o["count"] -= 1
+            return data, f"placed one '{base}' fewer ({o['count']} left)"
+    return None
+
+
 def explain(err: LayoutError, grown: bool) -> str:
     """What the model should change when repair gave up, in one sentence."""
+    iid = _ceiling_object(err)
+    if iid is not None:
+        return (f"ceiling object '{iid}' does not fit on the ceiling: use fewer or smaller ceiling objects, "
+                "or drop its relations so it goes on the ceiling grid (a bigger room is never the fix)")
     if space_bound(err):
         return ("the objects do not fit" + (" even in the enlarged room" if grown else "")
                 + ": use a larger setting.bounds_m, fewer or smaller objects, or a grid for repeated ones")

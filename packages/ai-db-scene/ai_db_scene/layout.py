@@ -261,6 +261,8 @@ class _Problem:
         self.W, self.D, self.H = spec.setting.bounds_m
         st = spec.setting
         self.shape = RoomShape(st.shape, self.W, self.D, st.points)
+        #: (free ceiling ids, grid cells) of ceiling_grid
+        self.ceiling_cache: tuple[tuple[str, ...], list[tuple[float, float]]] = ((), [])
         self.insts: dict[str, _Inst] = {}
         #: grid objects: id -> (rows, cols, gap x, gap y, cell dims). Solved as one block
         #: instance (relations apply to the block), expanded into cells by _to_placements.
@@ -611,6 +613,9 @@ class _Problem:
 
     def soft_cost(self, inst: _Inst, pose: _Pose, poses: dict[str, _Pose]) -> float:
         cost = 0.0
+        cells, at = ceiling_grid(self, inst)
+        if cells:  # a free ceiling light keeps to its grid cell
+            cost += math.hypot(pose.x - cells[at][0], pose.y - cells[at][1]) / max(self.W, self.D, 1.0)
         for r in self.by_a.get(inst.id, []):
             pb = poses.get(r.b)
             if pb is None:
@@ -687,6 +692,29 @@ class _Problem:
         return done
 
 
+def ceiling_grid(pr: _Problem, inst: _Inst) -> tuple[list[tuple[float, float]], int]:
+    """(cell centres, this instance's cell) of an even grid over the room for the ceiling objects
+    with no relation: four ceiling lights all ``centered_in room`` could never share the centre,
+    and the repair loop grew a 50 x 30 m warehouse to 72 x 43 m before giving up (lightning
+    aidb5). Indoor ceiling-mounted objects only; ([], 0) otherwise."""
+    if inst.prior.support != "ceiling" or pr.kind != "indoor":
+        return [], 0
+    free = sorted(i.id for i in pr.insts.values() if i.prior.support == "ceiling" and not pr.by_a.get(i.id))
+    if inst.id not in free:
+        return [], 0
+    key = tuple(free)
+    if pr.ceiling_cache[0] != key:
+        n = len(free)
+        aspect = pr.W / max(pr.D, 1e-6)
+        # fewest empty cells first, then the cell shape closest to the room's
+        cols = min(range(1, n + 1), key=lambda c: (c * math.ceil(n / c) - n,
+                                                   abs(math.log((c / math.ceil(n / c)) / aspect)), c))
+        rows = math.ceil(n / cols)
+        cells = [((c + 0.5) * pr.W / cols, (r + 0.5) * pr.D / rows) for r in range(rows) for c in range(cols)]
+        pr.ceiling_cache = (key, [xy for xy in cells if pr.shape.contains(xy[0], xy[1], 0.0)] or cells)
+    return pr.ceiling_cache[1], free.index(inst.id)
+
+
 def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.Random, n: int) -> list[_Pose]:
     rels = pr.by_a.get(inst.id, [])
     walls = [r for r in rels if r.rel == "against_wall"]
@@ -711,6 +739,7 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
     facing_targets = [poses[r.b] for r in rels if r.rel == "facing" and r.b in poses]
     out: list[_Pose] = []
     dface = pr.default_face(inst, poses)
+    ceiling_cells, ceiling_i = ceiling_grid(pr, inst) if prim is None and not rels else ([], 0)
     for k in range(n):
         yaw = rng.choice(yaws[: 4 if k % 2 == 0 else len(yaws)]) if yaws else 0.0
         if prim is not None and pb is not None and prim.rel in ("in_front_of", "beside") and k % 5 != 4:
@@ -728,6 +757,11 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
             f = _axes(ft.yaw)[1]
             dist = rng.uniform(0.5, max(pr.W, pr.D))
             x, y = ft.x + f[0] * dist, ft.y + f[1] * dist
+        elif prim is None and ceiling_cells and k < 2 * len(ceiling_cells):
+            # a free ceiling light: its own cell of an even grid first, then the other cells
+            x, y = ceiling_cells[(ceiling_i + k) % len(ceiling_cells)]
+            if k >= len(ceiling_cells):
+                x, y = x + rng.uniform(-0.25, 0.25), y + rng.uniform(-0.25, 0.25)
         elif prim is None or pb is None and prim.rel != "centered_in":
             x = rng.uniform(0, pr.W)
             y = rng.uniform(0, pr.D)

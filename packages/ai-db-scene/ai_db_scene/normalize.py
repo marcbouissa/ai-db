@@ -144,6 +144,8 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     objs = [o for o in d.get("objects") or [] if isinstance(o, dict)]
     _spread_centered(out, objs, setting, prior, notes)
     if indoor:
+        out = _ceiling_centres(out, objs, prior, notes)
+    if indoor:
         out = _wall_mounts(out, objs, shape, prior, notes)
     d["relations"] = out
     return d, notes
@@ -254,6 +256,23 @@ def _spread_centered(rels: list[Any], objs: list[dict[str, Any]], setting: dict[
         o["grid"] = {"rows": rows, "cols": cols, "gap_m": [round(gx, 2), round(gy, 2)]}
         o.pop("count")
         notes.append(f"'{oid}': {n} copies centered_in room spread as a {rows}x{cols} grid in the middle of the room")
+
+
+def _ceiling_centres(rels: list[Any], objs: list[dict[str, Any]], prior: Any, notes: list[str]) -> list[Any]:
+    """Several ceiling objects each ``centered_in room`` (light1..light4, lightning aidb5's
+    warehouse) cannot all hang at the centre: the repair loop grew the room until it gave up.
+    Their centre relation goes; the solver spreads free ceiling objects over an even grid."""
+    def only_centre(oid: Any) -> bool:
+        mine = [r for r in rels if isinstance(r, dict) and r.get("a") == oid]
+        return bool(mine) and all(r.get("rel") == "centered_in" and r.get("b") == "room" for r in mine)
+
+    ids = [o.get("id") for o in objs if getattr(prior(o.get("id")), "support", None) == "ceiling"
+           and only_centre(o.get("id"))]
+    if len(ids) < 2:
+        return rels
+    notes.append(f"{ids}: {len(ids)} ceiling objects centered_in room cannot share the centre; "
+                 "spread over the ceiling in an even grid")
+    return [r for r in rels if not (isinstance(r, dict) and r.get("a") in ids)]
 
 
 def _wall_mounts(rels: list[Any], objs: list[dict[str, Any]], shape: Any, prior: Any, notes: list[str]) -> list[Any]:

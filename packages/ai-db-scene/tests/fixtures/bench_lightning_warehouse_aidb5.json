@@ -1,0 +1,213 @@
+{
+ "source": "bench/_invalid/nemotron-3.5-lightning-free-aidb5__warehouse_provider504/transcript.jsonl line 7: the first aidb_build_scene call",
+ "args": {
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     50,
+     30,
+     12
+    ],
+    "style": "industrial",
+    "floor_material": "concrete",
+    "wall_material": "plaster:#e8e0d0",
+    "mouldings": []
+   },
+   "objects": [
+    {
+     "id": "rack1",
+     "category": "pallet_rack",
+     "count": 1,
+     "material": "metal:steel"
+    },
+    {
+     "id": "rack2",
+     "category": "pallet_rack",
+     "count": 1,
+     "material": "metal:steel"
+    },
+    {
+     "id": "rack3",
+     "category": "pallet_rack",
+     "count": 1,
+     "material": "metal:steel"
+    },
+    {
+     "id": "rack4",
+     "category": "pallet_rack",
+     "count": 1,
+     "material": "metal:steel"
+    },
+    {
+     "id": "pallet1",
+     "category": "pallet",
+     "count": 2,
+     "material": "wood:pine"
+    },
+    {
+     "id": "pallet2",
+     "category": "pallet",
+     "count": 2,
+     "material": "wood:pine"
+    },
+    {
+     "id": "crate1",
+     "category": "crate",
+     "count": 4,
+     "material": "wood:pine"
+    },
+    {
+     "id": "forklift1",
+     "category": "forklift",
+     "hero": true,
+     "material": "metal:steel"
+    },
+    {
+     "id": "workbench1",
+     "category": "workbench",
+     "material": "wood:oak"
+    },
+    {
+     "id": "barrier1",
+     "category": "safety_barrier",
+     "count": 1,
+     "material": "metal:chrome"
+    },
+    {
+     "id": "barrier2",
+     "category": "safety_barrier",
+     "count": 1,
+     "material": "metal:chrome"
+    },
+    {
+     "id": "barrier3",
+     "category": "safety_barrier",
+     "count": 1,
+     "material": "metal:chrome"
+    },
+    {
+     "id": "barrier4",
+     "category": "safety_barrier",
+     "count": 1,
+     "material": "metal:chrome"
+    },
+    {
+     "id": "light1",
+     "category": "ceiling_light",
+     "count": 1,
+     "material": "glass:clear"
+    },
+    {
+     "id": "light2",
+     "category": "ceiling_light",
+     "count": 1,
+     "material": "glass:clear"
+    },
+    {
+     "id": "light3",
+     "category": "ceiling_light",
+     "count": 1,
+     "material": "glass:clear"
+    },
+    {
+     "id": "light4",
+     "category": "ceiling_light",
+     "count": 1,
+     "material": "glass:clear"
+    }
+   ],
+   "relations": [
+    {
+     "a": "rack1",
+     "rel": "against_wall",
+     "b": "wall_north"
+    },
+    {
+     "a": "rack2",
+     "rel": "beside",
+     "b": "rack1",
+     "gap_m": 1.0
+    },
+    {
+     "a": "rack3",
+     "rel": "beside",
+     "b": "rack2",
+     "gap_m": 1.0
+    },
+    {
+     "a": "rack4",
+     "rel": "beside",
+     "b": "rack3",
+     "gap_m": 1.0
+    },
+    {
+     "a": "pallet1",
+     "rel": "on",
+     "b": "rack1"
+    },
+    {
+     "a": "pallet2",
+     "rel": "on",
+     "b": "rack2"
+    },
+    {
+     "a": "crate1",
+     "rel": "on",
+     "b": "pallet1"
+    },
+    {
+     "a": "forklift1",
+     "rel": "in_front_of",
+     "b": "rack1",
+     "gap_m": 2.0
+    },
+    {
+     "a": "workbench1",
+     "rel": "against_wall",
+     "b": "wall_south"
+    },
+    {
+     "a": "barrier1",
+     "rel": "against_wall",
+     "b": "wall_east"
+    },
+    {
+     "a": "barrier2",
+     "rel": "against_wall",
+     "b": "wall_west"
+    },
+    {
+     "a": "barrier3",
+     "rel": "against_wall",
+     "b": "wall_south"
+    },
+    {
+     "a": "barrier4",
+     "rel": "against_wall",
+     "b": "wall_north"
+    },
+    {
+     "a": "light1",
+     "rel": "centered_in",
+     "b": "room"
+    },
+    {
+     "a": "light2",
+     "rel": "centered_in",
+     "b": "room"
+    },
+    {
+     "a": "light3",
+     "rel": "centered_in",
+     "b": "room"
+    },
+    {
+     "a": "light4",
+     "rel": "centered_in",
+     "b": "room"
+    }
+   ]
+  }
+ }
+}
