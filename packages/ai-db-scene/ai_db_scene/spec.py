@@ -19,6 +19,7 @@ SHAPES = ("rect", "ellipse", "polygon")
 #: setting.mouldings -> the profile swept along the walls (profiles of the Blender addon)
 MOULDINGS = ("crown", "chair_rail", "baseboard")
 DETAILS = ("draft", "standard", "hero")
+MAX_SEATS = 12  # ObjectSpec.seats per instance
 SUPPORT_VOCAB = SUPPORTS  # floor | surface | wall | ceiling | ground: shared with the Blender builder
 NONRECT_WALL = "wall"  # implicit wall of ellipse/polygon rooms (with at_deg); polygons also have wall_1..wall_N
 ROOM = "room"  # target keyword for centered_in
@@ -74,6 +75,10 @@ class ObjectSpec:
     material: str | None = None  # see ai_db_scene.materials; None = the category default
     dynamic: bool = False  # build_scene physics: an active rigid body (else passive)
     room: str | None = None  # Setting.rooms id (required there, refused without rooms)
+    #: chairs at every instance (desk, table): the solver places them with it, so each desk has
+    #: its chair (chairs solved as a separate block never ended up at the desks); 0 = none
+    seats: int = 0
+    seat_category: str | None = None  # default: the table's usual seat (layout.SEAT_CATEGORY)
 
 
 @dataclass(frozen=True)
@@ -123,7 +128,9 @@ class SceneSpec:
                  **({"grid": {"rows": o.grid[0], "cols": o.grid[1], "gap_m": [o.grid[2], o.grid[3]]}} if o.grid else {}),
                  **({"material": o.material} if o.material else {}),
                  **({"dynamic": True} if o.dynamic else {}),
-                 **({"room": o.room} if o.room else {})}
+                 **({"room": o.room} if o.room else {}),
+                 **({"seats": o.seats} if o.seats else {}),
+                 **({"seat_category": o.seat_category} if o.seat_category else {})}
                 for o in self.objects
             ],
             "relations": [
@@ -205,6 +212,13 @@ def spec_schema() -> dict[str, Any]:
                         "room": {"type": "string", "description": "setting.rooms id (multi-room buildings only)"},
                         "dynamic": {"type": "boolean",
                                     "description": "build_scene physics: falls and moves (active rigid body)"},
+                        "seats": {"type": "integer", "minimum": 0, "maximum": MAX_SEATS,
+                                  "description": ("chairs at each instance of a desk/table (also each grid cell), "
+                                                  "placed with it: front and back sides, then the ends. Use this "
+                                                  "instead of a separate chair object, e.g. {id: desks, category: desk, "
+                                                  "grid: {rows: 3, cols: 4}, seats: 1}")},
+                        "seat_category": {"type": "string",
+                                          "description": "the seats' category (default: the table's usual chair)"},
                         "detail": {"enum": list(DETAILS), "description": "modeling detail level; default standard"},
                         "material": {"type": "string", "description": ("surface material: kind or kind:variant, optional "
                                                                 ":#rrggbb tint, e.g. wood:walnut, fabric:linen:#6b7f99. "
@@ -407,8 +421,8 @@ def _parse_objects(raw: Any, errors: list[str], notes: list[str] | None = None) 
         if not isinstance(o, dict):
             errors.append(f"{p}: expected object, got {_typename(o)}")
             continue
-        _unknown_keys(p, o, ("id", "category", "count", "hero", "detail", "grid", "material", "dynamic", "room"),
-                      errors)
+        _unknown_keys(p, o, ("id", "category", "count", "hero", "detail", "grid", "material", "dynamic", "room",
+                             "seats", "seat_category"), errors)
         material = o.get("material")
         if material is not None:  # never refuse a spec over a material: coerce it, say so
             material, note = coerce_material(material)
@@ -449,10 +463,18 @@ def _parse_objects(raw: Any, errors: list[str], notes: list[str] | None = None) 
         if room is not None and not isinstance(room, str):
             errors.append(f"{p}.room: expected a setting.rooms id, got {room!r}")
             ok = False
+        seats, seat_cat = o.get("seats", 0), o.get("seat_category")
+        if not isinstance(seats, int) or isinstance(seats, bool) or not 0 <= seats <= MAX_SEATS:
+            errors.append(f"{p}.seats: expected integer in [0, {MAX_SEATS}], got {seats!r}")
+            ok = False
+        if seat_cat is not None and (not isinstance(seat_cat, str) or seat_cat not in cats):
+            errors.append(f"{p}.seat_category: {seat_cat!r} is not a known category.{_suggest(str(seat_cat), cats)}")
+            ok = False
         if isinstance(oid, str):
             seen.add(oid)
         if ok and grid_ok and mat_ok:
-            out.append(ObjectSpec(str(oid), str(cat), count, hero, str(detail), grid, material, dynamic, room))
+            out.append(ObjectSpec(str(oid), str(cat), count, hero, str(detail), grid, material, dynamic, room,
+                                  seats, seat_cat))
     return out
 
 

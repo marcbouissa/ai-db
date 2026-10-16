@@ -120,6 +120,8 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             r.pop("at_deg")
         out.append(r)
     out = _rugs(out, ids, prior, notes)
+    out = _seats(d, out, objs, notes)
+    objs = [o for o in d.get("objects") or [] if isinstance(o, dict)]
     _spread_centered(out, objs, setting, prior, notes)
     if indoor:
         out = _wall_mounts(out, objs, shape, prior, notes)
@@ -158,6 +160,52 @@ def _rugs(rels: list[Any], ids: set[str], prior: Any, notes: list[str]) -> list[
             out[i] = {"a": rug, "rel": "centered_in", "b": x}
             notes.append(f"'{r['a']} {rel} {r['b']}' read as '{rug} centered_in {x}' (the rug lies under it)")
     return out
+
+
+#: categories a ``seats`` table may have, and the seats it may get
+_SEAT_CATS = ("chair", "dining_chair", "office_chair", "stool", "bar_stool")
+
+
+def _n(o: dict[str, Any]) -> int:
+    g = o.get("grid")
+    if isinstance(g, dict) and isinstance(g.get("rows"), int) and isinstance(g.get("cols"), int):
+        return int(g["rows"] * g["cols"])
+    c = o.get("count", 1)
+    return c if isinstance(c, int) and not isinstance(c, bool) else 1
+
+
+def _seats(d: dict[str, Any], rels: list[Any], objs: list[dict[str, Any]], notes: list[str]) -> list[Any]:
+    """Chairs as a block of their own next to a block of desks/tables (``chairs in_front_of desks``,
+    both grids; bench classroom: "chairs clustered apart from the desks", 2300x out of bounds) become
+    ``seats`` on the desks: the solver then puts a chair at every desk."""
+    from ai_db_scene.layout import SEAT_CATEGORY
+    from ai_db_scene.spec import MAX_SEATS
+
+    by_id = {o.get("id"): o for o in objs}
+    for r in list(rels):
+        if not isinstance(r, dict) or r.get("rel") not in ("in_front_of", "around", "beside"):
+            continue
+        chairs, table = by_id.get(r.get("a")), by_id.get(r.get("b"))
+        if chairs is None or table is None or chairs.get("category") not in _SEAT_CATS \
+                or table.get("category") not in SEAT_CATEGORY or table.get("seats"):
+            continue
+        nt, nc = _n(table), _n(chairs)
+        if not (table.get("grid") or nt > 1 or chairs.get("grid")) or nc % nt or not 1 <= nc // nt <= MAX_SEATS:
+            continue
+        cid, tid = chairs["id"], table["id"]
+        table["seats"] = nc // nt
+        if chairs["category"] != SEAT_CATEGORY[table["category"]]:
+            table["seat_category"] = chairs["category"]
+        d["objects"] = [o for o in d["objects"] if not (isinstance(o, dict) and o.get("id") == cid)]
+        objs.remove(chairs)
+        gone = [x for x in rels if isinstance(x, dict) and cid in (x.get("a"), x.get("b"))]
+        rels = [x for x in rels if x not in gone]
+        if isinstance(d.get("camera"), dict) and d["camera"].get("focus") == cid:
+            d["camera"]["focus"] = tid
+        labels = [" ".join(str(x.get(k)) for k in ("a", "rel", "b")) for x in gone]
+        notes.append(f"'{cid}' ({nc} {chairs['category']}) became seats: {nc // nt} on each '{tid}', so every "
+                     f"{table['category']} has its chair (dropped: {labels})")
+    return rels
 
 
 def _spread_centered(rels: list[Any], objs: list[dict[str, Any]], setting: dict[str, Any], prior: Any,

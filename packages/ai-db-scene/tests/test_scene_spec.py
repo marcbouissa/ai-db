@@ -106,7 +106,7 @@ def test_count_gap_hero_types_and_unknown_fields():
     errors = _bad(lambda d: d["objects"][0].update(count=0, hero="yes", color="red"))
     assert "objects[0].count: expected integer in [1, 50], got 0" in errors
     assert "objects[0].hero: expected boolean, got 'yes'" in errors
-    assert "objects[0].color: unknown field; allowed fields: ['id', 'category', 'count', 'hero', 'detail', 'grid', 'material', 'dynamic', 'room']" in errors
+    assert "objects[0].color: unknown field; allowed fields: ['id', 'category', 'count', 'hero', 'detail', 'grid', 'material', 'dynamic', 'room', 'seats', 'seat_category']" in errors
     errors = _bad(lambda d: d["relations"][1].update(gap_m=-2))
     assert errors == ["relations[1].gap_m: expected number >= 0, got -2"]
 

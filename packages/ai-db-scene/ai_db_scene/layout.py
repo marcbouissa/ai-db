@@ -86,6 +86,70 @@ class LayoutError(Exception):
 
 _SPREAD_GAP_M = 0.6  # between copies of one object placed along a curved wall at one at_deg
 
+#: ObjectSpec.seats: the chair that goes with a table when the spec names none
+SEAT_CATEGORY = {"desk": "chair", "dining_table": "dining_chair", "conference_table": "office_chair",
+                 "kitchen_island": "stool", "workbench": "stool", "picnic_table": "stool",
+                 "bar_counter": "bar_stool", "reception_desk": "office_chair"}
+_SEAT_GAP_M = 0.05  # table edge -> chair (pulled up to it, not tucked: no interpenetration)
+_SEAT_SPACING_M = 0.15  # between chairs along one side
+
+
+@dataclass(frozen=True)
+class _SeatPlan:
+    """A table with its chairs, solved as one box. Offsets are in the box's (right, front) frame
+    from the box centre; front chairs come first, then back, left, right."""
+
+    table: Dims
+    category: str
+    chair: Dims
+    table_off: tuple[float, float]
+    seats: tuple[tuple[float, float], ...]
+    box: Dims
+
+
+def _seat_plan(table: Dims, n: int, chair: Dims, category: str, back_first: bool = False) -> _SeatPlan:
+    """``back_first``: a table that *faces* something (desks facing the board) seats its first
+    chair behind it, so the person looks the same way; otherwise the front (a desk against a
+    wall faces into the room, its chair in front of it)."""
+    w, d, h = table
+    first, second = ("back", "front") if back_first else ("front", "back")
+    cw, cd = chair[0], chair[1]
+    pitch = cw + _SEAT_SPACING_M
+    cap_long = max(1, int((w + _SEAT_SPACING_M) // pitch))
+    cap_end = max(1, int((d + _SEAT_SPACING_M) // pitch))
+    sides = {"front": 0, "back": 0, "left": 0, "right": 0}
+    for _ in range(n):  # front/back alternately, then the ends, then overflow on the long sides
+        side = next((sd for sd, cap in ((first, cap_long), (second, cap_long)) if sides[sd] < cap
+                     and sides[sd] <= min(sides["front"], sides["back"])), None) \
+            or next((sd for sd, cap in (("left", cap_end), ("right", cap_end)) if sides[sd] < cap
+                     and sides[sd] <= min(sides["left"], sides["right"])), None) \
+            or (first if sides[first] <= sides[second] else second)
+        sides[side] += 1
+    reach = _SEAT_GAP_M + cd / 2
+    pts: list[tuple[float, float]] = []
+    for side in ("front", "back", "left", "right"):
+        k = sides[side]
+        for i in range(k):
+            along = (i - (k - 1) / 2) * pitch
+            if side == "front":
+                pts.append((along, d / 2 + reach))
+            elif side == "back":
+                pts.append((along, -d / 2 - reach))
+            elif side == "left":
+                pts.append((-w / 2 - reach, along))
+            else:
+                pts.append((w / 2 + reach, along))
+    xs = [-w / 2, w / 2] + [x + sgn * (cw / 2 if abs(y) > d / 2 else cd / 2) for x, y in pts for sgn in (-1, 1)]
+    ys = [-d / 2, d / 2] + [y + sgn * (cd / 2 if abs(y) > d / 2 else cw / 2) for x, y in pts for sgn in (-1, 1)]
+    rc, fc = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    return _SeatPlan(table, category, chair, (-rc, -fc), tuple((x - rc, y - fc) for x, y in pts),
+                     (max(xs) - min(xs), max(ys) - min(ys), h))
+
+
+def _local(p: _Pose, off: tuple[float, float]) -> tuple[float, float]:
+    r, f = _axes(p.yaw)
+    return p.x + off[0] * r[0] + off[1] * f[0], p.y + off[0] * r[1] + off[1] * f[1]
+
 
 @dataclass(frozen=True)
 class _Inst:
@@ -200,11 +264,23 @@ class _Problem:
         #: grid objects: id -> (rows, cols, gap x, gap y, cell dims). Solved as one block
         #: instance (relations apply to the block), expanded into cells by _to_placements.
         self.grids: dict[str, tuple[int, int, float, float, Dims]] = {}
+        #: objects with seats: their instances (grid cells) are solved as table + chairs boxes
+        self.seated: dict[str, _SeatPlan] = {}
         by_base: dict[str, list[str]] = {}
         for o in spec.objects:
             prior = priors.get(o.category)
             if prior is None:
                 raise LayoutError(f"object '{o.id}': category '{o.category}' has no prior", [o.id])
+            if o.seats:
+                sc = o.seat_category or SEAT_CATEGORY.get(o.category, "chair")
+                if sc not in priors:
+                    raise LayoutError(f"object '{o.id}': seat category '{sc}' has no prior", [o.id])
+                table = (dims_override.get(o.id + "_1") or dims_override.get(o.id) or prior.typical_m)
+                faces = any(r.a == o.id and r.rel == "facing" for r in spec.relations)
+                plan = _seat_plan(table, o.seats, priors[sc].typical_m, sc, back_first=faces)
+                self.seated[o.id] = plan
+                dims_override = {**dims_override, o.id: plan.box, o.id + "_1": plan.box,
+                                 **{f"{o.id}_{i}": plan.box for i in range(2, o.count + 1)}}
             if o.grid is not None:
                 rows, cols, gx, gy = o.grid
                 cell = dims_override.get(o.id + "_1") or dims_override.get(o.id) or prior.typical_m
@@ -357,6 +433,15 @@ class _Problem:
                 return poses[r.b].zb + self.insts[r.b].dims[2]
         return 0.0
 
+    def table_of(self, iid: str, pose: _Pose) -> tuple[_Pose, Dims]:
+        """The table itself inside a table + chairs box (what ``on``/``under``/``above`` mean)."""
+        inst = self.insts.get(iid)
+        plan = self.seated.get(inst.base) if inst is not None and inst.base not in self.grids else None
+        if plan is None:
+            return pose, inst.dims if inst is not None else (0.0, 0.0, 0.0)
+        x, y = _local(pose, plan.table_off)
+        return _Pose(x, y, pose.yaw, pose.zb), plan.table
+
     # ---- predicates ----------------------------------------------------------------------
     def rel_violation(self, r: _Rel, pa: _Pose, pb: _Pose | None) -> str | None:
         """Reason a hard relation is violated, else None. facing is soft: handled elsewhere."""
@@ -392,12 +477,16 @@ class _Problem:
         if pb is None:
             return None  # target not placed yet
         b = self.insts[r.b]
+        if r.rel in ("on", "under", "above") and b.base in self.seated:
+            pb, bdims = self.table_of(r.b, pb)  # on the table, not on its chairs
+        else:
+            bdims = b.dims
         if r.rel == "on":
-            if abs(pa.zb - (pb.zb + b.dims[2])) > 1e-3 or not _inside(pa, a.dims, pb, b.dims, LAYOUT_EPS_M):
+            if abs(pa.zb - (pb.zb + b.dims[2])) > 1e-3 or not _inside(pa, a.dims, pb, bdims, LAYOUT_EPS_M):
                 return f"'{r.label}': does not fit on top of '{r.b}'"
             return None
         if r.rel == "under":
-            if not _inside(pa, a.dims, pb, b.dims, LAYOUT_EPS_M):
+            if not _inside(pa, a.dims, pb, bdims, LAYOUT_EPS_M):
                 return f"'{r.label}': not within the footprint of '{r.b}'"
             return None
         if r.rel == "above" and a.prior.support == "ceiling":
@@ -568,6 +657,9 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
                 placed[0] if placed else None)
     pb = poses.get(prim.b) if prim is not None else None
     b = pr.insts.get(prim.b) if prim is not None else None
+    bdims = b.dims if b is not None else (0.0, 0.0, 0.0)
+    if prim is not None and pb is not None and b is not None and prim.rel in ("on", "under", "above"):
+        pb, bdims = pr.table_of(prim.b, pb)  # a seated table: its own top, not the chairs' box
     cards = [k * _HALF_PI for k in range(4)]
     yaws = list(cards)
     for r in rels:
@@ -601,8 +693,8 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
             if prim.rel == "above":
                 x, y = pb.x, pb.y  # snap_walls then moves A onto its wall: same position along it
             elif prim.rel in ("on", "under"):
-                x = pb.x + jit * max(b.dims[0] / 2 - inst.dims[0] / 2, 0) * rb[0] + rng.uniform(-1, 1) * (0 if k == 0 else max(b.dims[1] / 2 - inst.dims[1] / 2, 0)) * fb[0]
-                y = pb.y + jit * max(b.dims[0] / 2 - inst.dims[0] / 2, 0) * rb[1] + rng.uniform(-1, 1) * (0 if k == 0 else max(b.dims[1] / 2 - inst.dims[1] / 2, 0)) * fb[1]
+                x = pb.x + jit * max(bdims[0] / 2 - inst.dims[0] / 2, 0) * rb[0] + rng.uniform(-1, 1) * (0 if k == 0 else max(bdims[1] / 2 - inst.dims[1] / 2, 0)) * fb[0]
+                y = pb.y + jit * max(bdims[0] / 2 - inst.dims[0] / 2, 0) * rb[1] + rng.uniform(-1, 1) * (0 if k == 0 else max(bdims[1] / 2 - inst.dims[1] / 2, 0)) * fb[1]
             elif prim.rel == "around":
                 phi = 2 * math.pi * prim.ring_i / max(prim.ring_n, 1) + (0.0 if k % 3 == 0 else rng.uniform(0, 2 * math.pi))
                 u = (math.cos(phi), math.sin(phi))
@@ -752,28 +844,98 @@ def _grid_cells(pr: _Problem, iid: str, p: _Pose) -> list[tuple[str, float, floa
     return out
 
 
+def _seat_placements(pr: _Problem, base: str, boxes: list[_Pose]) -> list[Placement]:
+    """The chairs of seated object ``base``, given its table + chairs boxes in instance order."""
+    plan = pr.seated[base]
+    out: list[Placement] = []
+    k = 0
+    for i, p in enumerate(boxes):
+        tx, ty = _local(p, plan.table_off)
+        owner = base if len(boxes) == 1 else f"{base}_{i + 1}"
+        for off in plan.seats:
+            k += 1
+            x, y = _local(p, off)
+            out.append(Placement(f"{base}_seat_{k}", (round(x, 6), round(y, 6), round(p.zb + plan.chair[2] / 2, 6)),
+                                 round(math.degrees(_face_yaw(x, y, tx, ty)) % 360.0, 6), plan.chair, plan.category,
+                                 owner))
+    return out
+
+
 def _to_placements(pr: _Problem, poses: dict[str, _Pose]) -> list[Placement]:
     out = []
+    boxes: dict[str, list[_Pose]] = {}
     for iid, inst in pr.insts.items():
         p = poses[iid]
+        plan = pr.seated.get(inst.base)
         if iid in pr.grids:
             cell = pr.grids[iid][4]
             for cid, x, y in _grid_cells(pr, iid, p):
+                dims = cell
+                if plan is not None:  # the cell is a table + chairs box: the table sits inside it
+                    boxes.setdefault(inst.base, []).append(_Pose(x, y, p.yaw, p.zb))
+                    x, y = _local(_Pose(x, y, p.yaw, p.zb), plan.table_off)
+                    dims = plan.table
                 # no per-cell facing target: the block faces it, cells stay parallel (a desk at
                 # the end of a row faces the board wall, not the board's centre)
-                out.append(Placement(cid, (round(x, 6), round(y, 6), round(p.zb + cell[2] / 2, 6)),
-                                     round(math.degrees(p.yaw) % 360.0, 6), cell, inst.category, None))
+                out.append(Placement(cid, (round(x, 6), round(y, 6), round(p.zb + dims[2] / 2, 6)),
+                                     round(math.degrees(p.yaw) % 360.0, 6), dims, inst.category, None))
             continue
+        x, y, dims = p.x, p.y, inst.dims
+        if plan is not None:
+            boxes.setdefault(inst.base, []).append(p)
+            x, y = _local(p, plan.table_off)
+            dims = plan.table
         out.append(
             Placement(
                 iid,
-                (round(p.x, 6), round(p.y, 6), round(p.zb + inst.dims[2] / 2, 6)),
+                (round(x, 6), round(y, 6), round(p.zb + dims[2] / 2, 6)),
                 round(math.degrees(p.yaw) % 360.0, 6),
-                inst.dims,
+                dims,
                 inst.category,
                 _facing_target(pr, iid),
             )
         )
+    for base, bx in boxes.items():
+        out += _seat_placements(pr, base, bx)
+    return out
+
+
+def _seat_index(pid: str, base: str) -> int:
+    tail = pid[len(base) + 1:] if pid.startswith(base + "_") else ""
+    return int(tail) if tail.isdigit() else 0
+
+
+def _unseat(pr: _Problem, placements: list[Placement], issues: list[str]) -> list[Placement]:
+    """check_layout of seated objects: each table placement back to the centre of its table +
+    chairs box (what the solver placed), and every chair checked against where its table puts it."""
+    if not pr.seated:
+        return placements
+    out: list[Placement] = []
+    boxes: dict[str, list[tuple[int, _Pose]]] = {}
+    chairs: dict[str, Placement] = {}
+    for pl in placements:
+        base = next((b for b in pr.seated if pl.id == b or (pl.id.startswith(b + "_") and pl.id[len(b) + 1:].isdigit())), None)
+        if base is None:
+            if any(pl.id.startswith(b + "_seat_") and pl.id[len(b) + 6:].isdigit() for b in pr.seated):
+                chairs[pl.id] = pl
+            else:
+                out.append(pl)
+            continue
+        plan = pr.seated[base]
+        yaw = math.radians(pl.rotation_deg_z)
+        r, f = _axes(yaw)
+        ox, oy = plan.table_off
+        bx, by = pl.location[0] - ox * r[0] - oy * f[0], pl.location[1] - ox * r[1] - oy * f[1]
+        boxes.setdefault(base, []).append((_seat_index(pl.id, base), _Pose(bx, by, yaw, pl.location[2] - pl.dims[2] / 2)))
+        out.append(Placement(pl.id, (bx, by, pl.location[2]), pl.rotation_deg_z, pl.dims, pl.category, pl.facing_target))
+    for base, found in boxes.items():
+        for want in _seat_placements(pr, base, [p for _i, p in sorted(found, key=lambda t: t[0])]):
+            got = chairs.pop(want.id, None)
+            if got is None:
+                issues.append(f"hard: no placement for seat '{want.id}'")
+            elif math.dist(got.location[:2], want.location[:2]) > LAYOUT_REL_TOL_M:
+                issues.append(f"hard: seat '{want.id}' is not at its table")
+    issues += [f"hard: placement '{cid}' is not an object instance of the spec" for cid in chairs]
     return out
 
 
@@ -920,6 +1082,7 @@ def _check_rooms(spec: SceneSpec, placements: list[Placement], priors: dict[str,
 
     def base(pid: str) -> str:
         head, _, tail = pid.rpartition("_")
+        head = head.removesuffix("_seat") if tail.isdigit() and head.endswith("_seat") else head
         return head if tail.isdigit() and head else pid
 
     room_of = {o.id: o.room for o in spec.objects}
@@ -1000,6 +1163,7 @@ def check_layout(
     pr.blocked = list(blocked or [])
     poses: dict[str, _Pose] = {}
     issues: list[str] = []
+    placements = _unseat(pr, placements, issues)
     placements = _collapse_grids(pr, placements, issues)
     for pl in placements:
         if pl.id not in pr.insts:

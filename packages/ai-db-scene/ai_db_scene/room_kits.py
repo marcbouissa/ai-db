@@ -32,8 +32,9 @@ KITS: dict[str, tuple[tuple[str, ...], list[tuple[str, int, str]], list[str]]] =
     "kitchen": (("kitchen",), [
         ("kitchen_counter", 2, "against walls, forming a run"), ("stove", 1, "in the counter run"),
         ("sink", 1, "in the counter run, under a window if there is one"),
-        ("refrigerator", 1, "at the end of a run"), ("kitchen_island", 1, "centered_in the room if it is big"),
-        ("stool", 3, "at the island's overhang"), ("pendant_lamp", 2, "over the island")],
+        ("refrigerator", 1, "at the end of a run"), ("kitchen_island", 1, ("centered_in the room if it is big; "
+                                                                              "seats: 3 puts stools at it")),
+        ("pendant_lamp", 2, "above the island")],
         ["keep sink, stove and fridge within a few steps of each other"]),
     "bathroom": (("bathroom", "washroom", "restroom", "ensuite"), [
         ("toilet", 1, "against a wall"), ("sink", 1, "against a wall"),
@@ -41,17 +42,20 @@ KITS: dict[str, tuple[tuple[str, ...], list[tuple[str, int, str]], list[str]]] =
         ("shower_stall", 1, "in a corner"), ("wall_sconce", 1, "beside the mirror")],
         ["walls are often tiled or marble"]),
     "office": (("office", "study", "workspace", "home office"), [
-        ("desk", 1, "hero; facing into the room or toward a window"), ("office_chair", 1, "in_front_of the desk"),
+        ("desk", 1, ("hero; facing into the room or toward a window; seats: 1, seat_category: office_chair "
+                     "(the chair comes with the desk)")),
         ("monitor", 1, "on the desk"), ("filing_cabinet", 1, "beside the desk"),
         ("bookshelf", 1, "against a wall"), ("floor_lamp", 1, "near the desk"), ("potted_plant", 1, "in a corner"),
         ("whiteboard", 1, "on a wall")],
         ["light from the side, not behind the screen"]),
     "classroom": (("classroom", "lecture room", "school room"), [
-        ("whiteboard", 1, "against the front wall"), ("desk", 13, "a grid of student desks facing the board"),
-        ("chair", 13, "one per desk"), ("bookshelf", 1, "at the back"), ("wall_clock", 1, "on the back wall")],
+        ("whiteboard", 1, "against the front wall"),
+        ("desk", 13, ("a grid of student desks facing the board with seats: 1 (a chair at every desk; "
+                      "no separate chair object), plus a teacher desk with seats: 1")),
+        ("bookshelf", 1, "at the back"), ("wall_clock", 1, "on the back wall")],
         ["a teacher desk in front of the board, aisles between rows"]),
     "cafe": (("cafe", "café", "coffee shop", "bistro", "restaurant"), [
-        ("dining_table", 4, "small tables in a loose grid"), ("dining_chair", 8, "around the tables"),
+        ("dining_table", 4, "small tables in a loose grid, each with seats: 2 (the chairs come with the tables)"),
         ("kitchen_counter", 1, "the service counter against a wall"), ("pendant_lamp", 3, "over the counter and tables"),
         ("potted_plant", 2, "by the windows"), ("picture_frame", 2, "on the walls")],
         ["leave a clear path from the door to the counter"]),
