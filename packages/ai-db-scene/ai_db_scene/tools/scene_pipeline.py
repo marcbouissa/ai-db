@@ -1805,7 +1805,42 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
                 tags=["build_scene"], parent_scene_id=args.get("parent_scene_id"))
         except Exception as e:  # noqa: BLE001 - the scene is built; say why it was not saved
             out["snapshot_error"] = str(e)
+    out["verdict"], out["next"] = build_verdict(out)
     return out
+
+
+def build_verdict(out: dict[str, Any]) -> tuple[str, str]:
+    """(verdict, next): a one-line stopping rule for the calling model.
+
+    Weak models never stopped after a good build (mimo: 21-57 calls of renders and bounds
+    checks, 3 of 6 scenes timed out) or took built_with_issues as done. The verdict says done,
+    or names the single most important thing left; next says what to call, or to stop.
+    """
+    left = [i for i in out.get("issues_left") or [] if isinstance(i, dict)]
+    failed = out.get("failed_commands") or []
+    order = ([i for i in left if i.get("severity") == "blocking"]
+             + [i for i in left if i.get("check") == "dropped_relation"]
+             + [i for i in left if "the brief asks" in str(i.get("message", ""))])
+    sid = out.get("scene_id")
+    edit = f"edit_scene({{scene_id: '{sid}', steps: [...]}})" if sid else "build_scene with the fixed spec"
+    unsaved = ("" if sid or not out.get("snapshot_error") else
+               " The scene is built but was not saved (snapshot_error): call snapshot_scene to save it; "
+               "edit_scene needs a scene_id.")
+    if failed:
+        f = failed[0]
+        thing = f"{len(failed)} build command(s) failed, first: {f.get('type')}: {f.get('message')}"
+    elif order:
+        thing = str(order[0].get("message", order[0].get("check")))
+    else:
+        rest = f"; {len(left)} advisory warning(s) you may ignore" if left else ""
+        verdict = f"done: {out.get('objects')} objects built, nothing blocking{rest}"
+        where = f" and saved as {sid}" if sid else ""
+        return verdict, (f"The scene is finished{where}. Stop here and reply DONE: do not rebuild, "
+                         f"re-render or re-validate it.{unsaved}")
+    more = len(order) + len(failed) - 1
+    verdict = f"one thing to fix: {thing}" + (f" (+{more} more)" if more > 0 else "")
+    return verdict, (f"Fix only that with {edit} (ops: move, update_object, add_object, remove_object, "
+                     f"add_relation), then stop. If it does not matter for the brief, reply DONE.{unsaved}")
 
 
 #: faces per tagged object (its whole hierarchy, modifiers applied) and, over the budget, a
@@ -2340,25 +2375,13 @@ def _handle_export_scene(args: dict[str, Any]) -> Any:
 
 
 PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
-    ("get_scene_spec_schema",
-     "SceneSpec JSON schema + category vocabulary with typical dims + relations + up to 3 exemplar specs from past successful runs",
-     {"type": "object", "properties": {"brief": {"type": "string", "description": "Brief, to retrieve similar exemplars"},
-                                       "project": {"type": "string", "description": "lessons of this project (and global ones)"}}},
-     _handle_get_scene_spec_schema),
-    ("submit_scene_spec",
-     ("Validate a SceneSpec; returns exact errors, or ok + the normalized spec + a spec_id. The valid spec is "
-      "remembered: build_scene() with no arguments builds it"),
-     {"type": "object", "properties": {**_SPEC_FIELDS}},
-     _handle_submit_scene_spec),
-    ("solve_layout",
-     "Deterministically place every object of a SceneSpec; returns placements or the conflicting relations",
-     {"type": "object", "properties": {**_SPEC_FIELDS, "spec_id": _SPEC_ID, "seed": {"type": "integer"}}},
-     _handle_solve_layout),
     ("build_scene",
-     ("One call from SceneSpec to finished scene: validates the spec, lays it out (repairing conflicts by "
-      "dropping the conflicting relation, enlarging the setting or placing fewer copies, each change reported), "
-      "builds it with real furniture, materials, daylight, lamp lights and an eye-level camera, validates it and "
-      "applies the validator's own fixes. Prefer this to solve_layout + apply_layout"),
+     ("START HERE: one call builds the whole scene. build_scene({spec: {setting, objects, relations}}) "
+      "validates the spec (odd materials and relations are coerced, with notes), lays it out (repairing "
+      "conflicts, each change reported), builds it with real furniture, materials, daylight, lamps and an "
+      "eye-level camera, validates it, applies the validator's own fixes and saves it (scene_id). Read the "
+      "result's verdict and next: when the verdict says done, stop. build_scene() with no arguments rebuilds "
+      "the last valid spec. No need for submit_scene_spec, solve_layout or apply_layout first"),
      {"type": "object",
       "properties": {
           **_SPEC_FIELDS,
@@ -2392,6 +2415,21 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
                              "description": ("default true: a tiny probe render from the camera; the view exposure is "
                                              "adjusted until the image is neither black nor blown out (report: exposure)")}}},
      _handle_build_scene),
+    ("get_scene_spec_schema",
+     "SceneSpec JSON schema + category vocabulary with typical dims + relations + up to 3 exemplar specs from past successful runs",
+     {"type": "object", "properties": {"brief": {"type": "string", "description": "Brief, to retrieve similar exemplars"},
+                                       "project": {"type": "string", "description": "lessons of this project (and global ones)"}}},
+     _handle_get_scene_spec_schema),
+    ("submit_scene_spec",
+     ("Optional (build_scene validates too): check a SceneSpec; returns exact errors, or ok + the normalized "
+      "spec + a spec_id. The valid spec is remembered: build_scene() with no arguments builds it"),
+     {"type": "object", "properties": {**_SPEC_FIELDS}},
+     _handle_submit_scene_spec),
+    ("solve_layout",
+     ("Low-level, rarely needed: place every object of a SceneSpec; returns placements or the conflicting "
+      "relations. build_scene already does this (and repairs conflicts): do not loop solve_layout, call build_scene"),
+     {"type": "object", "properties": {**_SPEC_FIELDS, "spec_id": _SPEC_ID, "seed": {"type": "integer"}}},
+     _handle_solve_layout),
     ("edit_scene",
      ("Refactor a scene made by build_scene in ordered steps: add_object {object: {id, category}, relations}, "
       "remove_object {id}, update_object {id, set: count|material|hero|grid|category|detail}, "
@@ -2414,7 +2452,8 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
       "required": ["scene_id", "steps"]},
      _handle_edit_scene),
     ("apply_layout",
-     ("Create the room shell (floor + walls if indoor) and one object per placement in Blender as one batch; "
+     ("Low-level, rarely needed (build_scene does all of this): "
+      "create the room shell (floor + walls if indoor) and one object per placement in Blender as one batch; "
       "placeholder cubes unless asset_map maps an object id / category to {filepath, asset_name}. "
       "Tags custom props category/hero/support"),
      {"type": "object",
