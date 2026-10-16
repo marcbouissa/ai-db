@@ -140,6 +140,8 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             r.pop("at_deg")
         out.append(r)
     out = _rugs(out, ids, prior, notes)
+    if indoor:
+        out = _seating_group(out, objs, setting, notes)
     out = _seats(d, out, objs, notes)
     objs = [o for o in d.get("objects") or [] if isinstance(o, dict)]
     _spread_centered(out, objs, setting, prior, notes)
@@ -256,6 +258,94 @@ def _spread_centered(rels: list[Any], objs: list[dict[str, Any]], setting: dict[
         o["grid"] = {"rows": rows, "cols": cols, "gap_m": [round(gx, 2), round(gy, 2)]}
         o.pop("count")
         notes.append(f"'{oid}': {n} copies centered_in room spread as a {rows}x{cols} grid in the middle of the room")
+
+
+#: the opposite wall of a rect room
+_OPPOSITE = {"wall_north": "wall_south", "wall_south": "wall_north", "wall_east": "wall_west", "wall_west": "wall_east"}
+#: coffee table in front of the sofa (m): knee room, still in reach
+_SOFA_TABLE_GAP_M = 0.45
+#: armchair beside the coffee table's short end (m)
+_CHAIR_TABLE_GAP_M = 0.35
+#: armchair relations a model writes for "two armchairs" that the group reads naturally instead
+_LOOSE_CHAIR_RELS = ("beside", "facing", "in_front_of", "centered_in", "around")
+
+
+def _seating_group(rels: list[Any], objs: list[dict[str, Any]], setting: dict[str, Any], notes: list[str]) -> list[Any]:
+    """A living-room seating group: the sofa anchors it against a wall, the coffee table stands
+    centred in front of it, the rug lies centred under the table, armchairs sit at the table's
+    short ends facing it and the TV stand stands against the opposite wall facing the sofa.
+
+    Bench (Marc's review of the aidb5 living rooms): armchairs ``beside sofa`` sat at the sofa's
+    ends facing the same way, the table was off the sofa's axis, the rug ran half under one end
+    of the sofa or floated mid-room, the TV stand was off-axis. Only what the model left open or
+    wrote loosely is rewritten (each change in a note); explicit walls and other anchors stay."""
+    by_cat: dict[str, list[dict[str, Any]]] = {}
+    for o in objs:
+        if isinstance(o.get("id"), str) and isinstance(o.get("category"), str):
+            by_cat.setdefault(o["category"], []).append(o)
+    sofas, tables = by_cat.get("sofa", []), by_cat.get("coffee_table", [])
+    if len(sofas) != 1 or len(tables) != 1 or _n(sofas[0]) != 1 or _n(tables[0]) != 1:
+        return rels
+    sofa, table = sofas[0]["id"], tables[0]["id"]
+    out = [r for r in rels]
+
+    def mine(oid: str) -> list[dict[str, Any]]:
+        return [r for r in out if isinstance(r, dict) and r.get("a") == oid]
+
+    def wall_of(oid: str) -> str | None:
+        return next((r.get("b") for r in mine(oid) if r.get("rel") == "against_wall"), None)
+
+    def replace(oid: str, new: list[dict[str, Any]], why: str) -> None:
+        old = [" ".join(str(r.get(k)) for k in ("a", "rel", "b")) for r in mine(oid)]
+        now = [" ".join(str(r.get(k)) for k in ("a", "rel", "b")) for r in new]
+        if old == now:
+            return
+        at = next((i for i, r in enumerate(out) if isinstance(r, dict) and r.get("a") == oid), len(out))
+        rest = [r for r in out if not (isinstance(r, dict) and r.get("a") == oid)]
+        at -= sum(1 for r in out[:at] if isinstance(r, dict) and r.get("a") == oid)
+        out[:] = rest[:at] + new + rest[at:]  # where the object's first relation was: error indices hold
+        notes.append(f"seating group: '{oid}' {now}" + (f" instead of {old}" if old else "") + f" ({why})")
+
+    stands = [o["id"] for o in by_cat.get("tv_stand", []) + by_cat.get("media_console", []) if _n(o) == 1]
+    stand = stands[0] if len(stands) == 1 else None
+    rect = setting.get("shape", "rect") == "rect"
+    bounds = setting.get("bounds_m")
+    # 1. the sofa against a wall: opposite the TV stand's, else a long wall
+    if rect and wall_of(sofa) is None and not any(r.get("rel") in ("on", "centered_in", "in_front_of", "beside", "around")
+                                                  for r in mine(sofa)):
+        tv_wall = wall_of(stand) if stand else None
+        long_x = not (isinstance(bounds, list) and len(bounds) >= 2 and _num(bounds[0]) and _num(bounds[1])
+                      and float(bounds[0]) < float(bounds[1]))
+        w = _OPPOSITE.get(tv_wall or "") or ("wall_south" if long_x else "wall_west")
+        replace(sofa, [{"a": sofa, "rel": "against_wall", "b": w}], "the sofa anchors the group; it faces into the room")
+    # 2. the TV stand against the opposite wall, facing the sofa (on the sofa's axis)
+    sw = wall_of(sofa)
+    if stand and rect and sw in _OPPOSITE and not any(r.get("rel") in ("on", "beside", "in_front_of", "centered_in", "around")
+                                                      for r in mine(stand)):
+        replace(stand, [{"a": stand, "rel": "against_wall", "b": wall_of(stand) or _OPPOSITE[sw]},
+                        {"a": stand, "rel": "facing", "b": sofa}], "on the sofa's axis, facing it")
+    # 3. the coffee table centred in front of the sofa
+    trels = mine(table)
+    if not any(r.get("rel") == "in_front_of" for r in trels) and \
+            all((r.get("rel") == "facing" and r.get("b") == sofa) or (r.get("rel") == "centered_in" and r.get("b") == "room")
+                for r in trels):
+        replace(table, [{"a": table, "rel": "in_front_of", "b": sofa, "gap_m": _SOFA_TABLE_GAP_M}],
+                "centred in front of the sofa")
+    # 4. the rug centred under the coffee table (symmetric about the sofa's axis)
+    for rug in by_cat.get("rug", []):
+        rid = rug["id"]
+        if _n(rug) == 1 and all(r.get("rel") == "centered_in" for r in mine(rid)) and \
+                not any(isinstance(r, dict) and r.get("b") == rid for r in out):
+            replace(rid, [{"a": rid, "rel": "centered_in", "b": table}], "the rug lies centred under the coffee table")
+            break
+    # 5. armchairs at the coffee table's short ends, facing it
+    chairs = [o["id"] for o in by_cat.get("armchair", []) if _n(o) == 1]
+    if len(chairs) in (1, 2) and all(all(r.get("rel") in _LOOSE_CHAIR_RELS and r.get("b") in (sofa, table, stand, "room", *chairs)
+                                         for r in mine(c)) for c in chairs):
+        for c in chairs:
+            replace(c, [{"a": c, "rel": "beside", "b": table, "gap_m": _CHAIR_TABLE_GAP_M},
+                        {"a": c, "rel": "facing", "b": table}], "at the coffee table's short end, facing it")
+    return out
 
 
 def _ceiling_centres(rels: list[Any], objs: list[dict[str, Any]], prior: Any, notes: list[str]) -> list[Any]:

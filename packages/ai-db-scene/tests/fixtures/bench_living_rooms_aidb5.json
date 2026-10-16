@@ -1,0 +1,249 @@
+{
+ "source": {
+  "qwen": "bench/qwen3-14b-local-aidb5/living_room/aidb/scene_memory.db: the last version (build blender-1792181612-be84bf) spec",
+  "lightning": "bench/nemotron-3.5-lightning-free-aidb5/living_room/aidb/scene_memory.db: the last version (edit blender-1792184202-6900fc) spec"
+ },
+ "qwen": {
+  "setting": {
+   "kind": "indoor",
+   "bounds_m": [
+    6.0,
+    5.0,
+    3.0
+   ],
+   "style": "cozy",
+   "floor_material": "wood",
+   "wall_material": "plaster"
+  },
+  "objects": [
+   {
+    "id": "sofa",
+    "category": "sofa",
+    "count": 1,
+    "hero": true,
+    "detail": "standard",
+    "material": "velvet"
+   },
+   {
+    "id": "tv_stand",
+    "category": "tv_stand",
+    "count": 1,
+    "hero": true,
+    "detail": "standard",
+    "material": "wood"
+   },
+   {
+    "id": "coffee_table",
+    "category": "coffee_table",
+    "count": 1,
+    "hero": true,
+    "detail": "standard",
+    "material": "glass"
+   },
+   {
+    "id": "rug",
+    "category": "rug",
+    "count": 1,
+    "hero": true,
+    "detail": "standard",
+    "material": "fabric:weave"
+   },
+   {
+    "id": "armchair1",
+    "category": "armchair",
+    "count": 1,
+    "hero": true,
+    "detail": "standard",
+    "material": "leather"
+   },
+   {
+    "id": "armchair2",
+    "category": "armchair",
+    "count": 1,
+    "hero": true,
+    "detail": "standard",
+    "material": "leather"
+   },
+   {
+    "id": "floor_lamp",
+    "category": "floor_lamp",
+    "count": 1,
+    "hero": true,
+    "detail": "standard",
+    "material": "metal"
+   },
+   {
+    "id": "picture_frame",
+    "category": "picture_frame",
+    "count": 1,
+    "hero": false,
+    "detail": "standard",
+    "material": "wood"
+   }
+  ],
+  "relations": [
+   {
+    "a": "sofa",
+    "rel": "facing",
+    "b": "tv_stand"
+   },
+   {
+    "a": "coffee_table",
+    "rel": "in_front_of",
+    "b": "sofa"
+   },
+   {
+    "a": "rug",
+    "rel": "centered_in",
+    "b": "coffee_table"
+   },
+   {
+    "a": "armchair1",
+    "rel": "beside",
+    "b": "sofa"
+   },
+   {
+    "a": "armchair2",
+    "rel": "beside",
+    "b": "sofa"
+   },
+   {
+    "a": "floor_lamp",
+    "rel": "beside",
+    "b": "armchair1"
+   },
+   {
+    "a": "picture_frame",
+    "rel": "against_wall",
+    "b": "wall_north"
+   }
+  ],
+  "lighting": {
+   "daylight": true,
+   "lamp": true
+  },
+  "camera": {
+   "position": [
+    3,
+    2.5,
+    2.0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ "lightning": {
+  "setting": {
+   "kind": "indoor",
+   "bounds_m": [
+    6.0,
+    5.0,
+    2.7
+   ],
+   "style": "modern",
+   "floor_material": "wood:oak",
+   "wall_material": "plaster:#e8e0d0"
+  },
+  "objects": [
+   {
+    "id": "sofa",
+    "category": "sofa",
+    "count": 1,
+    "hero": false,
+    "detail": "standard",
+    "material": "fabric:linen:#8b5a2b"
+   },
+   {
+    "id": "tv_stand",
+    "category": "tv_stand",
+    "count": 1,
+    "hero": false,
+    "detail": "standard",
+    "material": "wood:oak"
+   },
+   {
+    "id": "tv",
+    "category": "tv",
+    "count": 1,
+    "hero": false,
+    "detail": "standard"
+   },
+   {
+    "id": "coffee_table",
+    "category": "coffee_table",
+    "count": 1,
+    "hero": false,
+    "detail": "standard",
+    "material": "wood:walnut"
+   },
+   {
+    "id": "rug",
+    "category": "rug",
+    "count": 1,
+    "hero": false,
+    "detail": "standard"
+   },
+   {
+    "id": "armchair1",
+    "category": "armchair",
+    "count": 1,
+    "hero": false,
+    "detail": "standard",
+    "material": "velvet:#3d5a80"
+   },
+   {
+    "id": "armchair2",
+    "category": "armchair",
+    "count": 1,
+    "hero": false,
+    "detail": "standard",
+    "material": "velvet:#3d5a80"
+   },
+   {
+    "id": "floor_lamp",
+    "category": "floor_lamp",
+    "count": 1,
+    "hero": false,
+    "detail": "standard"
+   }
+  ],
+  "relations": [
+   {
+    "a": "sofa",
+    "rel": "facing",
+    "b": "tv"
+   },
+   {
+    "a": "tv",
+    "rel": "on",
+    "b": "tv_stand"
+   },
+   {
+    "a": "armchair1",
+    "rel": "beside",
+    "b": "sofa"
+   },
+   {
+    "a": "armchair2",
+    "rel": "beside",
+    "b": "sofa"
+   },
+   {
+    "a": "floor_lamp",
+    "rel": "beside",
+    "b": "armchair1"
+   },
+   {
+    "a": "coffee_table",
+    "rel": "in_front_of",
+    "b": "sofa",
+    "gap_m": 0.5
+   }
+  ],
+  "lighting": {},
+  "camera": {}
+ }
+}

@@ -323,6 +323,13 @@ class _Problem:
             if rl.rel in _GAP_RELS and rl.b in self.insts:
                 k = frozenset((rl.a, rl.b))
                 self.pair_gap[k] = min(self.pair_gap.get(k, 1e9), rl.gap)
+        #: pairs placed against each other on purpose (A beside B, A beside B in_front_of C): no
+        #: breathing room between them, or the local search drifts armchairs off the coffee table
+        self.grouped: set[frozenset[str]] = set()
+        near = {(rl.a, rl.b) for rl in self.rels if rl.rel in ("beside", "in_front_of") and rl.b in self.insts}
+        for ga, gb in near:
+            self.grouped.add(frozenset((ga, gb)))
+            self.grouped |= {frozenset((ga, gc)) for gb2, gc in near if gb2 == gb}
         focus = spec.camera.get("focus")
         self.focus = by_base[focus][0] if focus in by_base else None
         self.under_pairs = {frozenset((r.a, r.b)) for r in self.rels if r.rel == "under"}
@@ -623,10 +630,26 @@ class _Problem:
             if r.rel == "facing":
                 err = self.facing_error_deg(r, pose, pb)
                 cost += err / 180.0 + (LAYOUT_FACING_MISS_COST if err > LAYOUT_FACING_TOL_DEG else 0.0)
-            elif r.rel == "in_front_of" and not any(q.rel == "facing" for q in self.by_a[inst.id]):
-                cost += 0.3 * _angdiff(pose.yaw, pb.yaw + math.pi) / math.pi  # A faces B
-            elif r.rel == "beside":
-                cost += 0.3 * _angdiff(pose.yaw, pb.yaw) / math.pi
+            elif r.rel in ("in_front_of", "beside"):
+                rb, fb = _axes(pb.yaw)
+                d = (pose.x - pb.x, pose.y - pb.y)
+                along, across = d[0] * rb[0] + d[1] * rb[1], d[0] * fb[0] + d[1] * fb[1]
+                b = self.insts[r.b]
+                if r.rel == "in_front_of":
+                    # centred on B's axis: a coffee table off the sofa's axis read as a mistake
+                    cost += 0.5 * abs(along) / max(b.dims[0] / 2, 0.1)
+                    if not any(q.rel == "facing" for q in self.by_a[inst.id]):
+                        cost += 0.3 * _angdiff(pose.yaw, pb.yaw + math.pi) / math.pi  # A faces B
+                else:
+                    # at B's side, level with it (armchairs at the coffee table's short ends,
+                    # not in front of it); front or back of B only when the sides are taken
+                    side = abs(along) - b.dims[0] / 2 > -LAYOUT_EPS_M
+                    cost += (0.0 if side else 0.5) + 0.3 * min(abs(across) / max(b.dims[1] / 2, 0.1), 1.0)
+                    if not any(q.rel == "facing" for q in self.by_a[inst.id]):
+                        cost += 0.3 * _angdiff(pose.yaw, pb.yaw) / math.pi
+            elif r.rel == "centered_in" and self.insts[r.a].flat:
+                # a rug under a table lies parallel to it
+                cost += 0.3 * min(_angdiff(pose.yaw, pb.yaw), _angdiff(pose.yaw, pb.yaw + math.pi)) / _HALF_PI
         dt = self.default_face(inst, poses)
         if dt is not None:
             cost += 0.3 * _angdiff(pose.yaw, _face_yaw(pose.x, pose.y, dt[0], dt[1])) / math.pi
@@ -644,7 +667,7 @@ class _Problem:
             if oid == inst.id:
                 continue
             o = self.insts[oid]
-            if o.flat or inst.flat or frozenset((inst.id, oid)) in self.pair_gap:
+            if o.flat or inst.flat or frozenset((inst.id, oid)) in self.pair_gap or frozenset((inst.id, oid)) in self.grouped:
                 continue
             s = _sep(pose, inst.dims, op, o.dims)
             if s < LAYOUT_BREATHING_M:
@@ -790,7 +813,7 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
                 span = _ext(b.dims, pb.yaw, tg)
                 off = 0.0 if k < len(dirs) else rng.uniform(-span, span)
                 x, y = pb.x + u[0] * dist + tg[0] * off, pb.y + u[1] * dist + tg[1] * off
-        if facing_targets and not walls and (prim is None or prim.rel in ("on", "under", "centered_in")) and k % 4 != 3:
+        if facing_targets and not walls and (prim is None or prim.rel in ("on", "under", "centered_in", "beside")) and k % 4 != 3:
             ft = facing_targets[k % len(facing_targets)]
             yaw = _face_yaw(x, y, ft.x, ft.y)
         elif dface is not None and not walls and k % 4 != 3:
