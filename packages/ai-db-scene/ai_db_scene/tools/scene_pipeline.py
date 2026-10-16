@@ -1555,6 +1555,7 @@ def _handle_submit_scene_spec(args: dict[str, Any]) -> Any:
     if spec is None:
         return {"status": "invalid", "errors": errors, "hint": _INVALID_HINT}
     return {"status": "ok", "spec_id": remember_spec(spec), "spec": spec.to_dict(),
+            **({"notes": list(spec.notes)} if spec.notes else {}),
             "next": "build_scene() (no arguments) builds this spec"}
 
 
@@ -1572,6 +1573,7 @@ def _handle_solve_layout(args: dict[str, Any]) -> Any:
     from ai_db_scene.layout import room_doors
 
     return {"status": "ok", "placements": [placement_to_dict(p) for p in pls],
+            **({"notes": list(spec.notes)} if spec.notes else {}),
             **({"doors": room_doors(spec)} if spec.setting.rooms else {})}
 
 
@@ -1657,7 +1659,7 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
             return {"status": "invalid", "errors": [render_err]}
     data = spec.to_dict()
     original = list(spec.setting.bounds_m)
-    repairs: list[str] = []
+    repairs: list[str] = list(spec.notes)  # what validation coerced (materials, relations) comes first
     seed = int(args.get("seed", 0))
     while True:
         spec, errors = _parse_spec(data)

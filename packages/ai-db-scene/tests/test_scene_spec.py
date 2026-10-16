@@ -134,8 +134,10 @@ def test_materials_are_validated_and_round_trip():
     assert spec is not None, errors
     assert spec.objects[0].material == "fabric:linen:#6b7f99"
     assert validate_spec(spec.to_dict())[0] == spec
-    bad = {**base, "objects": [{"id": "sofa", "category": "sofa", "material": "wood:teak"}]}
-    assert any("unknown wood variant 'teak'" in e for e in validate_spec(bad)[1])
+    odd = {**base, "objects": [{"id": "sofa", "category": "sofa", "material": "wood:teak"}]}
+    spec, errors = validate_spec(odd)  # coerced with a note, never a refused spec
+    assert spec is not None and spec.objects[0].material == "wood:walnut" and "wood:teak" in spec.notes[0]
+    assert "unknown wood variant 'teak'" in material_error("wood:teak")
     assert material_error("color") and material_error("wood:oak:#12345") and not material_error("ceramic")
     # every category has a valid default
     assert set(categories()) <= set(CATEGORY_MATERIALS)

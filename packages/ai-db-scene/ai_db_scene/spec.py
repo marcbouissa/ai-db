@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ai_db_scene.constants import LAYOUT_GRID_GAP_M, LAYOUT_MAX_BOUND_M, LAYOUT_MAX_COUNT
-from ai_db_scene.materials import STYLE_PALETTES, material_error, material_vocabulary, style_error
+from ai_db_scene.materials import STYLE_PALETTES, coerce_material, material_vocabulary, style_error
 from ai_db_scene.priors import SUPPORTS, categories
 from ai_db_scene.shapes import polygon_wall_names
 
@@ -92,6 +92,9 @@ class SceneSpec:
     relations: tuple[Relation, ...] = ()
     lighting: dict[str, Any] = field(default_factory=dict)
     camera: dict[str, Any] = field(default_factory=dict)
+    #: what validation rewrote instead of refusing (a material alias, a coerced relation), for
+    #: the caller to report; not part of the spec itself (to_dict leaves it out)
+    notes: tuple[str, ...] = field(default=(), compare=False)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SceneSpec:
@@ -273,7 +276,7 @@ def _suggest(value: str, allowed: list[str]) -> str:
     return f" Did you mean '{close[0]}'?" if close else ""
 
 
-def _parse_setting(raw: Any, errors: list[str]) -> Setting | None:
+def _parse_setting(raw: Any, errors: list[str], notes: list[str] | None = None) -> Setting | None:
     if not isinstance(raw, dict):
         errors.append(f"setting: expected object, got {_typename(raw)}")
         return None
@@ -283,11 +286,11 @@ def _parse_setting(raw: Any, errors: list[str]) -> Setting | None:
     mats = {}
     for key in ("floor_material", "wall_material"):
         if raw.get(key) is not None:
-            err = material_error(raw[key])
-            if err:
-                errors.append(f"setting.{key}: {err}")
-            else:
-                mats[key] = raw[key]
+            mat, note = coerce_material(raw[key])
+            if note and notes is not None:
+                notes.append(f"setting.{key}: {note}")
+            if mat:
+                mats[key] = mat
     kind = raw.get("kind")
     if kind not in SETTING_KINDS:
         errors.append(f"setting.kind: {kind!r} is not allowed; allowed values: {list(SETTING_KINDS)}")
@@ -392,7 +395,7 @@ def _parse_rooms(raw: Any, kind: Any, shape: Any, bounds: tuple[float, float, fl
     return tuple(out)
 
 
-def _parse_objects(raw: Any, errors: list[str]) -> list[ObjectSpec]:
+def _parse_objects(raw: Any, errors: list[str], notes: list[str] | None = None) -> list[ObjectSpec]:
     if not isinstance(raw, list) or not raw:
         errors.append(f"objects: expected a non-empty list, got {raw!r}" if raw is not None else "objects: required field is missing")
         return []
@@ -407,9 +410,11 @@ def _parse_objects(raw: Any, errors: list[str]) -> list[ObjectSpec]:
         _unknown_keys(p, o, ("id", "category", "count", "hero", "detail", "grid", "material", "dynamic", "room"),
                       errors)
         material = o.get("material")
-        mat_ok = material is None or material_error(material) is None
-        if not mat_ok:
-            errors.append(f"{p}.material: {material_error(material)}")
+        if material is not None:  # never refuse a spec over a material: coerce it, say so
+            material, note = coerce_material(material)
+            if note and notes is not None:
+                notes.append(f"{p}.material: {note}")
+        mat_ok = True
         grid, grid_ok = _parse_grid(p, o.get("grid"), o.get("count"), errors)
         oid, cat, hero = o.get("id"), o.get("category"), o.get("hero", False)
         count = o.get("count", grid[0] * grid[1] if grid else 1)
@@ -544,14 +549,15 @@ def validate_spec(data: Any) -> tuple[SceneSpec | None, list[str]]:
     if not isinstance(data, dict):
         return None, [f"<root>: expected object, got {_typename(data)}"]
     errors: list[str] = []
+    notes: list[str] = []
     _unknown_keys("<root>", data, ("setting", "objects", "relations", "lighting", "camera"), errors)
     if "setting" not in data:
         errors.append("setting: required field is missing")
     if "objects" not in data:
         errors.append("objects: required field is missing")
-    setting = _parse_setting(data["setting"], errors) if "setting" in data else None
+    setting = _parse_setting(data["setting"], errors, notes) if "setting" in data else None
     objs_present = "objects" in data
-    objs = _parse_objects(data.get("objects"), errors) if objs_present else []
+    objs = _parse_objects(data.get("objects"), errors, notes) if objs_present else []
     raw_objs = data.get("objects")
     declared = [o["id"] for o in raw_objs if isinstance(o, dict) and isinstance(o.get("id"), str)] if isinstance(raw_objs, list) else []
     rels = _parse_relations(data.get("relations"), declared, setting, errors) if setting is not None or not errors else []
@@ -570,4 +576,4 @@ def validate_spec(data: Any) -> tuple[SceneSpec | None, list[str]]:
         _check_rooms(setting, objs, rels, errors)
     if errors or setting is None:
         return None, errors
-    return SceneSpec(setting, tuple(objs), tuple(rels), lighting, camera), []
+    return SceneSpec(setting, tuple(objs), tuple(rels), lighting, camera, tuple(notes)), []

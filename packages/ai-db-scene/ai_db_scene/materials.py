@@ -163,14 +163,94 @@ def material_error(value: object) -> str | None:
         return f"unknown material kind {kind!r}; allowed: {sorted(MATERIAL_KINDS)}"
     variants = MATERIAL_KINDS[kind]
     if rest and not _HEX.match(rest[0]):
-        if rest[0] not in variants or rest[0] == "":
-            return f"unknown {kind} variant {rest[0]!r}; allowed: {[v for v in variants if v]}"
+        if variants == ("",):
+            return f"'{kind}' takes no variant; use '{kind}' or '{kind}:#rrggbb', got {value!r}"
+        if rest[0] not in variants:
+            return f"unknown {kind} variant {rest[0]!r}; allowed: {list(variants)}"
         rest = rest[1:]
     if kind == "color" and not rest:
         return "color needs a tint: 'color:#rrggbb'"
     if len(rest) > 1 or (rest and not _HEX.match(rest[0])):
         return f"after kind[:variant] only one ':#rrggbb' tint is allowed, got {value!r}"
     return None
+
+
+#: colour names weak models put where a variant or tint goes ("fabric:blue")
+COLOUR_NAMES: dict[str, str] = {
+    "white": "#f2f2f0", "black": "#151515", "grey": "#808080", "gray": "#808080", "red": "#a8322d",
+    "green": "#4a7a3a", "blue": "#2f5d9e", "navy": "#1f2f55", "yellow": "#e0b830", "orange": "#d9752b",
+    "brown": "#6b4a2f", "beige": "#d8c8a8", "cream": "#efe6d2", "pink": "#d98a9a", "purple": "#6b3f7a",
+    "teal": "#2f7a7a", "tan": "#c0a080", "charcoal": "#36393d", "ivory": "#f4efe1", "olive": "#6b6b35",
+    "burgundy": "#6b1f2a", "gold": "#c9a227", "silver": "#c0c0c0",
+}
+#: what weak models wrote -> a vocabulary material (bench: metal:brass in 11 scenes, stone:marble,
+#: wool, terracotta, grass, cardboard, brick, ...). Kinds and ``kind:variant`` forms both.
+MATERIAL_ALIASES: dict[str, str] = {
+    "metal:brass": "brass", "metal:gold": "gold", "metal:bronze": "metal:copper", "bronze": "metal:copper",
+    "metal:silver": "chrome", "silver": "chrome", "metal:aluminium": "metal:brushed",
+    "metal:aluminum": "metal:brushed", "aluminium": "metal:brushed", "aluminum": "metal:brushed",
+    "metal:iron": "metal:steel", "iron": "metal:steel", "steel": "metal:steel", "copper": "metal:copper",
+    "stainless_steel": "metal:brushed", "metal:stainless": "metal:brushed", "metal:black": "metal:steel:#202020",
+    "stone:marble": "marble", "stone:granite": "stone:#5f5b57", "granite": "stone:#5f5b57",
+    "stone:slate": "stone:#4a4f55", "slate": "stone:#4a4f55", "brick": "stone:#8a4b3a",
+    "stone:brick": "stone:#8a4b3a", "tile": "ceramic", "porcelain": "ceramic", "terracotta": "ceramic:#b5603a",
+    "clay": "ceramic:#b5603a", "fabric:wool": "fabric:weave", "wool": "fabric:weave", "cotton": "fabric:weave",
+    "fabric:cotton": "fabric:weave", "linen": "fabric:linen", "canvas": "fabric:canvas", "denim": "fabric:denim",
+    "carpet": "fabric:weave", "silk": "velvet", "fabric:silk": "velvet", "suede": "leather",
+    "grass": "foliage", "leaves": "foliage", "tree": "foliage", "plant": "foliage", "moss": "foliage:#4a6b30",
+    "cardboard": "paint:#b08a5a", "paper": "paint:#efeadc", "wood:beech": "wood:oak", "wood:maple": "wood:oak",
+    "wood:ash": "wood:oak", "wood:birch": "wood:pine", "wood:teak": "wood:walnut", "wood:ebony": "wood:dark",
+    "wood:light": "wood:pine", "wood:natural": "wood:oak", "oak": "wood:oak", "walnut": "wood:walnut",
+    "pine": "wood:pine", "mahogany": "wood:mahogany", "cherry": "wood:cherry", "beech": "wood:oak",
+    "glass:mirror": "chrome", "mirror": "chrome", "acrylic": "plastic", "vinyl": "plastic", "asphalt": "concrete:#2f2f31",
+    "cement": "concrete", "sand": "paint:#d8c49a", "water": "glass:tinted", "metal:gold_leaf": "gold",
+}
+
+
+def coerce_material(value: object) -> tuple[str | None, str | None]:
+    """(a valid material or None for the category default, a note on what changed).
+
+    One odd material string used to refuse the whole spec (46 errors in 22 bench scenes); this
+    maps the intent onto the vocabulary instead: aliases (``metal:brass`` -> ``brass``), a kind
+    used as a variant, colour names as tints (``fabric:blue`` -> ``fabric:#2f5d9e``), an unknown
+    variant -> the kind itself. What still makes no sense falls back to the category default.
+    """
+    if material_error(value) is None:
+        return str(value), None
+    if not isinstance(value, str) or not value.strip():
+        return None, f"material {value!r} is not a string; used the category default"
+    raw = value.strip().lower().replace(" ", "_").replace("-", "_")
+    parts = raw.split(":")
+    tints = [p for p in parts[1:] if _HEX.match(p)]
+    names = [p for p in parts if not _HEX.match(p)]
+    whole = ":".join(names[:2])
+    tint = tints[0] if tints else None
+    if whole not in MATERIAL_ALIASES:  # "metal:gold" is an alias, "fabric:gold" a colour
+        tint = tint or next((COLOUR_NAMES[p] for p in names[1:] if p in COLOUR_NAMES), None)
+        names = [p for p in names if p not in COLOUR_NAMES or p == names[0]]
+    candidates = [whole, ":".join(names[:2]), names[0], *names[1:]] if names else []
+    out: str | None = None
+    for c in candidates:
+        if c in MATERIAL_ALIASES:
+            out = MATERIAL_ALIASES[c]
+            break
+        if material_error(c) is None and c != "color":
+            out = c
+            break
+    if out is None and names and names[0] in COLOUR_NAMES:  # a bare colour name
+        out, tint = "paint", COLOUR_NAMES[names[0]]
+    if out is None and names and names[0] in MATERIAL_KINDS and names[0] != "color":
+        out = names[0]  # an unknown variant: the kind itself
+    if out is None and names and names[0] == "color" and tint:
+        out = "color"
+    if out is None:
+        return None, (f"material {value!r} is not in the vocabulary; used the category default "
+                      f"(kinds: {sorted(MATERIAL_KINDS)}, e.g. wood:walnut, fabric:linen:#6b7f99)")
+    if tint and ":#" not in out:
+        out = f"{out}:{tint}"
+    if material_error(out) is not None:  # e.g. an alias already tinted plus another tint
+        out = out.split(":#")[0]
+    return out, f"material {value!r} read as {out!r}"
 
 
 #: flat colour for each newer kind when the connected addon predates it
