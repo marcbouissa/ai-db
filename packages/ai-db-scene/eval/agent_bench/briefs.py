@@ -59,6 +59,17 @@ BRIEFS: dict[str, dict] = {
                       ("safety barriers", 2, ("barrier", "railing", "guard")),
                       ("ceiling lights", 2, ("ceiling", "light", "lamp"))],
     },
+    "beach_cove": {
+        "brief": ("A tropical beach cove outdoors: a sandy beach sloping into calm turquoise water, "
+                  "five palm trees, dense green bushes and ferns along the back, a wooden boardwalk "
+                  "from the bushes to the water, two sun loungers under a parasol, and a few rocks "
+                  "at the water's edge."),
+        "checklist": [("sand", 1, ("sand", "beach")), ("water", 1, ("water", "sea", "ocean", "lagoon")),
+                      ("palm trees", 5, ("palm", "tree")), ("bushes", 3, ("bush", "shrub", "fern", "hedge")),
+                      ("boardwalk", 1, ("boardwalk", "walkway", "deck", "path")),
+                      ("sun loungers", 2, ("lounger", "deckchair", "sunbed")),
+                      ("parasol", 1, ("parasol", "umbrella")), ("rocks", 2, ("rock", "stone", "boulder"))],
+    },
 }
 
 TASK = """Build this 3D scene in Blender: {brief}

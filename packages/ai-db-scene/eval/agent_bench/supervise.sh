@@ -9,7 +9,7 @@ args=("$@")
 arms=("$@"); [ "$1" = "-j" ] && arms=("${@:3}")
 missing() {
   n=0
-  for a in "${arms[@]}"; do for b in living_room classroom cafe round_lobby park_corner warehouse; do
+  for a in "${arms[@]}"; do for b in living_room classroom cafe round_lobby park_corner warehouse beach_cove; do
     [ -f "bench/$a/$b/metrics.json" ] || n=$((n + 1)); done; done
   echo $n
 }

@@ -17,7 +17,7 @@ export -f one
 # apart: parallel slots hold different models, which spreads the free tier's per-model limits.
 python3 - "$@" <<'PY' | xargs -P "$jobs" -L 1 bash -c 'one "$0" "$1"'
 import os, sys
-briefs = ["living_room", "classroom", "cafe", "round_lobby", "park_corner", "warehouse"]
+briefs = ["living_room", "classroom", "cafe", "round_lobby", "park_corner", "warehouse", "beach_cove"]
 arms = sys.argv[1:]
 arms = [a for a in arms if a.endswith("-raw")] + [a for a in arms if not a.endswith("-raw")]
 todo = {a: [b for b in briefs if not os.path.exists(f"bench/{a}/{b}/metrics.json")] for a in arms}
