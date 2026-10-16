@@ -13,19 +13,31 @@ BLENDER = os.path.expanduser("~/bin/blender")
 BLENDER_MCP = os.path.expanduser("~/GitRepos/blender_mcp")
 
 
+def _port_open(port: int) -> bool:
+    with socket.socket() as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 def start(port: int, log_path: str, blend: str | None = None) -> subprocess.Popen:
+    """A fresh Blender listening on ``port``. Fails rather than hand back another run's Blender:
+    the port must be free before, and the new process must be the one that bound it."""
+    if _port_open(port):
+        raise RuntimeError(f"port {port} is already in use: refusing to share another run's Blender")
     log = open(log_path, "ab")  # noqa: SIM115 - lives as long as the process
+    log_start = log.tell()
     proc = subprocess.Popen(
         [BLENDER, "-b", *([blend] if blend else ["--factory-startup"]), "-P", "tools/serve_headless.py", "--",
          "--port", str(port), "--from-repo"],
         cwd=BLENDER_MCP, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     deadline = time.time() + 90
     while time.time() < deadline:
-        with socket.socket() as s:
-            if s.connect_ex(("127.0.0.1", port)) == 0:
-                return proc
         if proc.poll() is not None:
             raise RuntimeError(f"Blender exited early (see {log_path})")
+        if _port_open(port):
+            with open(log_path, "rb") as f:  # this process's own log says it bound the port
+                f.seek(log_start)
+                if f"listening on localhost:{port}".encode() in f.read():
+                    return proc
         time.sleep(0.5)
     proc.kill()
     raise RuntimeError(f"Blender did not listen on :{port} within 90 s")

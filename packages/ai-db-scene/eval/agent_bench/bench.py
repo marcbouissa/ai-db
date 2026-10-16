@@ -16,16 +16,16 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
-import socket
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(__file__))
-import blender  # noqa: E402
-import briefs  # noqa: E402
-import run_claude  # noqa: E402
+import blender
+import briefs
+import run_claude
 
 REPO = run_claude.REPO
 OUT = os.path.join(REPO, "bench")
@@ -45,37 +45,41 @@ def run_dir(arm: str, brief: str) -> str:
     return os.path.join(OUT, arm, brief)
 
 
+#: port -> the open lock file holding it (flock: released by the kernel if this process dies)
+_PORT_LOCKS: dict[int, Any] = {}
+
+
 def reserve_port() -> int:
-    """A Blender port no other (parallel) run holds: an atomic mkdir per port."""
-    lock_root = os.path.join(OUT, ".ports")
+    """A Blender port no other (parallel) run holds: an exclusive flock per port, kept until
+    release_port. The old pid-file check let two runs started together claim the same port
+    (both read a freed "0"); the second Blender then failed to bind and its agent drove the
+    first run's Blender (ultra-aidb4 living_room got classroom furniture)."""
+    import fcntl
+
+    lock_root = os.path.join(OUT, ".portlocks")
     os.makedirs(lock_root, exist_ok=True)
     for port in range(11000, 11400):
-        lock = os.path.join(lock_root, str(port))
+        f = open(os.path.join(lock_root, str(port)), "w")  # noqa: SIM115 - held until release_port
         try:
-            os.mkdir(lock)
-        except FileExistsError:
-            try:  # a lock whose owner died is free again
-                with open(os.path.join(lock, "pid"), encoding="utf-8") as f:
-                    owner = int(f.read().strip() or 0)
-            except (OSError, ValueError):
-                owner = 0
-            if owner and os.path.exists(f"/proc/{owner}"):
-                continue
-        with open(os.path.join(lock, "pid"), "w", encoding="utf-8") as f:
-            f.write(str(os.getpid()))
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            f.close()
+            continue
         with socket.socket() as s:
-            if s.connect_ex(("127.0.0.1", port)) != 0:
-                return port
-        release_port(port)
+            if s.connect_ex(("127.0.0.1", port)) == 0:  # something else listens there
+                f.close()
+                continue
+        f.write(str(os.getpid()))
+        f.flush()
+        _PORT_LOCKS[port] = f
+        return port
     raise RuntimeError("no free Blender port in 11000-11399")
 
 
 def release_port(port: int) -> None:
-    try:
-        with open(os.path.join(OUT, ".ports", str(port), "pid"), "w", encoding="utf-8") as f:
-            f.write("0")  # free; the directory stays
-    except OSError:
-        pass
+    f = _PORT_LOCKS.pop(port, None)
+    if f is not None:
+        f.close()  # drops the flock
 
 
 def _prepare_aidb(rd: str) -> dict[str, Any]:
@@ -91,7 +95,7 @@ def _prepare_aidb(rd: str) -> dict[str, Any]:
 
     t = time.monotonic()
     out = subprocess.run([os.path.join(REPO, ".venv", "bin", "ai-db"), "sync-skills", "--dir", skills_dir(),
-                          "--dir", USER_SKILLS], env=env, capture_output=True, text=True, timeout=600)
+                          "--dir", USER_SKILLS], env=env, capture_output=True, text=True, timeout=600, check=False)
     return {"seconds": round(time.monotonic() - t, 1), "rc": out.returncode, "tail": out.stdout[-300:]}
 
 
@@ -162,7 +166,10 @@ def cmd_run(arm: str, brief: str) -> dict[str, Any]:
             import run_opencode
             # truncated runs (the provider cut a started session) per scene; refusals do not count
             attempts_file = os.path.join(OUT, arm, f".{brief}.attempts")
-            attempt = int(open(attempts_file).read() or 0) if os.path.exists(attempts_file) else 0
+            attempt = 0
+            if os.path.exists(attempts_file):
+                with open(attempts_file, encoding="utf-8") as f:
+                    attempt = int(f.read() or 0)
             try:
                 agent = run_opencode.run(model, prompt, port, rd, with_aidb, tools, TIMEOUT_S)
             except run_opencode.ModelUnavailable as e:
@@ -177,6 +184,8 @@ def cmd_run(arm: str, brief: str) -> dict[str, Any]:
                     os.path.join(rd, "transcript.jsonl"))
                 agent["provider_limited"] = True
             agent["attempts"] = attempt
+        if proc.poll() is not None:  # never score whatever else may listen on the port now
+            raise RuntimeError(f"{arm}/{brief}: this run's Blender exited during the session (see blender.log)")
         t = time.monotonic()
         fin = blender.finish(port, rd)
         validation = blender.client(port).request("validate_scene", {}, timeout=300)
