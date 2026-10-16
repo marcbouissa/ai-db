@@ -442,7 +442,7 @@ def test_live_multi_room_builds(private_blender, mem):
 
     res = sp._handle_build_scene({"spec": _HOUSE, "clear": True, "snapshot": False, "geometry": "boxes"})
     assert res["status"] in ("built", "built_with_issues") and not res["failed_commands"], res
-    assert "wall_living_east_2" in res["created"]
+    assert "wall_living_east_2" in " ".join(res["created"])  # numbered runs are shortened
     assert not [i for i in res["issues_left"] if i.get("check") in ("missing_objects", "out_of_bounds")], res["issues_left"]
 
 

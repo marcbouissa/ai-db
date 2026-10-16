@@ -15,6 +15,7 @@ from typing import Any
 
 from ai_db.errors import AiDbConfigError, AiDbError
 from ai_db_scene.blender_client import BlenderClient, BlenderError
+from ai_db_scene.build_report import present_build
 from ai_db_scene.constants import (
     FOLIAGE_CATEGORIES,
     LAYOUT_DOOR_HEIGHT_M,
@@ -1642,7 +1643,12 @@ def _issues(res: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _handle_build_scene(args: dict[str, Any]) -> Any:
-    """spec -> layout (repairing conflicts) -> build -> validate -> apply the validator's fixes."""
+    """spec -> layout (repairing conflicts) -> build -> validate -> apply the validator's fixes;
+    the result compact, verdict and next first (see build_report)."""
+    return present_build(_build_scene(args))
+
+
+def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
     from ai_db_scene.constants import BUILD_FIX_ROUNDS, BUILD_MAX_REPAIRS
     from ai_db_scene.repair import solve_with_repairs
 
@@ -2303,8 +2309,8 @@ def _handle_edit_scene(args: dict[str, Any]) -> Any:
                                "prompt": args.get("prompt") or "; ".join(done), "project": project,
                                "operation_type": "edit", "parent_scene_id": scene_id,
                                "metadata": {"steps": args.get("steps")}})
-    return {**out, "steps_applied": done, "previous_scene_id": scene_id, "safety_snapshot": safety,
-            **({"build_inferred": stored["build_inferred"]} if stored.get("build_inferred") else {})}
+    return present_build({**out, "steps_applied": done, "previous_scene_id": scene_id, "safety_snapshot": safety,
+                          **({"build_inferred": stored["build_inferred"]} if stored.get("build_inferred") else {})})
 
 
 def export_root() -> Path:

@@ -1,0 +1,331 @@
+{
+ "source": "bench/qwen3-14b-local-aidb5/classroom/transcript.jsonl, the model's first valid build_scene call (line 5)",
+ "args": {
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     10,
+     8,
+     3
+    ],
+    "style": "modern",
+    "floor_material": "concrete",
+    "wall_material": "drywall"
+   },
+   "objects": [
+    {
+     "id": "teacher_desk_001",
+     "category": "desk",
+     "material": "wood_oak",
+     "hero": true
+    },
+    {
+     "id": "teacher_chair_001",
+     "category": "office_chair",
+     "material": "fabric_black",
+     "hero": true
+    },
+    {
+     "id": "whiteboard_001",
+     "category": "whiteboard",
+     "material": "glossy_white",
+     "hero": true
+    },
+    {
+     "id": "student_desk_001",
+     "category": "desk",
+     "material": "laminate_brown",
+     "hero": false
+    },
+    {
+     "id": "student_chair_001",
+     "category": "chair",
+     "material": "plastic_blue",
+     "hero": false
+    },
+    {
+     "id": "student_desk_002",
+     "category": "desk",
+     "material": "laminate_brown",
+     "hero": false
+    },
+    {
+     "id": "student_chair_002",
+     "category": "chair",
+     "material": "plastic_blue",
+     "hero": false
+    },
+    {
+     "id": "student_desk_003",
+     "category": "desk",
+     "material": "laminate_brown",
+     "hero": false
+    },
+    {
+     "id": "student_chair_003",
+     "category": "chair",
+     "material": "plastic_blue",
+     "hero": false
+    },
+    {
+     "id": "student_desk_004",
+     "category": "desk",
+     "material": "laminate_brown",
+     "hero": false
+    },
+    {
+     "id": "student_chair_004",
+     "category": "chair",
+     "material": "plastic_blue",
+     "hero": false
+    },
+    {
+     "id": "student_desk_005",
+     "category": "desk",
+     "material": "laminate_brown",
+     "hero": false
+    },
+    {
+     "id": "student_chair_005",
+     "category": "chair",
+     "material": "plastic_blue",
+     "hero": false
+    },
+    {
+     "id": "student_desk_006",
+     "category": "desk",
+     "material": "laminate_brown",
+     "hero": false
+    },
+    {
+     "id": "student_chair_006",
+     "category": "chair",
+     "material": "plastic_blue",
+     "hero": false
+    },
+    {
+     "id": "student_desk_007",
+     "category": "desk",
+     "material": "laminate_brown",
+     "hero": false
+    },
+    {
+     "id": "student_chair_007",
+     "category": "chair",
+     "material": "plastic_blue",
+     "hero": false
+    },
+    {
+     "id": "student_desk_008",
+     "category": "desk",
+     "material": "laminate_brown",
+     "hero": false
+    },
+    {
+     "id": "student_chair_008",
+     "category": "chair",
+     "material": "plastic_blue",
+     "hero": false
+    },
+    {
+     "id": "student_desk_009",
+     "category": "desk",
+     "material": "laminate_brown",
+     "hero": false
+    },
+    {
+     "id": "student_chair_009",
+     "category": "chair",
+     "material": "plastic_blue",
+     "hero": false
+    },
+    {
+     "id": "student_desk_010",
+     "category": "desk",
+     "material": "laminate_brown",
+     "hero": false
+    },
+    {
+     "id": "student_chair_010",
+     "category": "chair",
+     "material": "plastic_blue",
+     "hero": false
+    },
+    {
+     "id": "student_desk_011",
+     "category": "desk",
+     "material": "laminate_brown",
+     "hero": false
+    },
+    {
+     "id": "student_chair_011",
+     "category": "chair",
+     "material": "plastic_blue",
+     "hero": false
+    },
+    {
+     "id": "student_desk_012",
+     "category": "desk",
+     "material": "laminate_brown",
+     "hero": false
+    },
+    {
+     "id": "student_chair_012",
+     "category": "chair",
+     "material": "plastic_blue",
+     "hero": false
+    }
+   ],
+   "relations": [
+    {
+     "a": "whiteboard_001",
+     "rel": "against_wall",
+     "b": "wall_south"
+    },
+    {
+     "a": "teacher_desk_001",
+     "rel": "in_front_of",
+     "b": "whiteboard_001"
+    },
+    {
+     "a": "teacher_chair_001",
+     "rel": "beside",
+     "b": "teacher_desk_001"
+    },
+    {
+     "a": "student_desk_001",
+     "rel": "beside",
+     "b": "student_desk_002"
+    },
+    {
+     "a": "student_desk_002",
+     "rel": "beside",
+     "b": "student_desk_003"
+    },
+    {
+     "a": "student_desk_003",
+     "rel": "beside",
+     "b": "student_desk_004"
+    },
+    {
+     "a": "student_desk_004",
+     "rel": "beside",
+     "b": "student_desk_005"
+    },
+    {
+     "a": "student_desk_005",
+     "rel": "beside",
+     "b": "student_desk_006"
+    },
+    {
+     "a": "student_desk_006",
+     "rel": "beside",
+     "b": "student_desk_007"
+    },
+    {
+     "a": "student_desk_007",
+     "rel": "beside",
+     "b": "student_desk_008"
+    },
+    {
+     "a": "student_desk_008",
+     "rel": "beside",
+     "b": "student_desk_009"
+    },
+    {
+     "a": "student_desk_009",
+     "rel": "beside",
+     "b": "student_desk_010"
+    },
+    {
+     "a": "student_desk_010",
+     "rel": "beside",
+     "b": "student_desk_011"
+    },
+    {
+     "a": "student_desk_011",
+     "rel": "beside",
+     "b": "student_desk_012"
+    },
+    {
+     "a": "student_desk_001",
+     "rel": "facing",
+     "b": "whiteboard_001"
+    },
+    {
+     "a": "student_desk_002",
+     "rel": "facing",
+     "b": "whiteboard_001"
+    },
+    {
+     "a": "student_desk_003",
+     "rel": "facing",
+     "b": "whiteboard_001"
+    },
+    {
+     "a": "student_desk_004",
+     "rel": "facing",
+     "b": "whiteboard_001"
+    },
+    {
+     "a": "student_desk_005",
+     "rel": "facing",
+     "b": "whiteboard_001"
+    },
+    {
+     "a": "student_desk_006",
+     "rel": "facing",
+     "b": "whiteboard_001"
+    },
+    {
+     "a": "student_desk_007",
+     "rel": "facing",
+     "b": "whiteboard_001"
+    },
+    {
+     "a": "student_desk_008",
+     "rel": "facing",
+     "b": "whiteboard_001"
+    },
+    {
+     "a": "student_desk_009",
+     "rel": "facing",
+     "b": "whiteboard_001"
+    },
+    {
+     "a": "student_desk_010",
+     "rel": "facing",
+     "b": "whiteboard_001"
+    },
+    {
+     "a": "student_desk_011",
+     "rel": "facing",
+     "b": "whiteboard_001"
+    },
+    {
+     "a": "student_desk_012",
+     "rel": "facing",
+     "b": "whiteboard_001"
+    }
+   ],
+   "lighting": {
+    "daylight": true,
+    "intensity": 1.2
+   },
+   "camera": {
+    "position": [
+     5,
+     4,
+     1.5
+    ],
+    "rotation": [
+     0,
+     0,
+     0
+    ],
+    "type": "perspective"
+   }
+  }
+ }
+}
