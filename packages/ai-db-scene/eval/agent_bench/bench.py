@@ -153,7 +153,10 @@ def cmd_run(arm: str, brief: str) -> dict[str, Any]:
     os.makedirs(rd, exist_ok=True)
     port = reserve_port()
     setup = _prepare_aidb(rd) if with_aidb else None
-    proc = blender.start(port, os.path.join(rd, "blender.log"))
+    # a free cloud model (OpenCode) gets a sandboxed Blender: run_code must not reach the repos,
+    # the home folder or local services
+    cloud_free = not (model == "strata" or model in LOCAL_MODELS or model in run_claude.MODELS)
+    proc = blender.start(port, os.path.join(rd, "blender.log"), sandbox_dir=rd if cloud_free else None)
     try:
         prompt = briefs.prompt(brief, with_aidb, version)
         if model == "strata" or model in LOCAL_MODELS:
@@ -198,7 +201,7 @@ def cmd_run(arm: str, brief: str) -> dict[str, Any]:
     quality = score(brief, fin["inventory"], validation)
     metrics = {"arm": arm, "brief": brief, "model": model, "with_aidb": with_aidb, "port": port,
                "harness": "strata-agent" if model == "strata" or model in LOCAL_MODELS else ("claude-cli" if model in run_claude.MODELS else "opencode"),
-               "setup": setup, "aidb_version": aidb_version() if with_aidb else None, "agent": agent, "harness_s": round(harness_s, 1),
+               "setup": setup, "blender_sandboxed": cloud_free, "aidb_version": aidb_version() if with_aidb else None, "agent": agent, "harness_s": round(harness_s, 1),
                "renders": fin["renders"], "inventory": fin["inventory"], "validation": validation,
                "quality": quality, "finished_at": time.strftime("%Y-%m-%d %H:%M:%S")}
     with open(os.path.join(rd, "metrics.json"), "w", encoding="utf-8") as f:

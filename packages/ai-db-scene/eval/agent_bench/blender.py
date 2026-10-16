@@ -47,36 +47,95 @@ def _pgid(pid: int) -> int | None:
         return None
 
 
-def start(port: int, log_path: str, blend: str | None = None) -> subprocess.Popen:
+def _sandboxed(cmd: list[str], port: int, out_dir: str, sock_dir: str) -> list[str]:
+    """``cmd`` (Blender) in a bubblewrap sandbox for runs driven by a cloud model: Blender's
+    run_code runs the model's Python, which could otherwise read the private repos or query local
+    services (the ai-db daemon). No network (its port reaches the host through a unix socket
+    pair of socat relays), /home hidden except Blender, the addon, the texture cache and this
+    run's output folder, its own pid namespace (no /proc/<pid>/root way out)."""
+    home = os.path.expanduser("~")
+    blender_dir = os.path.dirname(os.path.realpath(BLENDER))
+    sock = os.path.join(sock_dir, "blender.sock")
+    args = ["bwrap", "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev", "--proc", "/proc",
+            "--tmpfs", "/home", "--tmpfs", "/mnt", "--tmpfs", "/media",
+            "--bind", "/tmp", "/tmp"]
+    for private in sorted(d for d in os.listdir("/tmp") if d.startswith("claude-")):  # agent scratchpads
+        args += ["--tmpfs", os.path.join("/tmp", private)]
+    args += ["--dir", home, "--ro-bind", blender_dir, blender_dir, "--ro-bind", BLENDER_MCP, BLENDER_MCP]
+    cache = os.path.join(home, ".cache", "ai-db")
+    if os.path.isdir(cache):
+        args += ["--ro-bind", cache, cache]
+    args += ["--bind", out_dir, out_dir, "--bind", sock_dir, sock_dir, "--setenv", "HOME", home,
+             "--unshare-net", "--unshare-pid", "--die-with-parent", "--chdir", BLENDER_MCP]
+    inner = (f"socat UNIX-LISTEN:{sock},fork TCP:127.0.0.1:{port} & exec "
+             + " ".join(_q(c) for c in [os.path.realpath(BLENDER), *cmd[1:]]))
+    outer = (f"socat TCP-LISTEN:{port},bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:{sock} & exec "
+             + " ".join(_q(c) for c in args) + " sh -c " + _q(inner))
+    return ["sh", "-c", outer]
+
+
+def _q(s: str) -> str:
+    import shlex
+
+    return shlex.quote(s)
+
+
+def _answers(port: int) -> bool:
+    """Blender itself answers on the port (a relay can accept before Blender listens)."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+            s.sendall(b'{"type": "get_scene_info", "params": {}}\n')
+            s.settimeout(10)
+            return bool(s.recv(1))
+    except OSError:
+        return False
+
+
+def start(port: int, log_path: str, blend: str | None = None, sandbox_dir: str | None = None) -> subprocess.Popen:
     """A fresh Blender listening on ``port``. Fails rather than hand back another run's Blender:
     the port must be free before, and the process listening on it must be in the new process's
-    session (start_new_session: its process group is the Popen pid)."""
+    session (start_new_session: its process group is the Popen pid). ``sandbox_dir``: run it in
+    the sandbox (_sandboxed) with write access to that folder only."""
     if _port_open(port):
         raise RuntimeError(f"port {port} is already in use: refusing to share another run's Blender")
     log = open(log_path, "ab")  # noqa: SIM115 - lives as long as the process
-    proc = subprocess.Popen(
-        [BLENDER, "-b", *([blend] if blend else ["--factory-startup"]), "-P", "tools/serve_headless.py", "--",
-         "--port", str(port), "--from-repo"],
-        cwd=BLENDER_MCP, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    cmd = [BLENDER, "-b", *([blend] if blend else ["--factory-startup"]), "-P", "tools/serve_headless.py", "--",
+           "--port", str(port), "--from-repo"]
+    if sandbox_dir is not None:
+        import tempfile
+
+        cmd = _sandboxed(cmd, port, sandbox_dir, tempfile.mkdtemp(prefix="aidb-bench-sock-"))
+    proc = subprocess.Popen(cmd, cwd=BLENDER_MCP, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     deadline = time.time() + 90
     while time.time() < deadline:
         if proc.poll() is not None:
+            stop(proc)  # the rest of its session (a relay) too
             raise RuntimeError(f"Blender exited early (see {log_path})")
         if _port_open(port):
             owner = _listener_pid(port)
-            if owner is not None and _pgid(owner) == proc.pid:  # our Blender (its own session) bound it
+            # our Blender (or its relay) in this session bound it, and Blender answers
+            if owner is not None and _pgid(owner) == proc.pid and (sandbox_dir is None or _answers(port)):
                 return proc
         time.sleep(0.5)
-    proc.kill()
+    stop(proc)
     raise RuntimeError(f"Blender did not listen on :{port} within 90 s")
 
 
 def stop(proc: subprocess.Popen) -> None:
-    proc.terminate()
+    """Blender and everything in its session (the sandbox's relays)."""
+    import signal
+
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except OSError:
+        proc.terminate()
     try:
         proc.wait(timeout=20)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            proc.kill()
 
 
 def client(port: int) -> Any:
