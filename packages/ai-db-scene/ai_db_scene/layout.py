@@ -90,6 +90,7 @@ _SPREAD_GAP_M = 0.6  # between copies of one object placed along a curved wall a
 SEAT_CATEGORY = {"desk": "chair", "dining_table": "dining_chair", "conference_table": "office_chair",
                  "kitchen_island": "stool", "workbench": "stool", "picnic_table": "stool",
                  "bar_counter": "bar_stool", "reception_desk": "office_chair"}
+_SQUARE_FACING_TOL_DEG = 15.0  # a facing object is squared to the room when it then faces within this
 _SEAT_GAP_M = 0.05  # table edge -> chair (pulled up to it, not tucked: no interpenetration)
 _SEAT_SPACING_M = 0.15  # between chairs along one side
 
@@ -433,6 +434,35 @@ class _Problem:
                 return poses[r.b].zb + self.insts[r.b].dims[2]
         return 0.0
 
+    # ---- axis-aligned yaw (rect rooms) ----------------------------------------------------
+    def yaw_free(self, iid: str) -> bool:
+        """May the solver choose this object's yaw freely? Then, in a rect room, it is kept on the
+        room's axes (or its target's): judges called racks, desks and sofas at odd angles mistakes.
+        ``facing`` / ``around`` ask for a yaw of their own; walls fix it anyway."""
+        if self.shape.kind != "rect" or self.kind != "indoor":
+            return False
+        return not any(r.rel in ("facing", "around", "against_wall") for r in self.by_a.get(iid, []))
+
+    def square_facing(self, iid: str) -> bool:
+        """A ``facing`` object of a rect room whose yaw may be squared when it still faces."""
+        rels = self.by_a.get(iid, [])
+        return (self.shape.kind == "rect" and self.kind == "indoor" and any(r.rel == "facing" for r in rels)
+                and not any(r.rel in ("around", "against_wall") for r in rels))
+
+    def axis_ref(self, iid: str, poses: dict[str, _Pose]) -> float:
+        """The yaw an object's quarter turns count from: its target's (in_front_of, beside, on, ...)
+        when it has a placed one, else the room's axes."""
+        for r in self.by_a.get(iid, []):
+            if r.rel in ("in_front_of", "beside", "on", "under", "centered_in", "above") and r.b in poses:
+                return poses[r.b].yaw
+        return 0.0
+
+    def snap_yaw(self, iid: str, yaw: float, poses: dict[str, _Pose]) -> float:
+        if not self.yaw_free(iid):
+            return yaw
+        ref = self.axis_ref(iid, poses)
+        return ref + round((yaw - ref) / _HALF_PI) * _HALF_PI
+
     def table_of(self, iid: str, pose: _Pose) -> tuple[_Pose, Dims]:
         """The table itself inside a table + chairs box (what ``on``/``under``/``above`` mean)."""
         inst = self.insts.get(iid)
@@ -595,6 +625,16 @@ class _Problem:
         dt = self.default_face(inst, poses)
         if dt is not None:
             cost += 0.3 * _angdiff(pose.yaw, _face_yaw(pose.x, pose.y, dt[0], dt[1])) / math.pi
+        if self.shape.kind == "rect" and any(r.rel == "facing" for r in self.by_b.get(inst.id, [])):
+            # what others face (the board, the TV) sits mid-wall, so they can face it square
+            wall = next((r for r in self.by_a.get(inst.id, []) if r.rel == "against_wall"), None)
+            if wall is not None:
+                n = self.wall(wall.b)[0]
+                lateral = abs((pose.x - self.W / 2) * n[1]) + abs((pose.y - self.D / 2) * n[0])
+                cost += 0.5 * lateral / max(self.W, self.D)
+        if self.square_facing(inst.id):
+            # prefer spots from which the facing yaw is square to the room (snapped at the end)
+            cost += 0.2 * abs((pose.yaw + _HALF_PI / 2) % _HALF_PI - _HALF_PI / 2) / (_HALF_PI / 2)
         for oid, op in poses.items():
             if oid == inst.id:
                 continue
@@ -681,6 +721,13 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
             ft = facing_targets[(k // 2) % len(facing_targets)]
             x = ft.x + rng.uniform(-0.3, 0.3) * (k > 0)
             y = ft.y + rng.uniform(-0.3, 0.3) * (k > 0)
+        elif prim is None and facing_targets and k % 3 == 1 and pr.shape.kind == "rect":
+            # straight out from what it faces (desks in front of the board, not off to one side
+            # at an angle): the facing yaw is then square to the room
+            ft = facing_targets[(k // 3) % len(facing_targets)]
+            f = _axes(ft.yaw)[1]
+            dist = rng.uniform(0.5, max(pr.W, pr.D))
+            x, y = ft.x + f[0] * dist, ft.y + f[1] * dist
         elif prim is None or pb is None and prim.rel != "centered_in":
             x = rng.uniform(0, pr.W)
             y = rng.uniform(0, pr.D)
@@ -714,7 +761,7 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
             yaw = _face_yaw(x, y, ft.x, ft.y)
         elif dface is not None and not walls and k % 4 != 3:
             yaw = _face_yaw(x, y, dface[0], dface[1])
-        p = _Pose(x, y, yaw, 0.0)
+        p = _Pose(x, y, pr.snap_yaw(inst.id, yaw, poses), 0.0)
         pr.snap_walls(inst, p, set_yaw=True)
         p.zb = pr.base_z(inst, poses)
         out.append(p)
@@ -798,7 +845,7 @@ def _local_search(pr: _Problem, poses: dict[str, _Pose], rng: random.Random) -> 
         dt = pr.default_face(inst, poses)
         if dt is not None:
             p = poses[iid]
-            try_move(iid, _Pose(p.x, p.y, _face_yaw(p.x, p.y, dt[0], dt[1]), p.zb))
+            try_move(iid, _Pose(p.x, p.y, pr.snap_yaw(iid, _face_yaw(p.x, p.y, dt[0], dt[1]), poses), p.zb))
     step, dyaw = LAYOUT_LOCAL_STEP_M, math.radians(LAYOUT_LOCAL_YAW_DEG)
     for _ in range(LAYOUT_LOCAL_ITERS):
         iid = rng.choice(ids)
@@ -815,6 +862,7 @@ def _local_search(pr: _Problem, poses: dict[str, _Pose], rng: random.Random) -> 
             dt = pr.default_face(inst, poses)
             if dt is not None and rng.random() < 0.5:
                 new.yaw = _face_yaw(new.x, new.y, dt[0], dt[1])
+            new.yaw = pr.snap_yaw(iid, new.yaw, poses)  # no ±15 deg skew on furniture in rect rooms
         pr.snap_walls(inst, new, set_yaw=False)
         new.zb = pr.base_z(inst, poses)
         try_move(iid, new)
@@ -849,12 +897,15 @@ def _seat_placements(pr: _Problem, base: str, boxes: list[_Pose]) -> list[Placem
     plan = pr.seated[base]
     out: list[Placement] = []
     k = 0
+    ox, oy = plan.table_off
     for i, p in enumerate(boxes):
-        tx, ty = _local(p, plan.table_off)
         owner = base if len(boxes) == 1 else f"{base}_{i + 1}"
         for off in plan.seats:
             k += 1
             x, y = _local(p, off)
+            cr, cf = off[0] - ox, off[1] - oy  # the chair relative to the table centre
+            # square to its side of the table (not turned to the centre: four chairs read as a skew)
+            tx, ty = _local(p, (ox + cr, oy) if abs(cf) > plan.table[1] / 2 else (ox, oy + cf))
             out.append(Placement(f"{base}_seat_{k}", (round(x, 6), round(y, 6), round(p.zb + plan.chair[2] / 2, 6)),
                                  round(math.degrees(_face_yaw(x, y, tx, ty)) % 360.0, 6), plan.chair, plan.category,
                                  owner))
@@ -1104,6 +1155,51 @@ def _check_rooms(spec: SceneSpec, placements: list[Placement], priors: dict[str,
     return issues
 
 
+def _dependents(pr: _Problem, iid: str) -> list[str]:
+    """Objects placed relative to ``iid`` (transitively): they turn with it."""
+    out: list[str] = []
+    todo = [iid]
+    while todo:
+        cur = todo.pop()
+        for r in pr.by_b.get(cur, []):
+            if r.rel != "facing" and r.a not in out and r.a != iid:
+                out.append(r.a)
+                todo.append(r.a)
+    return out
+
+
+def _snap_axes(pr: _Problem, poses: dict[str, _Pose]) -> None:
+    """Last pass: every free yaw of a rect room onto the room's (or its target's) axes. The object
+    turns about its centre and whatever stands relative to it turns with it; a snap that would
+    break a hard constraint is not made."""
+    for iid in pr.order():
+        p = poses.get(iid)
+        if p is None:
+            continue
+        target = pr.snap_yaw(iid, p.yaw, poses)
+        facing = [r for r in pr.by_a.get(iid, []) if r.rel == "facing" and r.b in poses]
+        if target == p.yaw and facing and pr.square_facing(iid):
+            # facing: onto the room's axes too when that still faces the target (desks 3 deg off the
+            # board read as "rotated haphazardly")
+            square = round(p.yaw / _HALF_PI) * _HALF_PI
+            sq = _Pose(p.x, p.y, square, p.zb)
+            if all(pr.facing_error_deg(r, sq, poses[r.b]) <= _SQUARE_FACING_TOL_DEG for r in facing):
+                target = square
+        delta = target - p.yaw
+        if abs(delta) < 1e-9:
+            continue
+        moved = {iid: _Pose(p.x, p.y, target, p.zb)}
+        c, sn = math.cos(delta), math.sin(delta)
+        for dep in _dependents(pr, iid):
+            q = poses[dep]
+            dx, dy = q.x - p.x, q.y - p.y
+            moved[dep] = _Pose(p.x + c * dx - sn * dy, p.y + sn * dx + c * dy, q.yaw + delta, q.zb)
+        trial = {**poses, **moved}
+        if all(pr.hard_violation(pr.insts[k], trial[k], {o: v for o, v in trial.items() if o != k}) is None
+               for k in moved):
+            poses.update(moved)
+
+
 def _solve_once(pr: _Problem, seed: int) -> dict[str, _Pose]:
     rng = random.Random(seed)
     for attempt in range(LAYOUT_RESTARTS):
@@ -1115,6 +1211,7 @@ def _solve_once(pr: _Problem, seed: int) -> dict[str, _Pose]:
                 raise  # the last attempt's conflict is reported
     _local_search(pr, poses, rng)
     _settle_facing(pr, poses)
+    _snap_axes(pr, poses)
     for iid, p in poses.items():  # final proof that nothing was broken by the search
         v = pr.hard_violation(pr.insts[iid], p, poses)
         if v:

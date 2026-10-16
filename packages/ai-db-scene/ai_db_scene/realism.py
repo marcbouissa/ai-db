@@ -43,6 +43,7 @@ def check(spec: Any, placements: list[Any]) -> list[dict[str, Any]]:
         if cats and not cats & set(WALL_DECOR) and not cats & set(WORKSPACE) and len(placements) >= 3:
             issues.append(_warn("bare walls: add a picture_frame, mirror, wall_clock or shelving (above / "
                                 "against_wall) so the room does not look unfinished"))
+    issues += off_axis(spec, placements)
     by_id = {o.id: o for o in spec.objects}
     for p in placements:
         o = by_id.get(p.id) or next((x for x in spec.objects if p.id.startswith(x.id + "_")), None)
@@ -51,6 +52,36 @@ def check(spec: Any, placements: list[Any]) -> list[dict[str, Any]]:
             issues.append(_warn(f"{p.id} is a large object in a flat colour ({mat}); use paint:, plastic:, "
                                 f"fabric: or wood: with the same tint", [p.id]))
     return issues
+
+
+OFF_AXIS_DEG = (5.0, 40.0)  # furniture this far off the room's axes reads as a mistake, not a choice
+
+
+def off_axis(spec: Any, placements: list[Any]) -> list[dict[str, Any]]:
+    """Floor furniture of a rect room turned 5-40 deg off the walls without a facing/around relation
+    asking for it (judges: "racks scattered at odd angles", "desks on a diagonal")."""
+    from ai_db_scene.priors import load_priors
+
+    st = spec.setting
+    if st.kind != "indoor" or st.shape != "rect":
+        return []
+    priors = load_priors()
+    turned = {r.a for r in spec.relations if r.rel in ("facing", "around")}
+    ids = {o.id for o in spec.objects}
+    out: list[str] = []
+    for p in placements:
+        base = p.id if p.id in ids else re.sub(r"(_seat)?_\d+$", "", p.id)
+        prior = priors.get(p.category)
+        if base in turned or "_seat_" in p.id or prior is None or prior.support != "floor" or p.dims[2] <= 0.05:
+            continue
+        off = abs((p.rotation_deg_z + 45.0) % 90.0 - 45.0)
+        if OFF_AXIS_DEG[0] <= off <= OFF_AXIS_DEG[1]:
+            out.append(p.id)
+    if not out:
+        return []
+    return [{"check": "off_axis", "severity": "warning", "objects": out[:8],
+             "message": (f"{len(out)} object(s) stand {OFF_AXIS_DEG[0]:g}-{OFF_AXIS_DEG[1]:g} deg off the room's axes "
+                         f"({', '.join(out[:5])}); turn them square to the walls, or give them a facing relation")}]
 
 
 _NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
