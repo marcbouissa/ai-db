@@ -83,8 +83,9 @@ def _config(servers: dict[str, Any]) -> dict[str, Any]:
     The MCP servers run with ``codemode: false``: their tools are offered directly instead of
     through Code Mode's ``execute``, and ``execute`` stays denied, because its JS runtime has an
     unchecked ``fetch`` that reads ``file://`` URLs and reaches any host (OpenCode 2.0.20)."""
-    mcp = {name: {"type": "local", "enabled": True, "codemode": False, "command": [s["command"], *s["args"]],
-                  "environment": s.get("env", {})} for name, s in servers.items()}
+    # OpenCode 2's own MCP format (mcp.servers): the legacy {"mcp": {name: ...}} form drops codemode
+    mcp = {"servers": {name: {"type": "local", "codemode": False, "command": [s["command"], *s["args"]],
+                              "environment": s.get("env", {})} for name, s in servers.items()}}
     permission: dict[str, Any] = {"*": "deny", "read": {"*": "deny", _READ_DECOY: "allow"}}
     permission.update({f"{name}_*": "allow" for name in servers})
     return {"$schema": "https://opencode.ai/config.json", "mcp": mcp, "permission": permission,
