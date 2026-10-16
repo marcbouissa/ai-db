@@ -4,10 +4,18 @@ Scene Memory Models.
 Domain models for 3D scene state, following ai-db's DTO pattern (ai_db.storage.models).
 """
 
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
+
+
+def new_scene_id(timestamp: float | None = None) -> str:
+    """Id of a new scene version: ``blender-<unix seconds>-<6 hex>``, the same for snapshots,
+    forks and edits (forks used to get a bare 8-character uuid). Ids of either older format stay
+    valid: an id is only ever looked up, never parsed."""
+    return f"blender-{int(time.time() if timestamp is None else timestamp)}-{uuid4().hex[:6]}"
 
 
 @dataclass
@@ -124,7 +132,7 @@ class PromptContext:
 @dataclass
 class SceneState:
     """Complete snapshot of a Blender scene at a point in time."""
-    scene_id: str = field(default_factory=lambda: str(uuid4())[:8])
+    scene_id: str = field(default_factory=new_scene_id)
     project: str = "default"
     name: str = "Scene"
     timestamp: float = field(default_factory=lambda: datetime.now(timezone.utc).timestamp())

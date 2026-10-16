@@ -14,7 +14,7 @@ import time
 from typing import Any
 
 from ai_db_scene.constants import BLENDER_OX_HOST, BLENDER_OX_PORT, BLENDER_OX_TIMEOUT_S
-from ai_db_scene.models import CameraState, MaterialState, ObjectState, SceneState
+from ai_db_scene.models import CameraState, MaterialState, ObjectState, SceneState, new_scene_id
 
 
 def _indent(code: str, n: int) -> str:
@@ -438,9 +438,8 @@ result = {
             raise BlenderError(f"Unexpected response from Blender extractor: {str(extracted)[:200]}")
 
         # Second resolution alone made two snapshots in the same second share an id
-        # (the second overwrote the first).
-        import uuid
-        scene_id = f"blender-{int(extracted.get('timestamp', time.time()))}-{uuid.uuid4().hex[:6]}"
+        # (the second overwrote the first): new_scene_id adds a random part.
+        scene_id = new_scene_id(extracted.get("timestamp", time.time()))
         scene = SceneState(
             scene_id=scene_id,
             project=project,

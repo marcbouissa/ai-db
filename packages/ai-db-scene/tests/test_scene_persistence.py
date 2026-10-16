@@ -224,6 +224,22 @@ def test_edited_version_with_missing_file_does_not_restore_its_parents_geometry(
         memory.apply_scene(memory.fork_scene(fork, "fork of a fork"))
 
 
+def test_forks_get_snapshot_style_ids_and_old_ids_still_load(tmp_path):
+    import re
+
+    memory, _ = _memory(tmp_path, _scene(["a"]), "sqlite_vec")
+    v1 = memory.snapshot_scene(prompt="v1")
+    fork = memory.fork_scene(v1, "variant")
+    assert re.fullmatch(r"blender-\d+-[0-9a-f]{6}", fork), fork
+    legacy = memory.backend.load_scene(fork)
+    legacy.scene_id = "1a2b3c4d"  # the 8-character uuid forks used to get
+    memory.backend.save_scene(legacy)
+    assert memory.restore_scene("1a2b3c4d").parent_scene_id == v1
+    assert memory.apply_scene("1a2b3c4d")["geometry_from"] == v1
+    assert [v.scene_id for v in memory.get_scene_versions(memory.fork_scene("1a2b3c4d", "again"))][1:] == [
+        "1a2b3c4d", v1]
+
+
 def test_fork_of_a_fork_keeps_one_suffix(tmp_path):
     memory, _ = _memory(tmp_path, _scene(["a"]))
     f1 = memory.fork_scene(memory.snapshot_scene(prompt="v1"), "f1")
