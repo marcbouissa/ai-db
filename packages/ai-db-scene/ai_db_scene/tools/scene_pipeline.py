@@ -1781,6 +1781,9 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
             try:
                 BlenderClient().request(issue["fix"]["handler"], issue["fix"].get("params") or {})
                 applied.append(f"{issue.get('check')}: {issue.get('message')}")
+                turned = keep_turn(data, issue)  # the stored spec turns it too: a rebuild keeps the fix
+                if turned:
+                    repairs.append(turned)
             except BlenderError as e:
                 applied.append(f"fix failed for {issue.get('check')}: {e}")
         report = _handle_validate_scene({"spec": data})
@@ -1892,6 +1895,30 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+_TURN_MSG = re.compile(r"rotate it (-?\d+) deg")
+
+
+def turn_step(issue: dict[str, Any]) -> dict[str, Any] | None:
+    """The edit_scene rotate step an issue asks for ("... rotate it 180 deg"), else None."""
+    m = _TURN_MSG.search(str(issue.get("message", "")))
+    objs = issue.get("objects") or []
+    if not m or not objs or not isinstance(objs[0], str):
+        return None
+    return {"op": "rotate", "id": objs[0], "deg": int(m.group(1))}
+
+
+def keep_turn(data: dict[str, Any], issue: dict[str, Any]) -> str | None:
+    """A faces_wall fix the build applied in Blender, written into the stored spec as the
+    object's ``turn_deg`` (single objects only): the qwen aidb6 TV faced the wall again on every
+    rebuild because only Blender knew of the turn."""
+    step = turn_step(issue)
+    obj = next((o for o in data.get("objects", []) if step and o.get("id") == step["id"]), None)
+    if step is None or obj is None or obj.get("count", 1) != 1 or obj.get("grid") or obj.get("seats"):
+        return None
+    obj["turn_deg"] = int(obj.get("turn_deg", 0) + step["deg"]) % 360
+    return f"'{obj['id']}' faced a wall: turned {step['deg']} deg (turn_deg {obj['turn_deg']} in the stored spec)"
+
+
 def dropped_issue(label: str, data: dict[str, Any], spec: SceneSpec | None) -> dict[str, Any]:
     """The blocking issue of a relation the repair loop dropped, with one edit_scene step that
     keeps A near what it was related to: beside the object that kept the same relation to B
@@ -1934,7 +1961,7 @@ _NO_BRIEF_NEXT = (" Before replying DONE, check created against every object and
 
 
 #: the edit_scene ops a verdict names (edits.OPS): never one that does not exist
-_VERDICT_OPS = ("move", "update_object", "add_object", "remove_object", "add_relation")
+_VERDICT_OPS = ("move", "rotate", "update_object", "add_object", "remove_object", "add_relation")
 
 
 def build_verdict(out: dict[str, Any], brief_given: bool = True) -> tuple[str, str]:
@@ -1982,6 +2009,9 @@ def build_verdict(out: dict[str, Any], brief_given: bool = True) -> tuple[str, s
                          f"with {how} (or other moves that fit, or a bigger setting with update_setting); the "
                          f"stored spec no longer has them, so an edit that leaves them out accepts the layout "
                          f"as it is.{unsaved}")
+    step = turn_step(first) if first else None
+    if step is not None and sid:  # "rotate it 180 deg": the op that does it (update_object rotation was refused)
+        edit = f"edit_scene({{scene_id: '{sid}', steps: [{json.dumps(step)}]}})"
     return verdict, (f"Fix only that with {edit} (ops: {', '.join(_VERDICT_OPS)}), then stop. If it does not "
                      f"matter for the brief, reply DONE.{unsaved}")
 
@@ -2580,7 +2610,8 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
       "remove_object {id}, update_object {id, set: count|material|hero|grid|category|detail}, "
       "move {id, to: {against_wall: wall_south} | {beside: sofa, gap_m: 0.5}} (replaces the object's own "
       "relations; positions always come from relations), add_relation {relation: {a, rel, b}}, "
-      "remove_relation {a, rel, b}, update_setting {set: bounds_m|style|floor_material|wall_material|shape|points|kind}. "
+      "remove_relation {a, rel, b}, update_setting {set: bounds_m|style|floor_material|wall_material|shape|points|kind}, "
+      "rotate {id, deg: 90|180|270} (turns it from the way its relations face it). "
       "Common aliases (delete, add, target/name for id, flat fields) are accepted. Applies them to the scene's stored "
       "spec, rebuilds the scene (same seed: untouched objects mostly stay), validates, and saves the result as the "
       "next version (restore_scene on an earlier id undoes it). The current Blender scene is snapshotted first"),

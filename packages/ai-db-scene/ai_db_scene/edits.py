@@ -13,6 +13,8 @@ ops:
   add_relation    {"relation": {"a": ..., "rel": ..., "b": ..., "gap_m": ...}}
   remove_relation {"a": ..., "rel": ..., "b": ...}     (rel optional: all relations a->b)
   update_setting  {"set": {"bounds_m": [...], "style": ..., "floor_material": ..., ...}}
+  rotate          {"id": "teacher_desk", "deg": 180}     (quarter turns on top of the way its
+                  relations face it: ObjectSpec.turn_deg; what "rotate it 180 deg" asks for)
 
 Weak models rarely write these shapes exactly (benchmark: 26 of 34 edit_scene calls were
 invalid), so ``normalize_step`` first rewrites the forms whose intent is unambiguous: op
@@ -28,9 +30,12 @@ import re
 from typing import Any
 
 OPS = ("add_object", "remove_object", "update_object", "move", "add_relation", "remove_relation",
-       "update_setting")
+       "update_setting", "rotate")
 _OBJECT_FIELDS = ("category", "count", "hero", "detail", "grid", "material", "dynamic", "room", "seats",
-                  "seat_category", "variant")
+                  "seat_category", "variant", "turn_deg")
+#: where a rotate step says how far: the first number found (a [x, y, z] rotation: its z)
+_TURN_KEYS = ("deg", "degrees", "angle", "by", "turn_deg", "yaw", "yaw_deg", "rotation_deg", "rotation", "rotate",
+              "amount", "turn")
 _SETTING_FIELDS = ("kind", "bounds_m", "style", "shape", "points", "floor_material", "wall_material", "rooms",
                    "mouldings")
 _RELATION_FIELDS = ("a", "rel", "b", "gap_m", "at_deg")
@@ -50,6 +55,8 @@ OP_ALIASES: dict[str, str] = {
     "drop_relation": "remove_relation",
     "setting": "update_setting", "set_setting": "update_setting", "update_room": "update_setting",
     "resize_room": "update_setting",
+    "turn": "rotate", "rotate_object": "rotate", "turn_object": "rotate", "spin": "rotate", "flip": "rotate",
+    "turn_around": "rotate", "rotate_by": "rotate", "reorient": "rotate",
 }
 #: ops that ask for something edit_scene does on every call anyway: skipped with a note
 _NOOP_OPS = ("validate", "validate_scene", "apply_fixes", "fix", "build", "rebuild", "build_scene", "render",
@@ -161,6 +168,20 @@ def normalize_step(step: Any) -> tuple[dict[str, Any] | None, list[str], str | N
         if op == "update_object" and ("relations" in s or "to" in s) and not s.get("set"):
             notes.append("update_object with relations read as 'move'")
             s["op"] = op = "move"
+        moves = set(s["set"]) if op == "update_object" and isinstance(s.get("set"), dict) else set()
+        if moves and moves <= {"rotation", "rotation_euler", "rotation_deg", "yaw", "yaw_deg"}:
+            # qwen aidb6 classroom, told "rotate it 180 deg": set {rotation: [0, 0, 180]}
+            s = {"op": "rotate", "id": s.get("id"), "deg": s["set"][next(iter(moves))]}
+            notes.append(f"update_object {sorted(moves)} read as rotate (a turn from where its relations face it)")
+            op = "rotate"
+    if op == "rotate":
+        if step.get("op") in ("flip", "turn_around") and not any(k in s for k in _TURN_KEYS):
+            s["deg"] = 180
+        deg = next((_turn_amount(s[k]) for k in _TURN_KEYS if k in s and _turn_amount(s[k]) is not None), None)
+        if deg is None:
+            return None, notes, (f"rotate needs the turn in degrees, e.g. {{op: rotate, id: {s.get('id', '<id>')}, "
+                                 f"deg: 180}} (got keys {_keys(step)})")
+        s = {"op": "rotate", "id": s.get("id"), "deg": deg}
     elif op in ("add_relation", "remove_relation"):
         rel = s.get("relation", s.get("relations"))
         if (isinstance(rel, list) and op == "add_relation") or isinstance(rel, dict):
@@ -172,6 +193,16 @@ def normalize_step(step: Any) -> tuple[dict[str, Any] | None, list[str], str | N
         if op == "remove_relation" and isinstance(s.get("relation"), dict):
             s.update({k: v for k, v in s.pop("relation").items() if k in ("a", "rel", "b")})
     return s, notes, None
+
+
+def _turn_amount(v: Any) -> float | None:
+    """180 / "180" / "180 deg" / [0, 0, 180] -> 180.0; None if no number."""
+    if isinstance(v, (list, tuple)) and v:
+        v = v[-1]
+    if isinstance(v, str):
+        m = re.search(r"-?\d+(?:\.\d+)?", v)
+        v = float(m.group()) if m else None
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
 def _resolve_id(oid: Any, objs: list[dict[str, Any]], p: str, op: str, step: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -227,7 +258,7 @@ def apply_steps(spec: dict[str, Any], steps: Any) -> tuple[dict[str, Any] | None
             done.append(f"added {obj['id']} ({obj.get('category')}){how}")
             continue
         oid = ""
-        if op in ("remove_object", "update_object", "move"):
+        if op in ("remove_object", "update_object", "move", "rotate"):
             got, err = _resolve_id(step.get("id"), objs, p, op, raw)
             if got is None and op == "remove_object" and err and "Blender object" in err:
                 done.append(f"skipped removing '{step.get('id')}': not a spec object; the rebuild clears it")
@@ -286,6 +317,14 @@ def apply_steps(spec: dict[str, Any], steps: Any) -> tuple[dict[str, Any] | None
             data["relations"] = [r for r in data["relations"] if r.get("a") != oid] + new
             done.append(f"moved {oid}: replaced {before - len(data['relations']) + len(new)} relation(s) with "
                         + ", ".join(f"{r['rel']} {r.get('b')}" for r in new) + how)
+        elif op == "rotate":
+            obj = next(o for o in objs if o["id"] == oid)
+            before = obj.get("turn_deg", 0) if isinstance(obj.get("turn_deg"), (int, float)) else 0
+            turn = round((before + step["deg"]) / 90.0) * 90 % 360
+            obj["turn_deg"] = turn
+            snapped = "" if abs((before + step["deg"]) % 360 - turn) < 1e-9 else f" (quarter turns only: {turn})"
+            done.append(f"turned {oid} by {step['deg']:g} deg{snapped}: it now stands {turn} deg from the way its "
+                        f"relations face it{how}")
         elif op == "add_relation":
             rel = step.get("relation")
             rels = rel if isinstance(rel, list) else [rel]

@@ -174,6 +174,9 @@ class _Inst:
     hero: bool
     idx: int
     n: int
+    #: ObjectSpec.turn_deg: the object stands this many degrees turned from its solved yaw; the
+    #: solver works with its footprint as turned (``dims`` swapped for 90/270)
+    turn: int = 0
 
     @property
     def flat(self) -> bool:
@@ -307,7 +310,10 @@ class _Problem:
             for i in range(1, o.count + 1):
                 iid = o.id if o.count == 1 else f"{o.id}_{i}"
                 dims = dims_override.get(iid) or dims_override.get(o.id) or prior.typical_m
-                self.insts[iid] = _Inst(iid, o.id, o.category, prior, dims, o.hero, i - 1, o.count)
+                turn = 0 if o.id in self.seated else o.turn_deg
+                if turn % 180:
+                    dims = (dims[1], dims[0], dims[2])
+                self.insts[iid] = _Inst(iid, o.id, o.category, prior, dims, o.hero, i - 1, o.count, turn)
                 by_base.setdefault(o.id, []).append(iid)
         self.rels: list[_Rel] = []
         for r in spec.relations:
@@ -1173,11 +1179,13 @@ def _to_placements(pr: _Problem, poses: dict[str, _Pose]) -> list[Placement]:
             boxes.setdefault(inst.base, []).append(p)
             x, y = _local(p, plan.table_off)
             dims = plan.table
+        if inst.turn % 180:
+            dims = (dims[1], dims[0], dims[2])  # the object's own dims: it stands turned
         out.append(
             Placement(
                 iid,
                 (round(x, 6), round(y, 6), round(p.zb + dims[2] / 2, 6)),
-                round(math.degrees(p.yaw) % 360.0, 6),
+                round((math.degrees(p.yaw) + inst.turn) % 360.0, 6),
                 dims,
                 inst.category,
                 _facing_target(pr, iid),
@@ -1499,6 +1507,15 @@ def check_layout(
         return _check_rooms(spec, placements, priors)
     pr = _Problem(spec, priors or load_priors(), {p.id: p.dims for p in placements})
     pr.blocked = list(blocked or [])
+    turned = {o.id: o.turn_deg for o in spec.objects if o.turn_deg and o.grid is None and not o.seats}
+    if turned:  # back to the solver's frame: the yaw the relations give, the footprint as turned
+        def base(pid: str) -> str:
+            head, _, tail = pid.rpartition("_")
+            return head if tail.isdigit() and head in turned else pid
+
+        placements = [replace(pl, rotation_deg_z=(pl.rotation_deg_z - turned[base(pl.id)]) % 360.0,
+                              dims=(pl.dims[1], pl.dims[0], pl.dims[2]) if turned[base(pl.id)] % 180 else pl.dims)
+                      if base(pl.id) in turned else pl for pl in placements]
     pr.strict_rings = False  # an uneven ring is reported soft, below
     pr.verify_stacks = False  # a stacked copy is checked once every pose is known, below
     poses: dict[str, _Pose] = {}

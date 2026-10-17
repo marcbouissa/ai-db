@@ -82,6 +82,9 @@ class ObjectSpec:
     seat_category: str | None = None  # default: the table's usual seat (layout.SEAT_CATEGORY)
     #: design family of generated seating/tables (furniture_variants.FAMILIES); None = the scene's
     variant: str | None = None
+    #: quarter turns (0/90/180/270, counter-clockwise) on top of the yaw the relations give: what
+    #: edit_scene's rotate op sets when the validator says "rotate it 180 deg"
+    turn_deg: int = 0
 
 
 @dataclass(frozen=True)
@@ -134,7 +137,8 @@ class SceneSpec:
                  **({"room": o.room} if o.room else {}),
                  **({"seats": o.seats} if o.seats else {}),
                  **({"seat_category": o.seat_category} if o.seat_category else {}),
-                 **({"variant": o.variant} if o.variant else {})}
+                 **({"variant": o.variant} if o.variant else {}),
+                 **({"turn_deg": o.turn_deg} if o.turn_deg else {})}
                 for o in self.objects
             ],
             "relations": [
@@ -224,6 +228,9 @@ def spec_schema() -> dict[str, Any]:
                         "seat_category": {"type": "string",
                                           "description": "the seats' category (default: the table's usual chair)"},
                         "detail": {"enum": list(DETAILS), "description": "modeling detail level; default standard"},
+                        "turn_deg": {"enum": [0, 90, 180, 270],
+                                     "description": ("turn the object this much (counter-clockwise) from the way its "
+                                                     "relations face it, e.g. 180 when it faces a wall; default 0")},
                         "variant": {"type": "string",
                                     "description": ("sofa/armchair/table/chair design (also as 'style'): one of "
                                                     f"{families()}; default: one the setting.style suits, the "
@@ -430,7 +437,7 @@ def _parse_objects(raw: Any, errors: list[str], notes: list[str] | None = None) 
             errors.append(f"{p}: expected object, got {_typename(o)}")
             continue
         _unknown_keys(p, o, ("id", "category", "count", "hero", "detail", "grid", "material", "dynamic", "room",
-                             "seats", "seat_category", "variant", "style"), errors)
+                             "seats", "seat_category", "variant", "style", "turn_deg"), errors)
         variant, vnote = coerce_variant(o.get("variant", o.get("style")))
         if vnote and notes is not None:
             notes.append(f"{p}.variant: {vnote}")
@@ -481,12 +488,26 @@ def _parse_objects(raw: Any, errors: list[str], notes: list[str] | None = None) 
         if seat_cat is not None and (not isinstance(seat_cat, str) or seat_cat not in cats):
             errors.append(f"{p}.seat_category: {seat_cat!r} is not a known category.{_suggest(str(seat_cat), cats)}")
             ok = False
+        turn, tnote = coerce_turn(o.get("turn_deg", 0))
+        if turn is None:
+            errors.append(f"{p}.turn_deg: {tnote}")
+            ok = False
+        elif tnote and notes is not None:
+            notes.append(f"{p}.turn_deg: {tnote}")
         if isinstance(oid, str):
             seen.add(oid)
         if ok and grid_ok and mat_ok:
             out.append(ObjectSpec(str(oid), str(cat), count, hero, str(detail), grid, material, dynamic, room,
-                                  seats, seat_cat, variant))
+                                  seats, seat_cat, variant, turn or 0))
     return out
+
+
+def coerce_turn(v: Any) -> tuple[int | None, str | None]:
+    """(quarter turn 0/90/180/270, note): -90 -> 270, 175 -> 180 (noted); None with the reason."""
+    if not _is_num(v):
+        return None, f"expected degrees (0, 90, 180 or 270), got {v!r}"
+    turn = round(float(v) / 90.0) * 90 % 360
+    return turn, None if abs(float(v) % 360 - turn) < 1e-9 else f"{v!r} read as {turn} (quarter turns only)"
 
 
 def _parse_grid(p: str, raw: Any, count: Any, errors: list[str]) -> tuple[tuple[int, int, float, float] | None, bool]:
