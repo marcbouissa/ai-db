@@ -213,7 +213,10 @@ if VIEW == "interior":
 else:
     # plan: straight down, everything above 2.5 m cut away (ceilings, wall tops, roofs)
     cam_data.type = "ORTHO"
-    cam_data.ortho_scale = max(hi.x - lo.x, hi.y - lo.y) * 1.1
+    # ortho_scale spans the image's longer side: fit both extents at the render's aspect
+    aspect = scene.render.resolution_x / scene.render.resolution_y
+    dx, dy = hi.x - lo.x, hi.y - lo.y
+    cam_data.ortho_scale = (max(dx, dy * aspect) if aspect >= 1 else max(dx / aspect, dy)) * 1.1
     cam.location = Vector((center.x, center.y, floor + 30.0))
     cam_data.clip_start, cam_data.clip_end = 30.0 - 2.5, 30.0 + 1.0
     target = Vector((center.x, center.y, floor))
