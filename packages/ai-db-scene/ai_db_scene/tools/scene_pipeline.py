@@ -573,6 +573,7 @@ result = {{"tagged": len(json.loads({payload!r}))}}
 #: every foliage-material mesh under the given roots; the lobes stay as the darker inner mass.
 _FOLIAGE = """
 import bpy, json, math
+from mathutils import Matrix
 cfg = json.loads({payload!r})
 
 def sock(sockets, name, kind=None):
@@ -580,26 +581,35 @@ def sock(sockets, name, kind=None):
 
 def leaf_object():
     ob = bpy.data.objects.get("ai_db_leaf")
-    if ob is not None:
-        return ob
-    # a pointed-oval leaf, 1 unit long, slightly cupped, in the XY plane; scaled per instance
-    verts = [(0.0, -0.5, 0.0), (0.16, -0.25, 0.03), (0.2, 0.05, 0.04), (0.12, 0.3, 0.02), (0.0, 0.5, 0.0),
-             (-0.12, 0.3, 0.02), (-0.2, 0.05, 0.04), (-0.16, -0.25, 0.03), (0.0, 0.0, 0.0)]
-    faces = [(8, i, (i + 1) % 8) for i in range(8)]
-    me = bpy.data.meshes.new("ai_db_leaf")
-    me.from_pydata(verts, [], faces)
-    for p in me.polygons:
-        p.use_smooth = True
-    ob = bpy.data.objects.new("ai_db_leaf", me)
+    if ob is None:
+        # a pointed-oval leaf, 1 unit long, slightly cupped, in the XY plane; scaled per instance
+        verts = [(0.0, -0.5, 0.0), (0.16, -0.25, 0.03), (0.2, 0.05, 0.04), (0.12, 0.3, 0.02), (0.0, 0.5, 0.0),
+                 (-0.12, 0.3, 0.02), (-0.2, 0.05, 0.04), (-0.16, -0.25, 0.03), (0.0, 0.0, 0.0)]
+        faces = [(8, i, (i + 1) % 8) for i in range(8)]
+        me = bpy.data.meshes.new("ai_db_leaf")
+        me.from_pydata(verts, [], faces)
+        for p in me.polygons:
+            p.use_smooth = True
+        ob = bpy.data.objects.new("ai_db_leaf", me)
+    # a rebuild's tidy removed the holder but left the leaf: it stood at the origin, in the middle
+    # of the room ("low_table_column and ai_db_leaf intersect"): hidden and parked again every time
     coll = bpy.data.collections.get("ai_db_hidden") or bpy.data.collections.new("ai_db_hidden")
     if coll.name not in bpy.context.scene.collection.children:
         bpy.context.scene.collection.children.link(coll)
-    coll.objects.link(ob)
-    holder = bpy.data.objects.new("ai_db_templates", None)  # asset-marked: checks skip the template
+    if ob.name not in coll.objects:
+        coll.objects.link(ob)
+    holder = bpy.data.objects.get("ai_db_templates")
+    if holder is None:
+        holder = bpy.data.objects.new("ai_db_templates", None)  # asset-marked: checks skip the template
     holder["asset"] = "templates"
-    coll.objects.link(holder)
+    if holder.name not in coll.objects:
+        coll.objects.link(holder)
     ob.parent = holder
     holder.location = (0.0, 0.0, -1000.0)  # far from every scene; instances use its shape only
+    # a hidden collection is never evaluated: its matrix_world stayed at the origin, where a
+    # table in the middle of the room "intersected" it (round lobby, the ring's table)
+    holder.matrix_world = Matrix.Translation((0.0, 0.0, -1000.0))
+    ob.matrix_world = Matrix.Translation((0.0, 0.0, -1000.0))
     coll.hide_render = True
     coll.hide_viewport = True
     return ob
