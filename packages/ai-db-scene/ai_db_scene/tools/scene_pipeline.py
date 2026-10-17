@@ -979,6 +979,7 @@ _KEEP_PARTS = {**{c: ("leg", "arm_frame", "arm_rib", "base_rail", "plinth", "pil
                "parasol": ("base", "pole", "hub", "finial"),
                # a "wood" park bench is its slats on the cast-iron frames; a bin keeps its dark liner
                "bench": ("frame_",), "trash_can": ("liner", "mouth"),
+               "fountain": ("water",),  # a "stone" fountain is stone round its water
                # lamps: a "brass lamp" is brass metalwork under a fabric shade and a bulb
                **{c: ("shade", "bulb", "diffuser") for c in ("floor_lamp", "table_lamp", "pendant_lamp",
                                                              "wall_sconce", "ceiling_light")}}

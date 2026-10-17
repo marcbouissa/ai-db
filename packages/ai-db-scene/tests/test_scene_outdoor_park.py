@@ -62,7 +62,7 @@ def test_a_facing_and_an_around_of_one_bench_make_one_ring_member():
             "relations": [{"a": "bench", "rel": "around", "b": "fountain", "gap_m": 9.0},
                           {"a": "bench", "rel": "facing", "b": "fountain"}]}
     data, _notes = normalize_spec(spec)
-    assert data["relations"] == [{"a": "bench", "rel": "around", "b": "fountain", "gap_m": 2.55}]  # 4 m at most
+    assert data["relations"] == [{"a": "bench", "rel": "around", "b": "fountain", "gap_m": 2.15}]  # 4 m at most (a 3.2 m fountain)
 
 
 def test_a_bench_placed_by_something_else_keeps_its_relations():

@@ -77,6 +77,46 @@ def _brace(pid: str, x: float, y0: float, z0: float, y1: float, z1: float, tx: f
                 mat, rotation_deg=[round(ang, 2), 0, 0])
 
 
+#: a fountain's water: a still, dark-blue surface (glass reads as a lid on a stone dish)
+_FOUNTAIN_WATER = "glass:tinted:#4f7f8f"
+
+
+def _lathe(pid: str, profile: list[list[float]], size: list[float], at: list[float], material: str,
+           segments: int = 64) -> dict[str, Any]:
+    return {"id": pid, "shape": "lathe", "profile": profile, "size": size, "at": at, "material": material,
+            "segments": segments}
+
+
+def _fountain() -> list[dict[str, Any]]:
+    """A park fountain (aidb7 review: the old one read as a birdbath): a wide round basin with a
+    coping rim and water standing in it, a central column with two tiers of bowls (each holding
+    water) and a finial. Unit space: the basin's coping is the full 1.0 x 1.0 footprint, the
+    finial the full height."""
+    rim_h = 0.22
+    basin = [[0.0, 0.0], [0.47, 0.0], [0.47, rim_h - 0.03], [0.5, rim_h - 0.02], [0.5, rim_h],
+             [0.42, rim_h], [0.42, 0.05], [0.0, 0.05]]  # wall + coping lip + floor, revolved
+
+    def bowl(r: float, t: float) -> list[list[float]]:  # a shallow dish with a rolled lip
+        return [[0.0, 0.0], [r * 0.35, 0.0], [r * 0.95, t * 0.75], [r, t], [r * 0.9, t], [r * 0.4, t * 0.35],
+                [0.0, t * 0.35]]
+
+    column = [[0.0, 0.0], [0.07, 0.0], [0.07, 0.04], [0.045, 0.07], [0.04, 0.3], [0.05, 0.33], [0.05, 0.36],
+              [0.0, 0.36]]
+    upper = [[0.0, 0.0], [0.035, 0.0], [0.025, 0.04], [0.022, 0.2], [0.03, 0.22], [0.0, 0.22]]
+    finial = [[0.0, 0.0], [0.03, 0.0], [0.04, 0.03], [0.02, 0.07], [0.008, 0.1], [0.0, 0.11]]
+    return [
+        _lathe("basin", basin, [1.0, 1.0, rim_h], [0, 0, 0], _STONE),
+        _cyl("water_basin", [0.84, 0.84, 0.012], [0, 0, rim_h - 0.06], _FOUNTAIN_WATER),
+        _lathe("column", column, [0.14, 0.14, 0.36], [0, 0, 0.05], _STONE, 32),
+        _lathe("bowl_lower", bowl(0.23, 0.07), [0.46, 0.46, 0.07], [0, 0, 0.41], _STONE),
+        _cyl("water_lower", [0.4, 0.4, 0.008], [0, 0, 0.465], _FOUNTAIN_WATER),
+        _lathe("column_upper", upper, [0.07, 0.07, 0.22], [0, 0, 0.48], _STONE, 32),
+        _lathe("bowl_upper", bowl(0.12, 0.05), [0.24, 0.24, 0.05], [0, 0, 0.7], _STONE),
+        _cyl("water_upper", [0.2, 0.2, 0.006], [0, 0, 0.738], _FOUNTAIN_WATER),
+        _lathe("finial", finial, [0.08, 0.08, 0.11], [0, 0, 0.75], _STONE, 24),
+    ]
+
+
 def _park_bench() -> list[dict[str, Any]]:
     iron = _CAST_IRON
     wood = "wood:pine"
@@ -404,12 +444,7 @@ _RECIPES: dict[str, Any] = {
         *[_cyl(f"wheel_{s}{i}", [w, w * 2.2 / 2.8, t], [x, y, 0.0], "rubber", rotation_deg=[0, 90, 0])
           for i, (y, w, t) in enumerate(((-0.06, 0.29, 0.2), (0.33, 0.21, 0.15)))
           for s, x in (("l", -0.4), ("r", 0.4))]],
-    "fountain": lambda: [
-        _cyl("basin", [1.0, 1.0, 0.25], [0, 0, 0], _STONE),
-        _cyl("water", [0.92, 0.92, 0.02], [0, 0, 0.22], "glass:tinted"),
-        _cyl("pedestal", [0.14, 0.14, 0.45], [0, 0, 0.25], _STONE),
-        _cyl("bowl", [0.45, 0.45, 0.08], [0, 0, 0.7], _STONE),
-        _cyl("spout", [0.05, 0.05, 0.22], [0, 0, 0.78], _STONE)],
+    "fountain": lambda: _fountain(),
 }
 
 
