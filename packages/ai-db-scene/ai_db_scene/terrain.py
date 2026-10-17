@@ -41,6 +41,14 @@ TERRAIN_RELS = ("at_edge_of", "near", "in", "leads_to", "back_of", "facing")
 FACES_WATER = ("sun_lounger", "parasol", "bench", "chair", "armchair", "picnic_table", "gazebo")
 #: categories that belong on / over the water when asked to lead there
 OVER_WATER = ("boardwalk",)
+#: ``{a: boardwalk, rel: starts_at, b: bushes}``: the boardwalk leads to the water from ``b`` (its
+#: land end at b). qwen aidb7 beach_cove wrote ``boardwalk1 connects bush1``; read as ``beside``
+#: the solver dropped it (a jetty cannot both reach the water and stand beside the back bushes).
+LINK_REL = "starts_at"
+#: what models write for that link (a over the water, b an object on the land)
+LINK_WORDS = ("connects", "connects_to", "connected_to", "connect", "from", "joins", "join", "links", "link",
+              "linking", "links_to", "starts_at", "starts_from", "start_at", "runs_from", "leads_from", "between",
+              "comes_from", "begins_at")
 #: trees frame the scene: at the sides or the back, not on the beach strip in front of the group
 FRAMING = ("palm_tree", "tree")
 _FRAME_COST = 0.6
@@ -289,9 +297,11 @@ def _lift(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     for i, o in enumerate(objs):  # a tree on a palm beach is a palm, a fern is a fern
         if not isinstance(o, dict):
             continue
-        cat, hint = o.get("category"), f"{_word(o.get('id'))} {_word(o.get('material'))}"
+        # the id names the plant; the material only colours it (qwen aidb7: bush1 with material
+        # green_fern became a fern, then the brief check asked for the bushes it had)
+        cat, hint, mat = o.get("category"), _word(o.get("id")), _word(o.get("material"))
         new = None
-        if cat == "tree" and ("palm" in hint or "coconut" in hint or tropical):
+        if cat == "tree" and ("palm" in f"{hint} {mat}" or "coconut" in hint or tropical):
             new = "palm_tree"
         elif cat in ("bush", "potted_plant") and "fern" in hint:
             new = "fern"
@@ -360,6 +370,18 @@ def _lift(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             a, b, rel = r.get("a"), r.get("b"), _word(r.get("rel"))
             if a in ground_ids or a in water_ids:
                 notes.append(f"relations[{i}]: dropped (its subject '{a}' is the ground / water itself)")
+                continue
+            if has_water and cats.get(a) in OVER_WATER and b in cats and b != a and rel in LINK_WORDS:
+                # 'boardwalk connects bushes': it runs from the bushes to the water
+                out.append({"a": a, "rel": LINK_REL, "b": b})
+                if r.get("rel") == LINK_REL:
+                    continue
+                lead = any(isinstance(x, dict) and x.get("a") == a and (x.get("b") == WATER or _word(x.get("b")) in
+                                                                        shore_words) for x in rels)
+                if not lead:
+                    out.append({"a": a, "rel": "leads_to", "b": WATER})
+                notes.append(f"relations[{i}]: '{a} {r.get('rel')} {b}' read as '{a} {LINK_REL} {b}'"
+                             + ("" if lead else f" + '{a} leads_to water'") + f": it runs from {b} to the water")
                 continue
             side_rel = _wall_word_rel(b, setting.get("water")) if has_water and b not in cats and rel != "facing" else None
             if side_rel is not None:
@@ -451,14 +473,15 @@ def _wall_word_rel(b: Any, water: Any) -> str | None:
 
 
 def hold_water_relations(data: Any) -> tuple[Any, list[dict[str, Any]]]:
-    """(data without its b: "water" relations, those relations, each once): the general relation
-    normalisation knows no water and would drop them; validation gets them back after it."""
+    """(data without its b: "water" relations and its boardwalk links, those relations, each once):
+    the general relation normalisation knows no water and would drop them; validation gets them
+    back after it."""
     if not isinstance(data, dict) or not isinstance(data.get("relations"), list):
         return data, []
     held: list[dict[str, Any]] = []
     rest = []
     for r in data["relations"]:
-        if isinstance(r, dict) and r.get("b") == WATER:
+        if isinstance(r, dict) and (r.get("b") == WATER or r.get("rel") == LINK_REL):
             if r not in held:
                 held.append(r)
         else:
@@ -626,7 +649,9 @@ class Terrain:
         cats = {o.id: o.category for o in spec.objects}
         oriented = {r.a for r in spec.relations if r.b != WATER and r.rel in ("facing", "against_wall", "in_front_of",
                                                                               "around")}
-        placed = {r.a for r in spec.relations if r.b != WATER and r.rel != "facing"}
+        placed = {r.a for r in spec.relations if r.b != WATER and r.rel not in ("facing", LINK_REL)}
+        #: object id -> the boardwalk that starts at it (``starts_at``)
+        self.start_of: dict[str, str] = {r.b: r.a for r in spec.relations if r.rel == LINK_REL}
         for oid, cat in cats.items():
             if cat in OVER_WATER and self.water is not None and oid not in placed and not self.rels.get(oid):
                 self.rels[oid] = ["leads_to"]  # a boardwalk on a beach runs out to the water
@@ -787,8 +812,8 @@ class Terrain:
         cat = self.cats.get(oid)
         rels = self.rels.get(oid, [])
         if self.water is not None and (any(r in rels for r in ("at_edge_of", "in", "leads_to"))
-                                       or cat in FACES_WATER or cat in OVER_WATER):
-            return 0
+                                       or cat in FACES_WATER or cat in OVER_WATER or oid in self.start_of):
+            return 0  # what a boardwalk starts at goes down before the palms take its place
         return 1
 
     def frame_cost(self, oid: str, x: float, y: float) -> float:
@@ -803,6 +828,34 @@ class Terrain:
         back, top, s = self.back_at(x, y), self.dry(), self.signed(x, y)
         front = min(max((s - back) / max(top - back, 1e-6), 0.0), 1.0)  # 0 at the back edge, 1 at the dry line
         return _FRAME_COST * max(0.0, 1 - u / _FRAME_SIDES) * front
+
+    def _link_target(self, link: tuple[float, float, float, float],
+                     dims: tuple[float, float, float]) -> tuple[float, float]:
+        """Where an object the boardwalk ``link`` (x, y, yaw, length) starts at stands: just behind
+        its land end, on its axis (``_extend_back`` then runs the boardwalk up to it)."""
+        x, y, yaw, length = link
+        f = (math.sin(yaw), -math.cos(yaw))
+        back = length / 2 + max(dims[0], dims[1]) / 2 + 0.6
+        return x - f[0] * back, y - f[1] * back
+
+    def link_cost(self, link: tuple[float, float, float, float], x: float, y: float,
+                  dims: tuple[float, float, float]) -> float:
+        tx, ty = self._link_target(link, dims)
+        return 0.6 * min(math.hypot(x - tx, y - ty) / 3.0, 2.0)
+
+    def link_spots(self, link: tuple[float, float, float, float], dims: tuple[float, float, float], rng: Any,
+                   n: int) -> list[tuple[float, float, float]]:
+        """Candidates on the boardwalk's axis behind its land end (up to the setting's back)."""
+        yaw = link[2]
+        f = (math.sin(yaw), -math.cos(yaw))
+        tx, ty = self._link_target(link, dims)
+        out = []
+        for k in range(max(n, 1)):
+            t = 0.0 if k == 0 else rng.uniform(0.0, 6.0)
+            px, py = tx - f[0] * t + rng.uniform(-0.3, 0.3), ty - f[1] * t + rng.uniform(-0.3, 0.3)
+            if 0.0 <= px <= self.W and 0.0 <= py <= self.D:
+                out.append((px, py, rng.uniform(0, 2 * math.pi)))
+        return out
 
     def dry(self) -> float:
         """Signed distance where the dry land ends (land objects stay on the land side of it)."""

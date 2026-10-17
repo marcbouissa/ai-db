@@ -358,11 +358,12 @@ class _Problem:
                 self.insts[iid] = _Inst(iid, o.id, o.category, prior, dims, o.hero, i - 1, o.count, turn)
                 by_base.setdefault(o.id, []).append(iid)
         self.rels: list[_Rel] = []
-        from ai_db_scene.terrain import WATER, terrain_of
+        from ai_db_scene.terrain import LINK_REL, WATER, terrain_of
 
         self.terrain = terrain_of(spec)  # outdoor ground/water: relations to the water live there
+        self.by_base = by_base
         for r in spec.relations:
-            if r.b == WATER:
+            if r.b == WATER or r.rel == LINK_REL:  # the terrain's (a boardwalk's land end: terrain.link_cost)
                 continue
             for ai in by_base[r.a]:
                 a = self.insts[ai]
@@ -779,6 +780,16 @@ class _Problem:
             return False
         return _sep(pa, a.dims, pb, b.dims) < self.margin(a, b) - LAYOUT_EPS_M
 
+    def link_end(self, inst: _Inst, poses: dict[str, _Pose]) -> tuple[float, float, float, float] | None:
+        """(x, y, yaw, length) of the placed boardwalk that starts at ``inst`` (the first copy of
+        its object), else None."""
+        a = None if self.terrain is None or inst.idx else self.terrain.start_of.get(inst.base)
+        aid = self.by_base.get(a, [None])[0] if a is not None else None
+        pa = poses.get(aid) if aid is not None else None
+        if pa is None or aid is None:
+            return None
+        return pa.x, pa.y, pa.yaw, self.insts[aid].dims[1]
+
     def hard_violation(self, inst: _Inst, pose: _Pose, poses: dict[str, _Pose]) -> str | None:
         """First hard-constraint violation of `inst` at `pose` against already-placed poses."""
         e = LAYOUT_EPS_M
@@ -825,6 +836,9 @@ class _Problem:
 
     def soft_cost(self, inst: _Inst, pose: _Pose, poses: dict[str, _Pose]) -> float:
         cost = 0.0 if self.terrain is None else self.terrain.cost(inst.base, pose.x, pose.y, pose.yaw, inst.dims)
+        link = self.link_end(inst, poses)
+        if link is not None:
+            cost += self.terrain.link_cost(link, pose.x, pose.y, inst.dims)  # type: ignore[union-attr]
         cells, at = ceiling_grid(self, inst)
         if cells:  # a free ceiling light keeps to its grid cell
             cost += math.hypot(pose.x - cells[at][0], pose.y - cells[at][1]) / max(self.W, self.D, 1.0)
@@ -1077,6 +1091,9 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
         out.append(p)
     if pr.terrain is not None and prim is None:  # shore bands and jetties: terrain.py proposes
         out += [_Pose(x, y, yaw, 0.0) for x, y, yaw in pr.terrain.propose(inst.base, inst.dims, rng, n // 2)]
+        link = pr.link_end(inst, poses)
+        if link is not None:  # where the boardwalk starts: behind its land end
+            out += [_Pose(x, y, yaw, 0.0) for x, y, yaw in pr.terrain.link_spots(link, inst.dims, rng, n // 3)]
     return out
 
 

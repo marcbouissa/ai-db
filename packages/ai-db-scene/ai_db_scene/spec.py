@@ -14,6 +14,8 @@ from ai_db_scene.priors import SUPPORTS, categories
 from ai_db_scene.shapes import polygon_wall_names
 from ai_db_scene.terrain import (
     GROUND_KINDS,
+    LINK_REL,
+    OVER_WATER,
     TERRAIN_RELS,
     WATER,
     Water,
@@ -643,6 +645,14 @@ def _parse_relations(raw: Any, ids: list[str], setting: Setting | None, errors: 
                 errors.append(f"{p}.rel: {rel!r} toward the water is not allowed; allowed values: {list(TERRAIN_RELS)}")
                 continue
             out.append(Relation(str(a), trel, WATER))
+            continue
+        if rel == LINK_REL:  # a boardwalk's land end (terrain.py)
+            if setting is None or setting.water is None or (cats or {}).get(str(a)) not in OVER_WATER or b not in ids \
+                    or a == b:
+                errors.append(f"{p}: '{LINK_REL}' links a {'/'.join(OVER_WATER)} (a) to the object it starts at (b) "
+                              "on a setting with water")
+                continue
+            out.append(Relation(str(a), LINK_REL, str(b)))
             continue
         if rel in TERRAIN_RELS and rel not in RELATIONS:
             errors.append(f"{p}.rel: '{rel}' only relates an object to the water (b: '{WATER}' with setting.water); "
