@@ -800,6 +800,47 @@ _RECIPES.update({
 })
 
 
+
+# Beach furniture (tropical / beach scenes; palms, ferns, bushes and the boardwalk are grown by
+# vegetation.py / terrain.py instead). Front is -Y: a lounger's foot end, its backrest at +Y.
+_TEAK = "wood:walnut"
+_CUSHION = "fabric:canvas:#ece6d8"
+_CANOPY = "fabric:canvas:#efe7d6"
+
+
+def _sun_lounger() -> list[dict[str, Any]]:
+    """Sun lounger (0.7 x 1.95 x 0.85 m): a teak frame on four legs, a flat seat cushion and a
+    raised backrest cushion on its frame and strut at the head end (+Y)."""
+    seat_z = 0.385
+    parts = [*[_box(f"leg_{i}", [0.07, 0.035, seat_z - 0.05], [x, y, 0], _TEAK)
+               for i, (x, y) in enumerate(((-0.44, -0.46), (0.44, -0.46), (-0.44, 0.46), (0.44, 0.46)))],
+             *[_box(f"rail_{s}", [0.06, 1.0, 0.05], [x, 0, seat_z - 0.05], _TEAK) for s, x in (("l", -0.47), ("r", 0.47))],
+             *[_box(f"end_{s}", [0.88, 0.03, 0.05], [0, y, seat_z - 0.05], _TEAK) for s, y in (("f", -0.485), ("b", 0.485))],
+             *[_box(f"slat_{k}", [0.88, 0.04, 0.02], [0, round(-0.44 + k * 0.07, 4), seat_z], _TEAK) for k in range(9)],
+             {"id": "seat_cushion", "shape": "rounded_slab", "size": [0.86, 0.6, 0.075], "at": [0, -0.18, seat_z + 0.02],
+              "corner_radius": 0.03, "material": _CUSHION},
+             _brace("back_frame", 0, 0.14, seat_z + 0.02, 0.47, 0.9, 0.9, 0.035, _TEAK),
+             _brace("back_cushion", 0, 0.15, seat_z + 0.055, 0.46, 0.995, 0.86, 0.075, _CUSHION),
+             _brace("back_strut", 0, 0.46, seat_z, 0.36, 0.72, 0.6, 0.04, _TEAK)]
+    return parts
+
+
+def _parasol() -> list[dict[str, Any]]:
+    """Beach parasol (2.8 m across, 2.45 m tall): a weighted base, a pole, a hub and a shallow
+    canopy (a thin revolved shell, concave underneath) with a finial."""
+    return [_cyl("base", [0.16, 0.16, 0.035], [0, 0, 0], _DARK),
+            _cyl("pole", [0.022, 0.022, 0.93], [0, 0, 0.035], "wood:walnut"),
+            _cyl("hub", [0.05, 0.05, 0.05], [0, 0, 0.79], _TEAK),
+            {"id": "canopy", "shape": "lathe", "size": [1.0, 1.0, 0.19], "at": [0, 0, 0.78], "segments": 48,
+             "closed": True, "profile": [[0.5, 0.0], [0.3, 0.1], [0.0, 0.17], [0.0, 0.155], [0.29, 0.088], [0.49, -0.014]],
+             "material": _CANOPY},
+            *[_box(f"flap_{k}", [0.004, 0.24, 0.04], [round(0.5 * math.cos(math.radians(a)), 4), round(0.5 * math.sin(math.radians(a)), 4), 0.745],
+                   _CANOPY, rotation_deg=[0, 0, round(a, 2)]) for k, a in enumerate(range(0, 360, 30))],
+            _sphere("finial", [0.035, 0.035, 0.03], [0, 0, 0.97], _TEAK)]
+
+
+_RECIPES.update({"sun_lounger": _sun_lounger, "parasol": _parasol})
+
 # --- seeded variation -----------------------------------------------------------------------
 # The idea (one generator per category, its proportions drawn from ranges by a seed so two
 # instances differ) follows Infinigen Indoors (Princeton VL, BSD-3-Clause,
@@ -890,7 +931,25 @@ def _shelving_v(rng: Any) -> list[dict[str, Any]]:
     return parts
 
 
+def _rock_v(rng: Any) -> list[dict[str, Any]]:
+    """A boulder of its own: a flattened mass with 2-4 lumps pressed in at random, a few tones of
+    stone, now and then a mossy side (rocks of one scene used to be one shape)."""
+    tones = ("stone:#5d5850", "stone:#6f6b63", "stone:#4f4a44", "stone:#7d776d", "stone:#66605a")
+    parts = [_sphere("mass", [1.0, round(rng.uniform(0.7, 0.92), 3), round(rng.uniform(0.6, 0.85), 3)], [0, 0, 0],
+                     rng.choice(tones))]
+    for k in range(rng.randint(3, 6)):
+        sz = [round(rng.uniform(0.35, 0.62), 3) for _ in range(3)]
+        x = round(rng.uniform(-0.5 + sz[0] / 2, 0.5 - sz[0] / 2) * 0.7, 3)
+        y = round(rng.uniform(-0.35 + sz[1] / 2, 0.35 - sz[1] / 2) * 0.7, 3)
+        z = round(rng.uniform(0.08, 0.6 - sz[2] / 2), 3)
+        parts.append(_sphere(f"lump_{k}", sz, [x, y, max(z, 0.05)], rng.choice(tones)))
+    if rng.random() < 0.3:
+        parts.append(_sphere("moss", [0.5, 0.28, 0.25], [-0.1, 0.2, 0.42], "foliage:#4b5e2e"))
+    return parts
+
+
 _VARIANTS: dict[str, Any] = {
+    "rock": _rock_v,
     "dresser": lambda r: _cabinet_v(r, (0, 0), (3, 6), True, _WOOD),
     "nightstand": lambda r: _cabinet_v(r, (0, 1), (1, 3), True, _WALNUT),
     "cabinet": lambda r: _cabinet_v(r, (1, 3), (0, 2), r.random() < 0.3, _WOOD),

@@ -45,7 +45,9 @@ def test_valid_spec_roundtrip():
 def test_vocabularies_in_schema():
     schema = spec_schema()
     assert schema["properties"]["setting"]["properties"]["kind"]["enum"] == list(SETTING_KINDS)
-    assert schema["properties"]["relations"]["items"]["properties"]["rel"]["enum"] == list(RELATIONS)
+    rels = schema["properties"]["relations"]["items"]["properties"]["rel"]["enum"]
+    assert rels[:len(RELATIONS)] == list(RELATIONS)  # then the relations to setting.water (terrain.py)
+    assert set(rels[len(RELATIONS):]) == {"at_edge_of", "near", "in", "leads_to", "back_of"}
     assert set(RELATIONS) == {"on", "against_wall", "in_front_of", "beside", "facing", "centered_in", "under", "around",
                               "above"}
 

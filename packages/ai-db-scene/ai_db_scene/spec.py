@@ -12,6 +12,19 @@ from ai_db_scene.furniture_variants import coerce_variant, families
 from ai_db_scene.materials import STYLE_PALETTES, coerce_material, material_vocabulary, style_error
 from ai_db_scene.priors import SUPPORTS, categories
 from ai_db_scene.shapes import polygon_wall_names
+from ai_db_scene.terrain import (
+    GROUND_KINDS,
+    TERRAIN_RELS,
+    WATER,
+    Water,
+    hold_water_relations,
+    lift_terrain,
+    parse_ground,
+    parse_water,
+    release_water_relations,
+    water_relation,
+    water_schema,
+)
 
 RELATIONS = ("on", "against_wall", "in_front_of", "beside", "facing", "centered_in", "under", "around", "above")
 SETTING_KINDS = ("indoor", "outdoor", "tabletop", "single_asset")
@@ -53,6 +66,10 @@ class Setting:
     #: classical mouldings swept along the room outline (MOULDINGS); None = the style's default
     #: (classic: crown + baseboard), () = none
     mouldings: tuple[str, ...] | None = None
+    #: outdoor ground kind (terrain.GROUND_KINDS: sand, grass, ...) and water body (terrain.Water):
+    #: a real terrain with a shoreline instead of a flat floor; None = the plain outdoor ground
+    ground: str | None = None
+    water: Water | None = None
 
     def moulding_list(self) -> tuple[str, ...]:
         """The mouldings a build adds: explicit, else the style's (single indoor rooms only)."""
@@ -128,6 +145,8 @@ class SceneSpec:
                 **({"rooms": [{"id": r.id, "offset_m": list(r.offset_m), "size_m": list(r.size_m)}
                               for r in self.setting.rooms]} if self.setting.rooms else {}),
                 **({"mouldings": list(self.setting.mouldings)} if self.setting.mouldings is not None else {}),
+                **({"ground": self.setting.ground} if self.setting.ground else {}),
+                **({"water": self.setting.water.to_dict()} if self.setting.water else {}),
             },
             "objects": [
                 {"id": o.id, "category": o.category, "count": o.count, "hero": o.hero, "detail": o.detail,
@@ -181,6 +200,10 @@ def spec_schema() -> dict[str, Any]:
                     "shape": {"enum": list(SHAPES), "description": "room footprint inside bounds_m x/y; default rect"},
                     "floor_material": {"type": "string", "description": "floor surface, e.g. wood:oak, marble:carrara (see objects.material)"},
                     "wall_material": {"type": "string", "description": "wall surface, e.g. plaster:#e8e0d0 (see objects.material)"},
+                    "ground": {"enum": list(GROUND_KINDS),
+                               "description": ("outdoor only: the ground is real terrain of this kind (fine sand "
+                                               "with ripples, grass, soil, gravel, rock) instead of a flat floor")},
+                    "water": water_schema(),
                     "mouldings": {"type": "array", "items": {"enum": list(MOULDINGS)}, "uniqueItems": True,
                                   "description": ("indoor single room: classical profiles swept along the walls "
                                                   "(rect, ellipse or polygon), with gaps at doors and windows; "
@@ -266,12 +289,17 @@ def spec_schema() -> dict[str, Any]:
                     "additionalProperties": False,
                     "properties": {
                         "a": {"type": "string", "description": "object id"},
-                        "rel": {"enum": list(RELATIONS)},
+                        "rel": {"enum": list(RELATIONS) + [r for r in TERRAIN_RELS if r not in RELATIONS],
+                                "description": (f"{list(TERRAIN_RELS)} with b: '{WATER}' relate an object to "
+                                                "setting.water (at_edge_of: on the waterline; leads_to: a boardwalk "
+                                                "or jetty from the land out over the water; back_of: as far from "
+                                                "the water as the setting goes)")},
                         "b": {
                             "type": "string",
                             "description": f"object id; wall name {list(WALLS)} for against_wall (indoor rect); "
                             f"'{NONRECT_WALL}' (+at_deg) or '{NONRECT_WALL}_<n>' for ellipse/polygon rooms; "
-                            f"'{ROOM}' also allowed for centered_in",
+                            f"'{ROOM}' also allowed for centered_in; '{WATER}' (with setting.water) for "
+                            f"{list(TERRAIN_RELS)}",
                         },
                         "gap_m": {"type": "number", "minimum": 0,
                                   "description": "in_front_of/beside/around: free distance; above: B's top to A's base "
@@ -311,7 +339,7 @@ def _parse_setting(raw: Any, errors: list[str], notes: list[str] | None = None) 
         return None
     n0 = len(errors)
     _unknown_keys("setting", raw, ("kind", "bounds_m", "style", "shape", "points", "floor_material",
-                                   "wall_material", "rooms", "mouldings"), errors)
+                                   "wall_material", "rooms", "mouldings", "ground", "water"), errors)
     mats = {}
     for key in ("floor_material", "wall_material"):
         if raw.get(key) is not None:
@@ -358,10 +386,14 @@ def _parse_setting(raw: Any, errors: list[str], notes: list[str] | None = None) 
         errors.append("setting.points: only allowed when setting.shape is 'polygon'")
     rooms = _parse_rooms(raw.get("rooms"), kind, shape, bounds, errors)
     mouldings = _parse_mouldings(raw.get("mouldings"), kind, rooms, errors)
+    ground = parse_ground(raw.get("ground"), errors)
+    water = parse_water(raw.get("water"), bounds, errors, notes)
+    if (ground is not None or water is not None) and kind != "outdoor":
+        errors.append(f"setting.ground / setting.water: only for setting.kind 'outdoor', got {kind!r}")
     if len(errors) > n0 or bounds is None:
         return None
     return Setting(str(kind), bounds, style, str(shape), tuple(pts), mats.get("floor_material"),
-                   mats.get("wall_material"), rooms, mouldings)
+                   mats.get("wall_material"), rooms, mouldings, ground, water)
 
 
 def _parse_mouldings(raw: Any, kind: Any, rooms: tuple[Room, ...], errors: list[str]) -> tuple[str, ...] | None:
@@ -538,7 +570,8 @@ def _parse_grid(p: str, raw: Any, count: Any, errors: list[str]) -> tuple[tuple[
     return (rows, cols, float(gap[0]), float(gap[1])), True
 
 
-def _parse_relations(raw: Any, ids: list[str], setting: Setting | None, errors: list[str]) -> list[Relation]:
+def _parse_relations(raw: Any, ids: list[str], setting: Setting | None, errors: list[str],
+                     cats: dict[str, Any] | None = None) -> list[Relation]:
     if raw is None:
         return []
     if not isinstance(raw, list):
@@ -558,6 +591,23 @@ def _parse_relations(raw: Any, ids: list[str], setting: Setting | None, errors: 
         a, rel, b, gap = r.get("a"), r.get("rel"), r.get("b"), r.get("gap_m")
         at_deg = r.get("at_deg")
         n0 = len(errors)
+        if b == WATER:  # terrain relations (terrain.py), whatever name normalisation left
+            if setting is None or setting.water is None:
+                errors.append(f"{p}.b: '{WATER}' needs setting.water (e.g. {{kind: 'sea', side: 'north'}})")
+                continue
+            if a not in ids:
+                errors.append(f"{p}.a: {a!r} is not a declared object id.{_suggest(str(a), ids)} declared ids: {ids}")
+                continue
+            trel = water_relation(rel, (cats or {}).get(str(a)))
+            if trel is None:
+                errors.append(f"{p}.rel: {rel!r} toward the water is not allowed; allowed values: {list(TERRAIN_RELS)}")
+                continue
+            out.append(Relation(str(a), trel, WATER))
+            continue
+        if rel in TERRAIN_RELS and rel not in RELATIONS:
+            errors.append(f"{p}.rel: '{rel}' only relates an object to the water (b: '{WATER}' with setting.water); "
+                          f"between objects use one of {list(RELATIONS)}")
+            continue
         if rel not in RELATIONS:
             errors.append(f"{p}.rel: {rel!r} is not allowed; allowed values: {list(RELATIONS)}")
         if a not in ids:
@@ -604,7 +654,11 @@ def validate_spec(data: Any) -> tuple[SceneSpec | None, list[str]]:
         return None, [f"<root>: expected object, got {_typename(data)}"]
     from ai_db_scene.normalize import normalize_spec
 
-    data, notes = normalize_spec(data)  # unambiguous model-side slips are rewritten, with a note
+    data, notes = lift_terrain(data)  # ground / water written as objects or materials (terrain.py)
+    data, held = hold_water_relations(data)
+    data, more = normalize_spec(data)  # unambiguous model-side slips are rewritten, with a note
+    data = release_water_relations(data, held)
+    notes = [*notes, *more]
     errors: list[str] = []
     _unknown_keys("<root>", data, ("setting", "objects", "relations", "lighting", "camera"), errors)
     if "setting" not in data:
@@ -616,7 +670,10 @@ def validate_spec(data: Any) -> tuple[SceneSpec | None, list[str]]:
     objs = _parse_objects(data.get("objects"), errors, notes) if objs_present else []
     raw_objs = data.get("objects")
     declared = [o["id"] for o in raw_objs if isinstance(o, dict) and isinstance(o.get("id"), str)] if isinstance(raw_objs, list) else []
-    rels = _parse_relations(data.get("relations"), declared, setting, errors) if setting is not None or not errors else []
+    cats = {o["id"]: o.get("category") for o in raw_objs if isinstance(o, dict) and isinstance(o.get("id"), str)} \
+        if isinstance(raw_objs, list) else {}
+    rels = _parse_relations(data.get("relations"), declared, setting, errors, cats) \
+        if setting is not None or not errors else []
     lighting = data.get("lighting", {})
     camera = data.get("camera", {})
     if not isinstance(lighting, dict):

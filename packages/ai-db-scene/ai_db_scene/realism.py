@@ -121,6 +121,11 @@ def brief_counts(brief: str, categories: set[str]) -> dict[str, int | None]:
     return out
 
 
+#: a brief's word for a category also counts its more specific kinds (bushes on a tropical beach
+#: are built as tropical_bush, its trees as palm_tree)
+_KIN = {"bush": ("tropical_bush",), "tree": ("palm_tree",), "chair": ("sun_lounger",)}
+
+
 def check_brief(brief: str, placements: list[Any]) -> list[dict[str, Any]]:
     """Objects the brief asks for that the scene lacks, and counts that differ from the brief."""
     from ai_db_scene.priors import load_priors
@@ -130,7 +135,7 @@ def check_brief(brief: str, placements: list[Any]) -> list[dict[str, Any]]:
         have[p.category] = have.get(p.category, 0) + 1
     issues = []
     for cat, n in brief_counts(brief, set(load_priors())).items():
-        got = have.get(cat, 0)
+        got = have.get(cat, 0) + sum(have.get(k, 0) for k in _KIN.get(cat, ()))
         if got == 0:
             issues.append(_warn(f"the brief asks for {cat.replace('_', ' ')} but the scene has none"))
         elif n is not None and got != n:

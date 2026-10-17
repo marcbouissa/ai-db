@@ -78,15 +78,53 @@ KITS: dict[str, tuple[tuple[str, ...], list[tuple[str, int, str]], list[str]]] =
         ("street_lamp", 2, "along the paths"), ("trash_can", 1, "beside a bench"), ("bush", 3, "in groups"),
         ("fountain", 1, "hero; centered_in the space"), ("planter", 2, "framing an entrance")],
         ["outdoor ground reaches the horizon; group plants rather than spacing them evenly"]),
+    # terrain kits: setting.ground / setting.water make a real beach, shore or pond (terrain.py);
+    # relations to the water take b: "water"
+    "beach": (("beach", "cove", "seaside", "sea shore", "seashore", "coast", "lagoon", "bay"), [
+        ("palm_tree", 4, "in loose groups on the beach, leaning; near the water or along the back"),
+        ("tropical_bush", 4, "dense along the back of the beach (relation back_of water)"),
+        ("fern", 3, "among the bushes at the back (back_of water)"),
+        ("sun_lounger", 2, "under the parasol (relation under), facing the water"),
+        ("parasol", 1, "on the dry sand, facing the water"),
+        ("boardwalk", 1, "from the bushes to the water: relation leads_to water (it runs out over the water)"),
+        ("rock", 3, "at the water's edge: relation at_edge_of water")],
+        [("setting.ground 'sand' + setting.water {kind: 'sea' (or 'lagoon'), side: 'north'}: the sand slopes "
+          "into the water, wet at the edge"),
+         ("relations to the water use b: 'water' (at_edge_of, near, leads_to, back_of, facing)"),
+         "objects stay on dry sand unless a relation puts them at the water"]),
+    "tropical": (("tropical", "jungle", "rainforest", "island", "paradise"), [
+        ("palm_tree", 3, "tall, in groups"), ("tropical_bush", 4, "dense, broad-leaved, in clumps"),
+        ("fern", 4, "under the palms and bushes"), ("rock", 2, "half hidden in the plants")],
+        ["layer the plants: palms over bushes over ferns", "a sandy beach: setting.ground 'sand'; a garden: 'grass'"]),
+    "oasis": (("oasis",), [
+        ("palm_tree", 5, "around the pool: relation near water"), ("tropical_bush", 3, "near the water"),
+        ("fern", 2, "at the water: relation at_edge_of water"), ("rock", 3, "at_edge_of water")],
+        ["setting.ground 'sand' + setting.water {kind: 'pond'}: a pool in the middle of the sand"]),
+    "pond": (("pond", "koi pond", "lake", "lakeside", "lakeshore"), [
+        ("rock", 4, "at_edge_of water"), ("fern", 3, "at the water's edge"), ("bush", 3, "in groups near the water"),
+        ("tree", 2, "on the bank"), ("bench", 1, "near the water, facing it"),
+        ("boardwalk", 1, "a jetty: relation leads_to water")],
+        ["setting.ground 'grass' + setting.water {kind: 'pond'} (inland, centred) or {kind: 'lake', side: 'north'}"]),
 }
 
 
+#: kits whose setting is terrain: they carry the setting.ground / setting.water the brief names
+TERRAIN_KITS = ("beach", "tropical", "oasis", "pond", "park")
+
+
 def kits_for(brief: str) -> list[dict[str, Any]]:
-    """The kits whose room type the brief names."""
+    """The kits whose room type the brief names; terrain kits with the setting it suggests."""
+    from ai_db_scene.terrain import brief_terrain
+
     low = " " + re.sub(r"[^a-zé ]+", " ", brief.lower()) + " "
+    ground, water = brief_terrain(brief)
     out = []
     for name, (words, items, tips) in KITS.items():
         if any(f" {w} " in low for w in words):
-            out.append({"room": name, "typical": [{"category": c, "count": n, "where": note} for c, n, note in items],
-                        "tips": tips})
+            kit: dict[str, Any] = {"room": name, "typical": [{"category": c, "count": n, "where": note}
+                                                             for c, n, note in items], "tips": tips}
+            if name in TERRAIN_KITS and (ground or water):
+                kit["setting"] = {"kind": "outdoor", **({"ground": ground} if ground else {}),
+                                  **({"water": water} if water else {})}
+            out.append(kit)
     return out

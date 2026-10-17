@@ -316,7 +316,12 @@ class _Problem:
                 self.insts[iid] = _Inst(iid, o.id, o.category, prior, dims, o.hero, i - 1, o.count, turn)
                 by_base.setdefault(o.id, []).append(iid)
         self.rels: list[_Rel] = []
+        from ai_db_scene.terrain import WATER, terrain_of
+
+        self.terrain = terrain_of(spec)  # outdoor ground/water: relations to the water live there
         for r in spec.relations:
+            if r.b == WATER:
+                continue
             for ai in by_base[r.a]:
                 a = self.insts[ai]
                 if r.b in by_base:
@@ -737,6 +742,10 @@ class _Problem:
         e = LAYOUT_EPS_M
         if not self.in_room(inst, pose, e):
             return "out of bounds"
+        if self.terrain is not None and pose.zb < e:  # the shore: terrain.py
+            tv = self.terrain.violation(inst.base, inst.category, pose.x, pose.y, pose.yaw, inst.dims)
+            if tv:
+                return tv
         if self.kind == "indoor" and (pose.zb < -e or pose.zb + inst.dims[2] > self.H + e):
             return "out of bounds (height)"
         for r in self.by_a.get(inst.id, []):
@@ -773,7 +782,7 @@ class _Problem:
         return None
 
     def soft_cost(self, inst: _Inst, pose: _Pose, poses: dict[str, _Pose]) -> float:
-        cost = 0.0
+        cost = 0.0 if self.terrain is None else self.terrain.cost(inst.base, pose.x, pose.y, pose.yaw, inst.dims)
         cells, at = ceiling_grid(self, inst)
         if cells:  # a free ceiling light keeps to its grid cell
             cost += math.hypot(pose.x - cells[at][0], pose.y - cells[at][1]) / max(self.W, self.D, 1.0)
@@ -1006,6 +1015,8 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
             below = poses[stack[(k // 3) % len(stack)]]
             p = _Pose(below.x, below.y, below.yaw, below.zb + inst.dims[2])
         out.append(p)
+    if pr.terrain is not None and prim is None:  # shore bands and jetties: terrain.py proposes
+        out += [_Pose(x, y, yaw, 0.0) for x, y, yaw in pr.terrain.propose(inst.base, inst.dims, rng, n // 2)]
     return out
 
 

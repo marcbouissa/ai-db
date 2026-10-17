@@ -37,7 +37,7 @@ _OBJECT_FIELDS = ("category", "count", "hero", "detail", "grid", "material", "dy
 _TURN_KEYS = ("deg", "degrees", "angle", "by", "turn_deg", "yaw", "yaw_deg", "rotation_deg", "rotation", "rotate",
               "amount", "turn")
 _SETTING_FIELDS = ("kind", "bounds_m", "style", "shape", "points", "floor_material", "wall_material", "rooms",
-                   "mouldings")
+                   "mouldings", "ground", "water")
 _RELATION_FIELDS = ("a", "rel", "b", "gap_m", "at_deg")
 #: relation names a ``move`` / ``to`` may use as keys (spec.RELATIONS; kept local: no import cycle)
 _RELS = ("on", "against_wall", "in_front_of", "beside", "facing", "centered_in", "under", "around", "above")

@@ -256,6 +256,10 @@ def _room_commands(spec: SceneSpec, placements: list[Placement] | None = None) -
         else:
             params["size"] = [w, d]
         return [{"type": "room_shell", "params": params}]
+    from ai_db_scene.terrain import terrain_commands, terrain_of
+
+    if terrain_of(spec) is not None:  # setting.ground / setting.water: terrain, shore and water (terrain.py)
+        return terrain_commands(spec, frame_offset(spec))
     shp = spec.setting.shape
     # outdoors the ground runs on to the horizon: a slab ending at the bounds floats in the void
     beyond = [{"type": "create_primitive", "params": {
@@ -797,7 +801,8 @@ for o in list(bpy.context.scene.objects):
                     and all(abs(d - 2.0) < 1e-4 for d in o.dimensions) and o.location.length < 1e-4)
     # any root an earlier ai-db build tagged belongs to the scene being replaced; untagged
     # (user-made) objects are kept
-    if factory_cube or o.name.startswith(ours) or o.name in lights or (o.get("ai_db_id") is not None and o.parent is None):
+    if factory_cube or o.name.startswith(ours) or o.name in lights or (o.get("ai_db_id") is not None and o.parent is None) \
+            or o.get("ai_db_terrain"):
         drop(o)
 result = {{"removed": gone[:50], "count": len(gone)}}
 """
@@ -868,9 +873,14 @@ def _variation(spec: SceneSpec, family: str, base_id: str, key: list[Any] | None
 
 
 GEOMETRY_MODES = ("generated", "boxes")
+#: recipe categories built with a per-object seed (recipes._VARIANTS): every rock its own shape
+_SEEDED_RECIPES = ("rock",)
 #: parts a spec material must not repaint on generated furniture (wooden legs, the books)
 _KEEP_PARTS = {**{c: ("leg", "arm_frame", "arm_rib", "base_rail", "plinth", "pillow") for c in ("sofa", "armchair")},
                "bookshelf": ("book",),
+               # beach furniture: a "fabric" lounger is its cushions on a teak frame, a parasol's canopy
+               "sun_lounger": ("leg", "rail", "end_", "slat", "back_frame", "back_strut"),
+               "parasol": ("base", "pole", "hub", "finial"),
                # lamps: a "brass lamp" is brass metalwork under a fabric shade and a bulb
                **{c: ("shade", "bulb", "diffuser") for c in ("floor_lamp", "table_lamp", "pendant_lamp",
                                                              "wall_sconce", "ceiling_light")}}
@@ -971,12 +981,14 @@ def build_layout_commands(
     """
     import math
 
+    from ai_db_scene import terrain, vegetation
     from ai_db_scene.furniture_variants import CATEGORY_FAMILY, fit_command, uses_families
     from ai_db_scene.furniture_variants import piece as family_piece
     from ai_db_scene.providers import AssetFile, find_asset
 
     asset_map = asset_map or {}
     provided: dict[str, AssetFile | None] = {}
+    placements = terrain.settle(spec, placements)  # on the shore slope objects stand on the ground
 
     def provider_file(category: str) -> AssetFile | None:
         if geometry != "generated" or not providers:
@@ -991,7 +1003,8 @@ def build_layout_commands(
     materials = {o.id: o.material or style_material(spec.setting.style, o.category) for o in spec.objects}
     details = {o.id: o.detail for o in spec.objects}
     cmds = _room_commands(spec, placements) + _interior_wall_commands(spec)
-    names = [c["params"].get("name", "room_shell") for c in cmds if c["type"] != "apply_material"]
+    names = terrain.object_names(spec) or [c["params"].get("name", "room_shell") for c in cmds
+                                           if c["type"] != "apply_material"]
     cmds += moulding_commands(spec, placements)
     if placements:
         reserve = [pl.id for pl in placements] + [
@@ -1000,7 +1013,7 @@ def build_layout_commands(
         reserve += [f.asset_name for pl in placements
                     if (f := provider_file(pl.category)) is not None and f.asset_name]
         if spec.setting.kind != "single_asset":  # shell surfaces and the fill are addressed by name too
-            reserve += ["Room_Floor", "Room_Walls", "floor", "ai_db_fill"]
+            reserve += ["Room_Floor", "Room_Walls", "floor", "ai_db_fill", *terrain.object_names(spec)]
         cmds.insert(0, {"type": "run_code", "params": {"code": _RESERVE.format(payload=json.dumps(reserve))}})
     off = frame_offset(spec)
     reskin: list[dict[str, Any]] = []
@@ -1054,6 +1067,19 @@ def build_layout_commands(
             cmds.append({"type": "apply_material", "params": {
                 "name": f"{pl.id}_leaves", "material": material_for("tree", materials.get(base))}})
             tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
+        elif geometry == "generated" and (vegetation.has_plant(pl.category) or pl.category in terrain.OVER_WATER) \
+                and not user_overrides(pl.category):  # palms, ferns, tropical bushes; boardwalks on posts
+            loc = _shift(pl.location, off)
+            seed = (_variation(spec, pl.category, base, plain_key)["seed"] + zlib.crc32(pl.id.encode())) % (2**31)
+            chosen = materials.get(base)
+            if pl.category in terrain.OVER_WATER:
+                cmds += terrain.boardwalk_commands(spec, pl, off, seed, material_for(pl.category, chosen)
+                                                   if chosen else None)
+            else:
+                cmds += vegetation.plant_commands(pl.category, pl.id, pl.dims, [loc[0], loc[1], loc[2] - pl.dims[2] / 2],
+                                                  pl.rotation_deg_z, seed, material_for(pl.category, chosen)
+                                                  if chosen else None)
+            tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
         elif geometry == "generated" and pl.category in _GENERATED and not user_overrides(pl.category):
             loc = _shift(pl.location, off)
             ospec = by_id.get(base)
@@ -1078,7 +1104,10 @@ def build_layout_commands(
                                "keep": list(_KEEP_PARTS.get(pl.category, ()))})
         elif geometry == "generated" and has_recipe(pl.category):
             loc = _shift(pl.location, off)
-            cmds.append({"type": "build_asset", "params": {"spec": recipe_spec(pl.category, pl.id, pl.dims)}})
+            cmds.append({"type": "build_asset", "params": {"spec": recipe_spec(
+                pl.category, pl.id, pl.dims, seed=pl.id if pl.category in _SEEDED_RECIPES else None)}})
+            if pl.category in _SEEDED_RECIPES and materials.get(base) == "stone":
+                materials[base] = None  # plain stone: keep each rock's own tones
             cmds.append({"type": "modify_object", "params": {
                 "name": pl.id, "location": [loc[0], loc[1], loc[2] - pl.dims[2] / 2],
                 "rotation": [0.0, 0.0, pl.rotation_deg_z]}})
@@ -1109,7 +1138,9 @@ def build_layout_commands(
         indoor_style = st.style if st.kind == "indoor" else None  # outdoor ground stays ground
         floor = st.floor_material or style_material(indoor_style, "floor") or FLOOR_MATERIALS.get(st.kind, "plaster")
         surfaces = [("floor" if st.kind != "indoor" and st.shape == "rect" else "Room_Floor", floor)]
-        if st.kind == "outdoor":
+        if terrain.terrain_of(spec) is not None:
+            surfaces = []  # the terrain shades itself (sand, grass, ... with the wet shore band)
+        elif st.kind == "outdoor":
             surfaces.append(("ground_beyond", floor))
         if st.kind == "indoor":
             surfaces.append(("Room_Walls", st.wall_material or style_material(st.style, "wall") or WALL_MATERIAL))
@@ -1738,10 +1769,13 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
         render_opts, render_err = render_options(args["render"])
         if render_opts is None:
             return {"status": "invalid", "errors": [render_err]}
+    from ai_db_scene.terrain import apply_brief_defaults
+
+    spec, terrain_notes = apply_brief_defaults(spec, args.get("brief") or args.get("prompt"))  # 'beach': sand + sea
     seed = int(args.get("seed", 0))
     fixed = solve_with_repairs(spec.to_dict(), seed, BUILD_MAX_REPAIRS)
     data = fixed.data
-    repairs: list[str] = [*spec.notes, *fixed.repairs]  # what validation coerced (materials, relations) first
+    repairs: list[str] = [*spec.notes, *terrain_notes, *fixed.repairs]  # what validation coerced first
     if fixed.errors or fixed.spec is None:  # a repair must never produce an invalid spec; report it if it does
         return {"status": "invalid", "errors": fixed.errors, "repairs": repairs}
     if fixed.error is not None or fixed.placements is None:

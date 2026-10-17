@@ -82,4 +82,10 @@
 "loading_dock":{"min_m":[2.5,2.0,0.9],"typical_m":[4.0,3.0,1.2],"max_m":[12.0,6.0,1.5],"support":"ground","can_support_others":true,"default_clearance_m":0.5},
 "shipping_container":{"min_m":[2.4,2.9,2.4],"typical_m":[2.44,6.06,2.59],"max_m":[2.5,12.2,2.9],"support":"ground","can_support_others":true,"default_clearance_m":0.5},
 "traffic_cone":{"min_m":[0.2,0.2,0.3],"typical_m":[0.36,0.36,0.7],"max_m":[0.5,0.5,1.0],"support":"ground","can_support_others":false,"default_clearance_m":0.1},
-"lamp_post_double":{"min_m":[0.6,0.2,3.0],"typical_m":[1.6,0.4,5.0],"max_m":[3.0,0.6,9.0],"support":"ground","can_support_others":false,"default_clearance_m":0.2}}}
+"lamp_post_double":{"min_m":[0.6,0.2,3.0],"typical_m":[1.6,0.4,5.0],"max_m":[3.0,0.6,9.0],"support":"ground","can_support_others":false,"default_clearance_m":0.2},
+"palm_tree":{"min_m":[1.5,1.5,2.5],"typical_m":[3.6,3.6,7.0],"max_m":[10.0,10.0,20.0],"support":"ground","can_support_others":false,"default_clearance_m":0.3},
+"fern":{"min_m":[0.3,0.3,0.25],"typical_m":[1.1,1.1,0.75],"max_m":[2.5,2.5,1.8],"support":"ground","can_support_others":false,"default_clearance_m":0.05},
+"tropical_bush":{"min_m":[0.5,0.5,0.4],"typical_m":[1.7,1.7,1.4],"max_m":[4.0,4.0,3.0],"support":"ground","can_support_others":false,"default_clearance_m":0.05},
+"boardwalk":{"min_m":[0.8,2.0,0.15],"typical_m":[1.6,8.0,0.45],"max_m":[4.0,60.0,1.5],"support":"ground","can_support_others":true,"default_clearance_m":0.3},
+"sun_lounger":{"min_m":[0.55,1.5,0.3],"typical_m":[0.7,1.95,0.85],"max_m":[0.9,2.2,1.1],"support":"ground","can_support_others":false,"default_clearance_m":0.1},
+"parasol":{"min_m":[1.6,1.6,1.9],"typical_m":[2.8,2.8,2.45],"max_m":[4.0,4.0,3.2],"support":"ground","can_support_others":false,"default_clearance_m":0.1}}}

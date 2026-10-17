@@ -66,6 +66,9 @@ CATEGORY_MATERIALS: dict[str, str] = {
     "planter": "concrete", "hedge": "foliage:#3f6b33", "signpost": "paint:#1f5a3a", "bollard": "metal:steel",
     "parking_bay": "concrete:#3a3a3c", "loading_dock": "concrete", "shipping_container": "metal:rust",
     "traffic_cone": "plastic:#ff6a13", "lamp_post_double": "metal:steel",
+    # beach / tropical (palms, ferns and bushes are grown: their leaves take the material)
+    "palm_tree": "foliage:#4f7d2e", "fern": "foliage:#3f6f2a", "tropical_bush": "foliage:#2f6b2c",
+    "boardwalk": "wood:pine:#b8a07a", "sun_lounger": "wood:walnut", "parasol": "fabric:canvas:#efe7d6",
 }
 DEFAULT_MATERIAL = "plaster"
 FLOOR_MATERIALS = {"indoor": "wood:oak", "outdoor": "foliage:#4f6b3a", "tabletop": "wood:walnut"}
@@ -183,6 +186,8 @@ COLOUR_NAMES: dict[str, str] = {
     "brown": "#6b4a2f", "beige": "#d8c8a8", "cream": "#efe6d2", "pink": "#d98a9a", "purple": "#6b3f7a",
     "teal": "#2f7a7a", "tan": "#c0a080", "charcoal": "#36393d", "ivory": "#f4efe1", "olive": "#6b6b35",
     "burgundy": "#6b1f2a", "gold": "#c9a227", "silver": "#c0c0c0",
+    "turquoise": "#2fb8b0", "aqua": "#4fc8d0", "cyan": "#2fb0c8", "coral": "#e8735a", "khaki": "#b8a77a",
+    "mint": "#9fd8b8", "sand": "#d8c49a", "sandy": "#d8c49a", "lime": "#8cc63f", "sky": "#8cc4e8",
 }
 #: what weak models wrote -> a vocabulary material (bench: metal:brass in 11 scenes, stone:marble,
 #: wool, terracotta, grass, cardboard, brick, ...). Kinds and ``kind:variant`` forms both.
@@ -205,6 +210,13 @@ MATERIAL_ALIASES: dict[str, str] = {
     "pine": "wood:pine", "mahogany": "wood:mahogany", "cherry": "wood:cherry", "beech": "wood:oak",
     "glass:mirror": "chrome", "mirror": "chrome", "acrylic": "plastic", "vinyl": "plastic", "asphalt": "concrete:#2f2f31",
     "cement": "concrete", "sand": "paint:#d8c49a", "water": "glass:tinted", "metal:gold_leaf": "gold",
+    "palm_leaf": "foliage:#4f7d2e", "palm_leaves": "foliage:#4f7d2e", "palm": "foliage:#4f7d2e",
+    "leaf": "foliage", "frond": "foliage", "fronds": "foliage", "fern": "foliage:#3f6f2a",
+    "foliage:palm": "foliage:#4f7d2e", "foliage:fern": "foliage:#3f6f2a", "foliage:tropical": "foliage:#2f6b2c",
+    "teak": "wood:walnut", "wood:teak_oiled": "wood:walnut", "bamboo": "wood:pine:#c8a96a",
+    "rattan": "wood:pine:#b08a55", "wicker": "wood:pine:#b08a55", "driftwood": "wood:pine:#a89a88",
+    "wood:weathered": "pbr:weathered_wood", "weathered_wood": "pbr:weathered_wood", "straw": "fabric:canvas:#c8b078",
+    "thatch": "fabric:canvas:#b89c62", "towel": "fabric:weave", "fabric:towel": "fabric:weave",
     "drywall": "plaster", "gypsum": "plaster",
 }
 

@@ -74,6 +74,17 @@ Spec features worth knowing:
   the schema lists them all).
 - **Rooms**: an indoor rect setting can hold `rooms: [{id, offset_m, size_m}, ...]`; each
   object then names its `room`, and doors join rooms that share a wall.
+- **Outdoor terrain**: `setting.ground` (`sand`, `grass`, `soil`, `gravel`, `rock`) makes the ground
+  real terrain (fine rippled sand, grass, ...) with dunes or hills beyond the setting;
+  `setting.water` (`{kind: sea|lagoon|lake|pond, side: north|south|east|west}`, a pond inland) adds
+  water with a shore sloping into it, a wet band and foam at the waterline, turquoise shallows and
+  deep blue further out. Relations to it take `b: "water"`: `at_edge_of` (rocks at the water's edge),
+  `near`, `in`, `leads_to` (a boardwalk / jetty out over the water), `back_of` (bushes along the back),
+  `facing`. Everything else stays on dry land. A brief naming a beach, cove, lagoon, oasis, pond or
+  lake gets the matching ground and water when the spec names none; an object of category `water`
+  or `sandy_beach` and `floor_material: sand` are read as these settings. Beach vocabulary:
+  `palm_tree`, `fern`, `tropical_bush` (grown from a seed), `boardwalk`, `sun_lounger`, `parasol`
+  (`loungers under parasol` puts them side by side around its pole).
 - `count`, `grid: [rows, cols, col_gap_m, row_gap_m]`, `detail`, `hero` per object; non-rect
   footprints with `shape` / `points`.
 
