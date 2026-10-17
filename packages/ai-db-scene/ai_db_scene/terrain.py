@@ -117,6 +117,17 @@ REL_ALIASES: dict[str, str] = {
 _SHORE = {"sand": (3.5, 0.3), "grass": (1.4, 0.25), "soil": (1.4, 0.25), "gravel": (2.5, 0.3), "rock": (1.0, 0.35)}
 #: per water kind: (max depth m, sea-floor slope at the waterline, absorption colour, density per m,
 #: surface tint)
+#: per water kind, what the eye sees in it from the beach: (body colour by the shore, body colour
+#: offshore, body share by the shore, offshore, specular level, shallow band m). The transmissive
+#: surface alone showed mostly the sky at eye level (qwen aidb7 beach: grey-blue, no turquoise):
+#: an opaque water-body layer gives the shallows their colour and a lower specular level cuts the
+#: grazing-angle sky reflection; the sea stays a deeper blue.
+WATER_LOOK = {
+    "sea": ((0.03, 0.34, 0.4), (0.008, 0.07, 0.19), 0.45, 0.3, 0.4, 10.0),
+    "lagoon": ((0.08, 0.62, 0.55), (0.03, 0.36, 0.45), 0.75, 0.55, 0.2, 24.0),
+    "lake": ((0.06, 0.2, 0.16), (0.01, 0.05, 0.07), 0.4, 0.3, 0.4, 6.0),
+    "pond": ((0.08, 0.15, 0.07), (0.02, 0.05, 0.03), 0.45, 0.35, 0.4, 3.0),
+}
 _WATER = {
     "sea": (5.0, 0.11, (0.3, 0.8, 0.85), 0.75, (0.75, 0.97, 0.95)),
     "lagoon": (2.5, 0.07, (0.4, 0.9, 0.88), 0.55, (0.8, 1.0, 0.97)),
@@ -1104,10 +1115,32 @@ def terrain_payload(spec: SceneSpec, off: tuple[float, float, float]) -> dict[st
                 hi_x = ter.W - vmin
             shape = {"box": [lo_x + off[0], lo_y + off[1], hi_x + off[0], hi_y + off[1]]}
         water = {"name": f"{kind}_water", "kind": kind, "level": ter.level, "bottom": bottom, **shape,
-                 "absorb": list(absorb), "density": density, "tint": list(tint)}
+                 "absorb": list(absorb), "density": density, "tint": list(tint), "shore": _shore_line(ter, off),
+                 "look": [list(v) if isinstance(v, tuple) else v for v in WATER_LOOK[kind]]}
     return {"name": f"{ter.ground}_ground", "ground": ter.ground, "xs": [x + off[0] for x in xs],
             "ys": [y + off[1] for y in ys], "heights": heights, "level": ter.level,
             "has_water": ter.water is not None, "water": water}
+
+
+def _shore_line(ter: Terrain, off: tuple[float, float, float]) -> dict[str, Any]:
+    """Where the water's shallows start, for its shader: a side water's mean waterline (``axis``
+    0 = x / 1 = y in the Blender frame, ``at``, ``dir`` +1/-1 toward the water), or a lake's
+    ellipse (``ellipse`` [cx, cy, rx, ry]: shallow at the rim)."""
+    assert ter.water is not None
+    if ter.water.side is None:
+        assert ter.water.region is not None
+        cx, cy, rx, ry = ter.water.region
+        return {"ellipse": [cx + off[0], cy + off[1], rx, ry]}
+    length, _depth = ter._side_frame()
+    vs = sum(ter._shore(length * k / 8)[0] for k in range(9)) / 9
+    side = ter.water.side
+    if side == "north":
+        return {"axis": 1, "at": vs + off[1], "dir": 1}
+    if side == "south":
+        return {"axis": 1, "at": ter.D - vs + off[1], "dir": -1}
+    if side == "east":
+        return {"axis": 0, "at": vs + off[0], "dir": 1}
+    return {"axis": 0, "at": ter.W - vs + off[0], "dir": -1}
 
 
 def terrain_commands(spec: SceneSpec, off: tuple[float, float, float]) -> list[dict[str, Any]]:
@@ -1269,11 +1302,31 @@ def water_material(w):
     out = nt.nodes.new("ShaderNodeOutputMaterial")
     # a touch rough and a lower IOR than real water: at the low eye-level angle the sky's
     # reflection otherwise hides the turquoise of the shallows completely
+    shallow_c, deep_c, share_near, share_far, spec_level, band = w["look"]
+    shallow_c, deep_c = tuple(shallow_c), tuple(deep_c)
     bsdf = node(nt, "ShaderNodeBsdfPrincipled", Roughness=0.06, IOR=1.12)
     sock(bsdf.inputs, "Transmission Weight").default_value = 1.0
+    sock(bsdf.inputs, "Specular IOR Level").default_value = spec_level
     bsdf.inputs["Base Color"].default_value = (*w["tint"], 1.0)
     tc = nt.nodes.new("ShaderNodeTexCoord")
     co = tc.outputs["Object"]
+    # the water body: shallow (by the shore) -> its turquoise, offshore -> deeper blue
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    link(nt, co, sep.inputs[0])
+    sh = w["shore"]
+    if "ellipse" in sh:
+        cx, cy, rx, ry = sh["ellipse"]
+        dx = math_op(nt, "DIVIDE", math_op(nt, "SUBTRACT", sep.outputs["X"], cx), rx)
+        dy = math_op(nt, "DIVIDE", math_op(nt, "SUBTRACT", sep.outputs["Y"], cy), ry)
+        r = math_op(nt, "SQRT", math_op(nt, "ADD", math_op(nt, "MULTIPLY", dx, dx), math_op(nt, "MULTIPLY", dy, dy)), 0.0)
+        near = maprange(nt, r, 1.0, max(0.0, 1.0 - band / max(min(rx, ry), 0.1)), 1.0, 0.0)
+    else:
+        coord = sep.outputs["Y" if sh["axis"] == 1 else "X"]
+        near = maprange(nt, coord, sh["at"], sh["at"] + sh["dir"] * band, 1.0, 0.0)
+    body = node(nt, "ShaderNodeBsdfPrincipled", Roughness=0.12, IOR=1.33)
+    sock(body.inputs, "Specular IOR Level").default_value = spec_level * 0.6
+    link(nt, mix(nt, deep_c, shallow_c, near), body.inputs["Base Color"])
+    share = maprange(nt, near, 0.0, 1.0, share_far, share_near)
     swell = node(nt, "ShaderNodeTexNoise", Scale=0.35, Detail=3.0)
     link(nt, co, swell.inputs["Vector"])
     ripple = node(nt, "ShaderNodeTexWave", Scale=2.2, Distortion=4.0, Detail=3.0)
@@ -1282,7 +1335,12 @@ def water_material(w):
     bump = node(nt, "ShaderNodeBump", Strength=0.22, Distance=0.05)
     link(nt, h, bump.inputs["Height"])
     link(nt, bump.outputs["Normal"], bsdf.inputs["Normal"])
-    link(nt, bsdf.outputs["BSDF"], out.inputs["Surface"])
+    link(nt, bump.outputs["Normal"], body.inputs["Normal"])
+    both = nt.nodes.new("ShaderNodeMixShader")
+    link(nt, share, both.inputs["Fac"])
+    link(nt, bsdf.outputs["BSDF"], both.inputs[1])
+    link(nt, body.outputs["BSDF"], both.inputs[2])
+    link(nt, both.outputs["Shader"], out.inputs["Surface"])
     vol = node(nt, "ShaderNodeVolumeAbsorption", Density=w["density"])
     vol.inputs["Color"].default_value = (*w["absorb"], 1.0)
     link(nt, vol.outputs["Volume"], out.inputs["Volume"])
