@@ -133,16 +133,17 @@ def _running_elsewhere(arm: str, brief: str) -> bool:
 
 def cmd_run(arm: str, brief: str) -> dict[str, Any]:
     model, mode = arm.rsplit("-", 1)
-    if mode not in ("aidb", "aidb2", "aidb3", "aidb4", "aidb5", "aidb6", "raw"):
-        raise SystemExit(f"arm must end in -raw or -aidb, -aidb2 .. -aidb6: {arm}")
+    if mode not in ("aidb", "aidb2", "aidb3", "aidb4", "aidb5", "aidb6", "aidb7", "raw"):
+        raise SystemExit(f"arm must end in -raw or -aidb, -aidb2 .. -aidb7: {arm}")
     with_aidb = mode != "raw"
     # aidb3: the aidb2 prompt and tools on the later pipeline (styles, judge, doorways, recipes,
     # skill drafting); the arm's ai-db hash in metrics.json pins the code it ran on.
     # aidb4: the realism pass (2026-10-12). aidb5 (2026-10-16): the weak-model fixes, the prompt
     # hint of the current build_scene, OpenCode with direct MCP tools and every built-in denied.
     # aidb6 (2026-10-17): compact results (verdict/next first), brief passed to build_scene, ceiling
-    # grid, seating group, tool names as the runner offers them
-    version = {"aidb": 1, "raw": 1, "aidb5": 5, "aidb6": 6}.get(mode, 2)
+    # grid, seating group, tool names as the runner offers them. aidb7 (2026-10-17): aidb6's prompt on
+    # the outdoor terrain, round rooms, open-side camera, classroom rows
+    version = {"aidb": 1, "raw": 1, "aidb5": 5, "aidb6": 6, "aidb7": 6}.get(mode, 2)
     tools = briefs.AIDB_TOOLS if version == 1 else briefs.AIDB2_TOOLS
     rd = run_dir(arm, brief)
     if os.path.exists(os.path.join(rd, "metrics.json")):
