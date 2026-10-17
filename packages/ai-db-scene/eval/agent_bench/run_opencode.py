@@ -9,17 +9,31 @@ tokens per model call (input, output, reasoning, cache read/write) and per-call 
 The MCP tools are offered directly (``<server>_<tool>``, Code Mode off; see _config). Older
 runs called them through Code Mode (one ``execute`` tool running JS); their inner tool names
 are read from that code. Calls OpenCode refused (permission denied) are listed in ``denied``.
+
+MCP start-up race (aidb7 lightning, every scene): ``opencode run --standalone`` sent the first
+model request before its MCP servers had registered their tools, so the first ``aidb_*`` /
+``blender_*`` call failed "No tool named ... is currently available" (warehouse: the model gave
+up on ai-db). The session now runs on a private ``opencode serve`` (same HOME, config, working
+folder and environment, bound to 127.0.0.1 with a random password) that is polled until every
+MCP server reports ``connected``; only then does ``opencode run --server`` send the brief.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import secrets
 import shutil
+import signal
+import socket
 import sqlite3
 import subprocess
 import tempfile
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any
 
 import run_claude
@@ -43,7 +57,7 @@ def _provider_error(events_path: str) -> str | None:
         with open(events_path, encoding="utf-8") as f:
             for line in f:
                 if '"type":"error"' in line and '"provider.' in line:
-                    return json.loads(line).get("error", {}).get("message", "provider error")
+                    return str(json.loads(line).get("error", {}).get("message", "provider error"))
     except (OSError, json.JSONDecodeError):
         return "unreadable events"
     return None
@@ -53,6 +67,90 @@ def _env(home: str) -> dict[str, str]:
     return {"PATH": "/usr/bin:/bin", "HOME": home, "XDG_CONFIG_HOME": f"{home}/.config",
             "XDG_DATA_HOME": f"{home}/.local/share", "XDG_CACHE_HOME": f"{home}/.cache",
             "XDG_STATE_HOME": f"{home}/.local/state", "LANG": "C.UTF-8"}
+
+
+#: how long the private server may take until every MCP server is connected (s)
+MCP_READY_TIMEOUT_S = 120.0
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _mcp_status(url: str, password: str, work: str) -> dict[str, str]:
+    """{server: status} from the private server's ``GET /api/mcp`` for the working folder (the
+    request also starts that folder's instance, which connects the MCP servers)."""
+    auth = base64.b64encode(f"opencode:{password}".encode()).decode()
+    req = urllib.request.Request(f"{url}/api/mcp?directory={urllib.parse.quote(work)}",
+                                 headers={"Authorization": f"Basic {auth}"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.loads(r.read()).get("data") or []
+    return {str(d.get("name")): str((d.get("status") or {}).get("status")) for d in data}
+
+
+def _reconnect(url: str, password: str, work: str, server: str) -> None:
+    auth = base64.b64encode(f"opencode:{password}".encode()).decode()
+    req = urllib.request.Request(
+        f"{url}/api/experimental/mcp/{urllib.parse.quote(server)}/connect?directory={urllib.parse.quote(work)}",
+        data=b"{}", method="POST", headers={"Authorization": f"Basic {auth}", "Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=30).close()
+    except (urllib.error.URLError, OSError):
+        pass
+
+
+def _serve(home: str, work: str, run_dir: str, servers: dict[str, Any]) -> tuple[subprocess.Popen, str, str, dict[str, Any]]:
+    """A private ``opencode serve`` for this run, returned once every MCP server is connected.
+    (proc, url, password, {servers, seconds, reconnects})."""
+    password = secrets.token_urlsafe(24)
+    port = _free_port()
+    url = f"http://127.0.0.1:{port}"
+    log = open(os.path.join(run_dir, "opencode_serve.txt"), "w", encoding="utf-8")  # noqa: SIM115 - closed with the process
+    proc = subprocess.Popen([OPENCODE, "serve", "--hostname", "127.0.0.1", "--port", str(port)], cwd=work,
+                            env={**_env(home), "OPENCODE_SERVER_PASSWORD": password}, stdin=subprocess.DEVNULL,
+                            stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    t0, status, reconnects = time.time(), {}, 0
+    last_retry: dict[str, float] = {}
+    try:
+        while time.time() - t0 < MCP_READY_TIMEOUT_S:
+            if proc.poll() is not None:
+                raise RuntimeError(f"opencode serve exited ({proc.returncode}); see opencode_serve.txt")
+            try:
+                status = _mcp_status(url, password, work)
+            except (urllib.error.URLError, OSError, json.JSONDecodeError):
+                time.sleep(0.3)
+                continue
+            if set(status) >= set(servers) and all(status[n] == "connected" for n in servers):
+                return proc, url, password, {"servers": status, "seconds": round(time.time() - t0, 1),
+                                             "reconnects": reconnects}
+            for n in servers:  # a server that failed to start (a slow first import): try again
+                if status.get(n) == "failed" and time.time() - last_retry.get(n, 0.0) > 5.0:
+                    last_retry[n] = time.time()
+                    reconnects += 1
+                    _reconnect(url, password, work, n)
+            time.sleep(0.3)
+        raise RuntimeError(f"MCP servers not connected after {MCP_READY_TIMEOUT_S:.0f} s: {status}")
+    except BaseException:
+        _stop(proc)
+        raise
+
+
+def _stop(proc: subprocess.Popen) -> None:
+    """The private server and its MCP server processes (its session)."""
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except OSError:
+        proc.terminate()
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            proc.kill()
+        proc.wait(timeout=5)
 
 
 def _home(run_dir: str, servers: dict[str, Any]) -> str:
@@ -114,23 +212,33 @@ def _run_once(model: str, prompt: str, port: int, run_dir: str, with_aidb: bool,
     # An empty temporary working folder outside any repository: OpenCode treats the enclosing
     # git repository as the project (bench/ lives in the private ai-db repo).
     work = tempfile.mkdtemp(prefix="aidb-bench-oc-")
-    cmd = [OPENCODE, "run", "--standalone", "--auto", "-m", f"opencode/{model}", "--format", "json"]
+    # the private server, MCP servers connected before the brief is sent (the start-up race)
+    try:
+        server, url, password, ready = _serve(home, work, run_dir, servers)
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    cmd = [OPENCODE, "run", "--server", url, "--auto", "-m", f"opencode/{model}", "--format", "json"]
     for path in files or []:
         cmd += ["-f", path]
     cmd.append(prompt)
     t0 = time.time()
-    with open(os.path.join(run_dir, "opencode_events.jsonl"), "w", encoding="utf-8") as out, \
-            open(os.path.join(run_dir, "opencode_stderr.txt"), "w", encoding="utf-8") as err:
-        try:
-            proc = subprocess.run(cmd, cwd=work, env=_env(home), stdin=subprocess.DEVNULL, stdout=out,
-                                  stderr=err, timeout=timeout_s, check=False)
-            rc, timed_out = proc.returncode, False
-        except subprocess.TimeoutExpired:
-            rc, timed_out = -9, True
-    wall = time.time() - t0
-    shutil.rmtree(work, ignore_errors=True)
+    try:
+        with open(os.path.join(run_dir, "opencode_events.jsonl"), "w", encoding="utf-8") as out, \
+                open(os.path.join(run_dir, "opencode_stderr.txt"), "w", encoding="utf-8") as errf:
+            try:
+                proc = subprocess.run(cmd, cwd=work, env={**_env(home), "OPENCODE_PASSWORD": password},
+                                      stdin=subprocess.DEVNULL, stdout=out, stderr=errf, timeout=timeout_s, check=False)
+                rc, timed_out = proc.returncode, False
+            except subprocess.TimeoutExpired:
+                rc, timed_out = -9, True
+        wall = time.time() - t0
+    finally:
+        _stop(server)
+        shutil.rmtree(work, ignore_errors=True)
     res = summarize(os.path.join(home, ".local", "share", "opencode", "opencode.db"), wall, rc, timed_out,
                      os.path.join(run_dir, "transcript.jsonl"))
+    res["mcp_ready"] = ready
     err = _provider_error(os.path.join(run_dir, "opencode_events.jsonl"))
     if not res["tokens"]["output"] and not res["final_text"]:
         # the provider never answered (a hung free endpoint, a killed session): no result of the model
