@@ -260,6 +260,8 @@ def _room_commands(spec: SceneSpec, placements: list[Placement] | None = None) -
             params["points"] = [list(p) for p in st.points]
         else:
             params["size"] = [w, d]
+        if st.shape == "ellipse":
+            params["segments"] = _ROOM_ELLIPSE_SEGMENTS
         return [{"type": "room_shell", "params": params}]
     from ai_db_scene.terrain import terrain_commands, terrain_of
 
@@ -275,6 +277,7 @@ def _room_commands(spec: SceneSpec, placements: list[Placement] | None = None) -
         "params": {"primitive": "cube", "name": "floor", "location": [0.0, 0.0, -t / 2], "scale": [w / 2, d / 2, t / 2]},
     }] if shp == "rect" else [{"type": "room_shell", "params": {
         "shape": shp, "height": 0.0, "wall_thickness": t, "openings": [], "floor": True, "ceiling": False, "trim": False,
+        **({"segments": _ROOM_ELLIPSE_SEGMENTS} if shp == "ellipse" else {}),
         **({"points": [list(p) for p in spec.setting.points]} if shp == "polygon" else {"size": [w, d]})}}]
 
 
@@ -287,7 +290,11 @@ _MOULDING_PROFILES: dict[str, tuple[str, float, float, str]] = {
 _MOULDING_GAP_M = 0.0015  # off the wall and floor, as the addon's trim: never coplanar
 _CHAIR_RAIL_Z_M = 0.9
 _MOULDING_CLEAR_M = 0.03  # beyond each side of an opening the moulding stops for
-_ROOM_ELLIPSE_SEGMENTS = 64  # room_shell's default: the moulding follows the same facets
+#: facets of a round room (room_shell and its moulding alike): 64 showed as vertical bands on a
+#: 10 m lobby wall; 128 plus smooth shading (_ROOM_MATERIAL) reads as one curved surface
+_ROOM_ELLIPSE_SEGMENTS = 128
+#: faces meeting at more than this stay sharp when the shell is smooth-shaded (rect corners, openings)
+_ROOM_SMOOTH_ANGLE_DEG = 30.0
 
 
 def _inset(pts: list[list[float]], d: float) -> list[list[float]]:
@@ -823,7 +830,7 @@ result = {{"removed": gone[:50], "count": len(gone)}}
 """
 
 _ROOM_MATERIAL = """
-import bpy
+import bpy, math
 mat = bpy.data.materials.get("ai_db_room") or bpy.data.materials.new("ai_db_room")
 mat.diffuse_color = (0.82, 0.8, 0.76, 1.0)
 if mat.use_nodes and mat.node_tree.nodes.get("Principled BSDF"):
@@ -833,8 +840,14 @@ for o in bpy.context.scene.objects:
     if o.type == "MESH" and (o.name.startswith("Room_") or o.name == "floor") and not any(o.data.materials):
         o.data.materials.append(mat)
         n += 1
-result = {"room_surfaces": n}
-"""
+smooth = 0
+for o in bpy.context.scene.objects:  # curved walls and their mouldings: one surface, not facets
+    if o.type == "MESH" and (o.name.startswith("Room_") or o.get("moulding")):
+        o.data.shade_smooth()
+        o.data.set_sharp_from_angle(angle=math.radians(SMOOTH_DEG))
+        smooth += 1
+result = {"room_surfaces": n, "smooth_shaded": smooth}
+""".replace("SMOOTH_DEG", str(_ROOM_SMOOTH_ANGLE_DEG))
 
 
 #: category -> (generator family, params from the placement's [w, d, h]). Parametric furniture
