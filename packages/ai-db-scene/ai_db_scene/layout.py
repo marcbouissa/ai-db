@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 import random
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from ai_db_scene.constants import (
@@ -60,6 +60,7 @@ _DEP_RELS = ("on", "under", "above", "centered_in", "around", "in_front_of", "be
 _ORIENT_RELS = ("against_wall", "facing", "in_front_of", "beside", "on", "under", "centered_in", "around", "above")
 _CURVED_WALL_GAP_M = 0.25  # max back-face gap to a curved wall (sagitta of a flat back on a curve)
 _LATERAL_TOL_M = 0.05
+_RING_YAW_TOL_DEG = 3.0  # a ring member faces the centre of what it stands round
 
 
 @dataclass(frozen=True)
@@ -312,6 +313,16 @@ class _Problem:
                 label = f"{ai} {r.rel} {bi}" + (f" (gap {gap:g} m)" if r.rel in (*_GAP_RELS, "above") else "")
                 at = self._spread_at(a, r.b, r.at_deg) if r.rel == "against_wall" else r.at_deg
                 self.rels.append(_Rel(ai, r.rel, bi, gap, a.idx, a.n, label, at))
+        # every object `around` one target shares one ring, evenly spaced: four armchairs written
+        # as four objects each `around low_table` were rings of one, each at a random angle and
+        # yaw (qwen / lightning aidb5-6 round lobbies)
+        ring: dict[str, list[int]] = {}
+        for j, rl in enumerate(self.rels):
+            if rl.rel == "around" and rl.b in self.insts:
+                ring.setdefault(rl.b, []).append(j)
+        for js in ring.values():
+            for i, j in enumerate(js):
+                self.rels[j] = replace(self.rels[j], ring_i=i, ring_n=len(js))
         self.by_a: dict[str, list[_Rel]] = {}
         self.by_b: dict[str, list[_Rel]] = {}
         for rl in self.rels:
@@ -335,6 +346,8 @@ class _Problem:
         self.under_pairs = {frozenset((r.a, r.b)) for r in self.rels if r.rel == "under"}
         #: footprints nothing standing below LAYOUT_DOOR_HEIGHT_M may overlap: (label, pose, dims)
         self.blocked: list[tuple[str, _Pose, Dims]] = []
+        #: ring members at their even places (a crowded room falls back to any place round B)
+        self.strict_rings = True
         self._static_checks()
 
     # ---- static (pose-independent) validation -------------------------------------------
@@ -419,6 +432,22 @@ class _Problem:
                     pose.x += 0.005 * n[0]
                     pose.y += 0.005 * n[1]
 
+    def ring_slot(self, r: _Rel, pb: _Pose) -> _Pose:
+        """Where ring member ``r.a`` of ``r.b`` sits: slot ``ring_i`` of ``ring_n`` evenly spaced
+        round B, counted from B's right axis (two chairs at a table's ends, four at its sides),
+        ``gap`` from B's edge, facing B's centre."""
+        a, b = self.insts[r.a], self.insts[r.b]
+        phi = pb.yaw + 2 * math.pi * r.ring_i / max(r.ring_n, 1)
+        u = (math.cos(phi), math.sin(phi))
+        yaw = _face_yaw(0, 0, -u[0], -u[1])
+        dist = _ext(b.dims, pb.yaw, u) + r.gap + _ext(a.dims, yaw, u)
+        return _Pose(pb.x + u[0] * dist, pb.y + u[1] * dist, yaw, 0.0)
+
+    def ring_anchor(self, iid: str) -> bool:
+        """Does a ring stand round this object (and nothing else place it)? It keeps to the open middle."""
+        return any(r.rel == "around" for r in self.by_b.get(iid, [])) and not any(
+            r.rel != "facing" for r in self.by_a.get(iid, []))
+
     def default_face(self, inst: _Inst, poses: dict[str, _Pose]) -> tuple[float, float] | None:
         """Point an object with no orienting relation faces: the camera focus, else the centre of
         the setting - indoors and outdoors alike (park benches facing away from the fountain read
@@ -427,6 +456,8 @@ class _Problem:
             return None
         if self.focus and self.focus != inst.id and self.focus in poses:
             return poses[self.focus].x, poses[self.focus].y
+        if self.ring_anchor(inst.id):
+            return None  # a table in the middle of its ring: square to the room, not turned to a point
         return (self.shape.cx, self.shape.cy) if self.kind in ("indoor", "outdoor") else None
 
     def base_z(self, inst: _Inst, poses: dict[str, _Pose]) -> float:
@@ -570,6 +601,10 @@ class _Problem:
             gap = dist - _ext(b.dims, pb.yaw, u) - _ext(a.dims, pa.yaw, u)
             if abs(gap - r.gap) > tol:
                 return f"'{r.label}': measured ring gap {gap:.3f} m"
+            if r.ring_n > 1 and self.strict_rings:  # evenly spaced round B, each facing its centre
+                slot = self.ring_slot(r, pb)
+                if math.hypot(pa.x - slot.x, pa.y - slot.y) > tol or _angdiff(pa.yaw, slot.yaw) > math.radians(_RING_YAW_TOL_DEG):
+                    return f"'{r.label}': not at its place {r.ring_i + 1} of {r.ring_n} round '{r.b}'"
             return None
         return None
 
@@ -612,6 +647,11 @@ class _Problem:
             v = self.rel_violation(r, poses[r.a], pose)
             if v:
                 return f"relation {v}"
+        for r in self.by_b.get(inst.id, []):
+            # the ring's places must be in the room before the table is put down
+            if r.rel == "around" and r.ring_n > 1 and self.strict_rings and r.a not in poses \
+                    and not self.in_room(self.insts[r.a], self.ring_slot(r, pose), e):
+                return f"relation '{r.label}': no room for its place round '{r.b}'"
         if not inst.flat and pose.zb < LAYOUT_DOOR_HEIGHT_M:
             for label, bp, bd in self.blocked:
                 if _sep(pose, inst.dims, bp, bd) < -LAYOUT_EPS_M:
@@ -656,6 +696,10 @@ class _Problem:
         dt = self.default_face(inst, poses)
         if dt is not None:
             cost += 0.3 * _angdiff(pose.yaw, _face_yaw(pose.x, pose.y, dt[0], dt[1])) / math.pi
+        if self.ring_anchor(inst.id) and self.kind == "indoor":
+            # a table with its ring of chairs: in the open middle, square to the room
+            cost += 0.5 * math.hypot(pose.x - self.shape.cx, pose.y - self.shape.cy) / max(self.W, self.D)
+            cost += 0.2 * abs((pose.yaw + _HALF_PI / 2) % _HALF_PI - _HALF_PI / 2) / (_HALF_PI / 2)
         if self.shape.kind == "rect" and any(r.rel == "facing" for r in self.by_b.get(inst.id, [])):
             # what others face (the board, the TV) sits mid-wall, so they can face it square
             wall = next((r for r in self.by_a.get(inst.id, []) if r.rel == "against_wall"), None)
@@ -788,6 +832,9 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
             x, y = ceiling_cells[(ceiling_i + k) % len(ceiling_cells)]
             if k >= len(ceiling_cells):
                 x, y = x + rng.uniform(-0.25, 0.25), y + rng.uniform(-0.25, 0.25)
+        elif prim is None and k < 2 and pr.ring_anchor(inst.id):
+            x, y = pr.shape.cx, pr.shape.cy  # a table with its ring: the middle of the room first
+            yaw = cards[k]
         elif prim is None or pb is None and prim.rel != "centered_in":
             x = rng.uniform(0, pr.W)
             y = rng.uniform(0, pr.D)
@@ -802,6 +849,9 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
             elif prim.rel in ("on", "under"):
                 x = pb.x + jit * max(bdims[0] / 2 - inst.dims[0] / 2, 0) * rb[0] + rng.uniform(-1, 1) * (0 if k == 0 else max(bdims[1] / 2 - inst.dims[1] / 2, 0)) * fb[0]
                 y = pb.y + jit * max(bdims[0] / 2 - inst.dims[0] / 2, 0) * rb[1] + rng.uniform(-1, 1) * (0 if k == 0 else max(bdims[1] / 2 - inst.dims[1] / 2, 0)) * fb[1]
+            elif prim.rel == "around" and prim.ring_n > 1 and (pr.strict_rings or k % 3 == 0):
+                slot = pr.ring_slot(prim, pb)  # its place in the ring: nothing to choose
+                x, y, yaw = slot.x, slot.y, slot.yaw
             elif prim.rel == "around":
                 phi = 2 * math.pi * prim.ring_i / max(prim.ring_n, 1) + (0.0 if k % 3 == 0 else rng.uniform(0, 2 * math.pi))
                 u = (math.cos(phi), math.sin(phi))
@@ -1106,10 +1156,14 @@ def solve_layout(
         try:
             poses = _solve_once(pr, seed + 7919 * attempt)
         except LayoutError as e:
-            if attempt == 0:
+            if attempt == 0 and pr.strict_rings and any(r.rel == "around" and r.ring_n > 1 for r in pr.rels):
+                pr.strict_rings = False  # no room for even rings: any place round the target
+                poses = _solve_once(pr, seed)
+            elif attempt == 0:
                 raise
-            error = e
-            continue
+            else:
+                error = e
+                continue
         misses = sum(1 for r in pr.rels if r.rel == "facing" and r.a in poses and r.b in poses
                      and pr.facing_error_deg(r, poses[r.a], poses[r.b]) > LAYOUT_FACING_TOL_DEG)
         if best is None or misses < best[0]:
@@ -1318,6 +1372,7 @@ def check_layout(
         return _check_rooms(spec, placements, priors)
     pr = _Problem(spec, priors or load_priors(), {p.id: p.dims for p in placements})
     pr.blocked = list(blocked or [])
+    pr.strict_rings = False  # an uneven ring is reported soft, below
     poses: dict[str, _Pose] = {}
     issues: list[str] = []
     placements = _unseat(pr, placements, issues)
@@ -1340,6 +1395,10 @@ def check_layout(
         if inst.prior.support in ("floor", "ground") and not any(r.rel == "on" for r in pr.by_a.get(iid, [])) and abs(p.zb) > 1e-3:
             issues.append(f"hard: {iid}: floats at z={p.zb:.3f} m")
     for r in pr.rels:
+        if r.rel == "around" and r.ring_n > 1 and r.a in poses and r.b in poses:
+            slot = pr.ring_slot(r, poses[r.b])
+            if math.hypot(poses[r.a].x - slot.x, poses[r.a].y - slot.y) > LAYOUT_REL_TOL_M:
+                issues.append(f"soft: '{r.label}': not at its place {r.ring_i + 1} of {r.ring_n} round '{r.b}'")
         if r.rel == "facing" and r.a in poses and r.b in poses:
             err = pr.facing_error_deg(r, poses[r.a], poses[r.b])
             if err > LAYOUT_FACING_TOL_DEG:

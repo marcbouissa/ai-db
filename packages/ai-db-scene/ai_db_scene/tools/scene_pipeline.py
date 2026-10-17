@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import zlib
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -1692,11 +1693,20 @@ def lift_build_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
 
 def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
     from ai_db_scene.constants import BUILD_FIX_ROUNDS, BUILD_MAX_REPAIRS
+    from ai_db_scene.normalize import room_shape_from_brief
     from ai_db_scene.repair import solve_with_repairs
 
+    raw, raw_err = spec_arg(args)
+    shape_note = None
+    if raw_err is None and isinstance(raw, dict):  # "a round lobby" with no setting.shape: an ellipse
+        raw, shape_note = room_shape_from_brief(raw, args.get("brief") or args.get("prompt"))
+        if shape_note:
+            args = {**{k: v for k, v in args.items() if k not in SPEC_KEYS}, "spec": raw}
     spec, errors = _spec_from_args(args, remembered=True)
     if spec is None:
         return {"status": "invalid", "errors": errors, "hint": _INVALID_HINT}
+    if shape_note:
+        spec = replace(spec, notes=(shape_note, *spec.notes))
     spec_id = remember_spec(spec)
     asked = spec  # before repairs: what the model asked for
     # furniture variants follow the first build's spec; edit_scene passes the stored key back

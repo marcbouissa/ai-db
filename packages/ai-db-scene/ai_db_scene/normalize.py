@@ -247,6 +247,8 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         out = _ceiling_centres(out, objs, prior, notes)
     if indoor:
         out = _wall_mounts(out, objs, shape, prior, notes)
+    if indoor and shape == "ellipse":
+        out = _curved_wall_pieces(out, objs, notes)
     d["relations"] = out
     return d, notes
 
@@ -567,4 +569,26 @@ def _wall_mounts(rels: list[Any], objs: list[dict[str, Any]], shape: Any, prior:
         walls.append(new)
         where = new["b"] + (f" at_deg {new['at_deg']:g}" if "at_deg" in new else "")
         notes.append(f"'{oid}' ({o.get('category')}) is wall-mounted: added '{oid} against_wall {where}'")
+    return out
+
+
+#: furniture that stands with its back to a wall: in a round room, left free, it floated mid-floor
+#: at an odd angle (lightning aidb5 round_lobby: the reception desk skewed in the middle)
+_WALL_PIECES = ("reception_desk", "bar_counter", "kitchen_counter", "bookshelf", "cabinet", "wardrobe", "dresser",
+                "tv_stand", "shelving_unit", "filing_cabinet", "sofa", "fireplace")
+
+
+def _curved_wall_pieces(rels: list[Any], objs: list[dict[str, Any]], notes: list[str]) -> list[Any]:
+    """A desk, counter, shelf or sofa of an ellipse room with no relation placing it gets
+    ``against_wall wall``: its back to the curved wall, tangent to it, facing into the room."""
+    out = list(rels)
+    for o in objs:
+        oid = o.get("id")
+        if o.get("category") not in _WALL_PIECES or o.get("grid") is not None or _n(o) != 1:
+            continue
+        if any(isinstance(r, dict) and r.get("a") == oid and r.get("rel") != "facing" for r in out):
+            continue
+        out.append({"a": oid, "rel": "against_wall", "b": "wall"})
+        notes.append(f"'{oid}' ({o.get('category')}) has its back to the curved wall (added '{oid} against_wall wall'), "
+                     "tangent to it and facing into the room")
     return out

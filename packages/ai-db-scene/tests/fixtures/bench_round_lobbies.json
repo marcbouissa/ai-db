@@ -1,0 +1,349 @@
+{
+ "qwen_aidb5_round_lobby": {
+  "setting": {
+   "bounds_m": [
+    8,
+    8,
+    4
+   ],
+   "floor_material": "polished_marble",
+   "style": "modern",
+   "kind": "indoor"
+  },
+  "objects": [
+   {
+    "id": "reception_desk",
+    "category": "reception_desk",
+    "material": "dark_wood",
+    "hero": true
+   },
+   {
+    "id": "armchair1",
+    "category": "armchair",
+    "material": "velvet",
+    "hero": false
+   },
+   {
+    "id": "armchair2",
+    "category": "armchair",
+    "material": "leather",
+    "hero": false
+   },
+   {
+    "id": "armchair3",
+    "category": "armchair",
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "armchair4",
+    "category": "armchair",
+    "material": "microfiber",
+    "hero": false
+   },
+   {
+    "id": "low_table",
+    "category": "coffee_table",
+    "material": "glass",
+    "hero": true
+   },
+   {
+    "id": "plant1",
+    "category": "potted_plant",
+    "material": "ceramic_pot",
+    "hero": false
+   },
+   {
+    "id": "plant2",
+    "category": "potted_plant",
+    "material": "terracotta_pot",
+    "hero": false
+   },
+   {
+    "id": "pendant_lamp",
+    "category": "pendant_lamp",
+    "material": "metal",
+    "hero": true
+   }
+  ],
+  "relations": [
+   {
+    "a": "reception_desk",
+    "rel": "against_wall",
+    "b": "wall_north"
+   },
+   {
+    "a": "armchair1",
+    "rel": "around",
+    "b": "low_table",
+    "gap_m": 0.5,
+    "at_deg": 0
+   },
+   {
+    "a": "armchair2",
+    "rel": "around",
+    "b": "low_table",
+    "gap_m": 0.5,
+    "at_deg": 90
+   },
+   {
+    "a": "armchair3",
+    "rel": "around",
+    "b": "low_table",
+    "gap_m": 0.5,
+    "at_deg": 180
+   },
+   {
+    "a": "armchair4",
+    "rel": "around",
+    "b": "low_table",
+    "gap_m": 0.5,
+    "at_deg": 270
+   },
+   {
+    "a": "pendant_lamp",
+    "rel": "above",
+    "b": "low_table",
+    "gap_m": 2
+   }
+  ],
+  "lighting": {
+   "daylight": true,
+   "lamp": "pendant_lamp"
+  },
+  "camera": {
+   "position": [
+    4,
+    4,
+    3
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "fov": 60
+  }
+ },
+ "qwen_aidb6_round_lobby": {
+  "setting": {
+   "kind": "indoor",
+   "shape": "ellipse",
+   "floor_material": "marble",
+   "bounds_m": [
+    10,
+    10,
+    3
+   ]
+  },
+  "objects": [
+   {
+    "id": "reception_desk",
+    "category": "reception_desk",
+    "material": "wood",
+    "hero": true
+   },
+   {
+    "id": "armchair_1",
+    "category": "armchair",
+    "material": "leather"
+   },
+   {
+    "id": "armchair_2",
+    "category": "armchair",
+    "material": "leather"
+   },
+   {
+    "id": "armchair_3",
+    "category": "armchair",
+    "material": "leather"
+   },
+   {
+    "id": "armchair_4",
+    "category": "armchair",
+    "material": "leather"
+   },
+   {
+    "id": "low_table",
+    "category": "coffee_table",
+    "material": "glass",
+    "hero": true
+   },
+   {
+    "id": "plant_1",
+    "category": "potted_plant",
+    "material": "leaf"
+   },
+   {
+    "id": "plant_2",
+    "category": "potted_plant",
+    "material": "leaf"
+   },
+   {
+    "id": "pendant_lamp",
+    "category": "pendant_lamp",
+    "material": "metal",
+    "hero": true
+   }
+  ],
+  "relations": [
+   {
+    "a": "armchair_1",
+    "rel": "around",
+    "b": "low_table"
+   },
+   {
+    "a": "armchair_2",
+    "rel": "around",
+    "b": "low_table"
+   },
+   {
+    "a": "armchair_3",
+    "rel": "around",
+    "b": "low_table"
+   },
+   {
+    "a": "armchair_4",
+    "rel": "around",
+    "b": "low_table"
+   },
+   {
+    "a": "pendant_lamp",
+    "rel": "above",
+    "b": "low_table"
+   }
+  ],
+  "lighting": {
+   "daylight": true,
+   "lamp": "pendant_lamp"
+  },
+  "camera": {
+   "position": [
+    0,
+    0,
+    2.5
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "type": "perspective"
+  }
+ },
+ "lightning_aidb5_round_lobby": {
+  "setting": {
+   "kind": "indoor",
+   "bounds_m": [
+    12,
+    12,
+    3
+   ],
+   "shape": "ellipse",
+   "floor_material": "marble:carrara",
+   "wall_material": "plaster:#f0f0f0",
+   "mouldings": []
+  },
+  "objects": [
+   {
+    "id": "reception_desk",
+    "category": "reception_desk",
+    "count": 1,
+    "material": "wood:walnut",
+    "hero": true
+   },
+   {
+    "id": "coffee_table",
+    "category": "coffee_table",
+    "count": 1,
+    "material": "wood:oak"
+   },
+   {
+    "id": "armchair1",
+    "category": "armchair",
+    "count": 1,
+    "material": "fabric:linen:#8b4513"
+   },
+   {
+    "id": "armchair2",
+    "category": "armchair",
+    "count": 1,
+    "material": "fabric:linen:#8b4513"
+   },
+   {
+    "id": "armchair3",
+    "category": "armchair",
+    "count": 1,
+    "material": "fabric:linen:#8b4513"
+   },
+   {
+    "id": "armchair4",
+    "category": "armchair",
+    "count": 1,
+    "material": "fabric:linen:#8b4513"
+   },
+   {
+    "id": "potted_plant1",
+    "category": "potted_plant",
+    "count": 1,
+    "material": "foliage:green"
+   },
+   {
+    "id": "potted_plant2",
+    "category": "potted_plant",
+    "count": 1,
+    "material": "foliage:green"
+   },
+   {
+    "id": "pendant_lamp",
+    "category": "pendant_lamp",
+    "count": 1,
+    "material": "metal:chrome"
+   }
+  ],
+  "relations": [
+   {
+    "a": "armchair1",
+    "rel": "around",
+    "b": "coffee_table",
+    "gap_m": 0.5
+   },
+   {
+    "a": "armchair2",
+    "rel": "around",
+    "b": "coffee_table",
+    "gap_m": 0.5
+   },
+   {
+    "a": "armchair3",
+    "rel": "around",
+    "b": "coffee_table",
+    "gap_m": 0.5
+   },
+   {
+    "a": "armchair4",
+    "rel": "around",
+    "b": "coffee_table",
+    "gap_m": 0.5
+   },
+   {
+    "a": "potted_plant1",
+    "rel": "beside",
+    "b": "reception_desk",
+    "gap_m": 0.3
+   },
+   {
+    "a": "potted_plant2",
+    "rel": "beside",
+    "b": "reception_desk",
+    "gap_m": 0.3
+   },
+   {
+    "a": "pendant_lamp",
+    "rel": "above",
+    "b": "coffee_table",
+    "gap_m": 1.0
+   }
+  ]
+ }
+}
