@@ -25,14 +25,14 @@ def _warn(message: str, objects: list[str] | None = None) -> dict[str, Any]:
 
 
 def check(spec: Any, placements: list[Any]) -> list[dict[str, Any]]:
-    from ai_db_scene.materials import FLOOR_MATERIALS, WALL_MATERIAL, style_material
+    from ai_db_scene.materials import FLOOR_MATERIALS, interior_wall, style_material
 
     issues: list[dict[str, Any]] = []
     st = spec.setting
     cats = {p.category for p in placements}
     if st.kind == "indoor":
         floor = st.floor_material or style_material(st.style, "floor") or FLOOR_MATERIALS.get("indoor", "")
-        wall = st.wall_material or style_material(st.style, "wall") or WALL_MATERIAL
+        wall = interior_wall(st.wall_material or style_material(st.style, "wall"))
         for what, mat in (("floor", floor), ("walls", wall)):
             if str(mat).startswith("color"):
                 issues.append(_warn(f"the {what} are a flat colour ({mat}); use a material with variation, e.g. "

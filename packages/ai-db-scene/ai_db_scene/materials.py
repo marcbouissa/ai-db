@@ -72,7 +72,15 @@ CATEGORY_MATERIALS: dict[str, str] = {
 }
 DEFAULT_MATERIAL = "plaster"
 FLOOR_MATERIALS = {"indoor": "wood:oak", "outdoor": "foliage:#4f6b3a", "tabletop": "wood:walnut"}
-WALL_MATERIAL = "plaster"
+WALL_MATERIAL = "plaster:#ece6dc"  # warm white: what an unspecified interior wall is painted
+#: painted steel cladding (plain metal walls, spec.py): the one wall finish kept as paint
+WALL_CLADDING = "paint:#b8bdc2"
+#: interior wall tints are paints people choose: warm whites, greige, muted tones. Above this HSV
+#: saturation a tint read as salmon/pink/red walls (qwen lobby, living room: "beige_paint" -> paint ->
+#: the addon's red car paint); stronger tints are pulled down to it, hue and value kept.
+WALL_MAX_SATURATION = 0.22
+#: finishes a weak model names for walls that render as car paint/plastic: plaster takes their tint
+_WALL_REPAINT = ("paint", "color", "plastic", "rubber")
 
 #: ``setting.style`` -> palette: ``floor``/``wall`` for indoor rooms, ``categories`` per-category
 #: overrides. Explicit spec materials (objects[].material, floor_material, wall_material) win.
@@ -110,6 +118,24 @@ STYLE_PALETTES: dict[str, StylePalette] = {
         "dining_table": "wood:mahogany", "chair": "wood:mahogany", "dining_chair": "wood:mahogany",
         "bookshelf": "wood:mahogany", "desk": "wood:mahogany", "fireplace": "marble:carrara",
         "floor_lamp": "brass", "table_lamp": "brass", "pendant_lamp": "brass", "rug": "fabric:weave:#7a2e2e"}},
+    "cozy": {"floor": "wood:oak", "wall": "plaster:#e6dccd", "categories": {
+        "sofa": "fabric:weave:#b9a58c", "armchair": "fabric:weave:#8f7a63", "coffee_table": "wood:walnut",
+        "side_table": "wood:walnut", "bookshelf": "wood:walnut", "tv_stand": "wood:walnut",
+        "floor_lamp": "brass", "table_lamp": "ceramic", "rug": "fabric:weave:#c9b9a0"}},
+    "coastal": {"floor": "wood:pine", "wall": "plaster:#eef0ec", "categories": {
+        "sofa": "fabric:linen:#e9e6dc", "armchair": "fabric:linen:#a9bcc4", "coffee_table": "wood:pine",
+        "side_table": "wood:pine", "rug": "fabric:weave:#c8d2d0"}},
+    "luxury": {"floor": "marble:carrara", "wall": "plaster:#e7e0d4", "categories": {
+        "sofa": "velvet", "armchair": "velvet", "coffee_table": "marble:calacatta", "side_table": "brass",
+        "reception_desk": "wood:walnut", "floor_lamp": "brass", "table_lamp": "brass", "pendant_lamp": "brass",
+        "rug": "fabric:weave:#8c8170"}},
+}
+#: style words that mean one of the palettes ("minimalist", "nordic", "hotel lobby", ...)
+STYLE_ALIASES: dict[str, str] = {
+    "minimal": "modern", "minimalist": "modern", "contemporary": "modern", "nordic": "scandinavian",
+    "scandi": "scandinavian", "loft": "industrial", "farmhouse": "rustic", "cottage": "rustic",
+    "traditional": "classic", "victorian": "classic", "warm": "cozy", "cosy": "cozy", "homey": "cozy",
+    "beach": "coastal", "nautical": "coastal", "elegant": "luxury", "hotel": "luxury", "upscale": "luxury",
 }
 
 
@@ -124,7 +150,8 @@ def style_error(value: object) -> str | None:
 def style_palette(style: str | None) -> str | None:
     """The known style a ``setting.style`` text names ("Industrial loft" -> industrial), else None."""
     words = re.findall(r"[a-z]+", (style or "").lower())
-    return next((w for w in words if w in STYLE_PALETTES), None)
+    return next((w for w in words if w in STYLE_PALETTES), None) or next(
+        (STYLE_ALIASES[w] for w in words if w in STYLE_ALIASES), None)
 
 
 def style_material(style: str | None, key: str) -> str | None:
@@ -185,7 +212,8 @@ COLOUR_NAMES: dict[str, str] = {
     "green": "#4a7a3a", "blue": "#2f5d9e", "navy": "#1f2f55", "yellow": "#e0b830", "orange": "#d9752b",
     "brown": "#6b4a2f", "beige": "#d8c8a8", "cream": "#efe6d2", "pink": "#d98a9a", "purple": "#6b3f7a",
     "teal": "#2f7a7a", "tan": "#c0a080", "charcoal": "#36393d", "ivory": "#f4efe1", "olive": "#6b6b35",
-    "burgundy": "#6b1f2a", "gold": "#c9a227", "silver": "#c0c0c0",
+    "burgundy": "#6b1f2a", "gold": "#c9a227", "silver": "#c0c0c0", "greige": "#cfc6b8", "taupe": "#a89a8a",
+    "sage": "#a3b09a", "salmon": "#e8a090", "offwhite": "#efebe2", "eggshell": "#efe9dc",
     "turquoise": "#2fb8b0", "aqua": "#4fc8d0", "cyan": "#2fb0c8", "coral": "#e8735a", "khaki": "#b8a77a",
     "mint": "#9fd8b8", "sand": "#d8c49a", "sandy": "#d8c49a", "lime": "#8cc63f", "sky": "#8cc4e8",
 }
@@ -250,7 +278,9 @@ def _coerce(raw: str, value: str) -> tuple[str | None, str]:
     whole = ":".join(names[:2])
     tint = tints[0] if tints else None
     if whole not in MATERIAL_ALIASES:  # "metal:gold" is an alias, "fabric:gold" a colour
-        tint = tint or next((COLOUR_NAMES[p] for p in names[1:] if p in COLOUR_NAMES), None)
+        # "beige_paint" (qwen lobby walls) names the colour first: it lost its beige before
+        lead = names[:1] if names and names[0] not in MATERIAL_KINDS and len(names) > 1 else []
+        tint = tint or next((COLOUR_NAMES[p] for p in lead + names[1:] if p in COLOUR_NAMES), None)
         names = [p for p in names if p not in COLOUR_NAMES or p == names[0]]
     candidates = [whole, ":".join(names[:2]), names[0], *names[1:]] if names else []
     out: str | None = None
@@ -282,6 +312,41 @@ def _coerce(raw: str, value: str) -> tuple[str | None, str]:
 #: flat colour for each newer kind when the connected addon predates it
 _LEGACY = {"concrete": "#9a9890", "stone": "#7d7a72", "foliage": "#3d6b2f", "plastic": "#b0b0b0",
            "paint": "#7a1f1f", "rubber": "#111111"}
+
+
+def _hex_rgb(h: str) -> tuple[float, float, float]:
+    return int(h[1:3], 16) / 255, int(h[3:5], 16) / 255, int(h[5:7], 16) / 255
+
+
+def wall_saturation(material: str) -> float:
+    """HSV saturation of a material's tint (0 when it has none)."""
+    import colorsys
+
+    tint = next((p for p in material.split(":")[1:] if _HEX.match(p)), None)
+    return colorsys.rgb_to_hsv(*_hex_rgb(tint))[1] if tint else 0.0
+
+
+def interior_wall(material: str | None) -> str:
+    """The finish an indoor wall gets: unspecified -> warm-white plaster; paint/plastic/flat colour ->
+    plaster in that tint (the addon's untinted paint is red car paint); any tint above
+    ``WALL_MAX_SATURATION`` pulled down to it. Painted steel cladding stays as it is."""
+    import colorsys
+
+    if not material:
+        return WALL_MATERIAL
+    if material == WALL_CLADDING or material.startswith("pbr:"):
+        return material
+    parts = material.split(":")
+    tint = next((p for p in parts[1:] if _HEX.match(p)), None)
+    if parts[0] in _WALL_REPAINT:
+        parts = ["plaster"] + ([tint] if tint else [WALL_MATERIAL.split(":")[1]])
+    if tint:
+        h, s, v = colorsys.rgb_to_hsv(*_hex_rgb(tint))
+        if s > WALL_MAX_SATURATION:
+            r, g, b = colorsys.hsv_to_rgb(h, WALL_MAX_SATURATION, max(v, 0.55))
+            muted = f"#{round(r * 255):02x}{round(g * 255):02x}{round(b * 255):02x}"
+            parts = [muted if p == tint else p for p in parts]
+    return ":".join(parts)
 
 
 def legacy_fallback(material: str) -> str | None:

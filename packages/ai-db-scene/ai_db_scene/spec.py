@@ -9,7 +9,13 @@ from typing import Any
 
 from ai_db_scene.constants import LAYOUT_GRID_GAP_M, LAYOUT_MAX_BOUND_M, LAYOUT_MAX_COUNT
 from ai_db_scene.furniture_variants import coerce_variant, families
-from ai_db_scene.materials import STYLE_PALETTES, coerce_material, material_vocabulary, style_error
+from ai_db_scene.materials import (
+    STYLE_PALETTES,
+    WALL_CLADDING,
+    coerce_material,
+    material_vocabulary,
+    style_error,
+)
 from ai_db_scene.priors import SUPPORTS, categories
 from ai_db_scene.shapes import polygon_wall_names
 from ai_db_scene.terrain import (
@@ -118,7 +124,7 @@ TABLE_CATEGORIES = ("dining_table", "coffee_table", "side_table", "conference_ta
 
 #: plain metal walls -> painted steel cladding
 _BARE_METAL = ("metal", "chrome", "metal:steel", "metal:brushed", "metal:chrome")
-_CLADDING = "paint:#b8bdc2"
+_CLADDING = WALL_CLADDING
 
 
 def coerce_table_shape(v: Any, category: Any) -> tuple[str | None, str | None]:

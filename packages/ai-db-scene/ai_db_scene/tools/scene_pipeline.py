@@ -59,7 +59,7 @@ from ai_db_scene.layout import LayoutError, Placement, solve_layout
 from ai_db_scene.materials import (
     FLOOR_MATERIALS,
     STYLE_PALETTES,
-    WALL_MATERIAL,
+    interior_wall,
     legacy_fallback,
     material_for,
     pbr_preset,
@@ -446,7 +446,7 @@ def _interior_wall_commands(spec: SceneSpec) -> list[dict[str, Any]]:
     w, d, h = spec.setting.bounds_m
     t, off = WALL_THICKNESS_M, frame_offset(spec)
     doors = room_doors(spec)
-    mat = material_for("", spec.setting.wall_material or style_material(spec.setting.style, "wall") or WALL_MATERIAL)
+    mat = material_for("", interior_wall(spec.setting.wall_material or style_material(spec.setting.style, "wall")))
     cmds: list[dict[str, Any]] = []
 
     def slab(name: str, k: int, line: float, a: float, b: float, z0: float, z1: float) -> None:
@@ -1209,7 +1209,7 @@ def build_layout_commands(
         elif st.kind == "outdoor":
             surfaces.append(("ground_beyond", floor))
         if st.kind == "indoor":
-            surfaces.append(("Room_Walls", st.wall_material or style_material(st.style, "wall") or WALL_MATERIAL))
+            surfaces.append(("Room_Walls", interior_wall(st.wall_material or style_material(st.style, "wall"))))
         for obj, mat in surfaces:
             mat_s = material_for("", mat)
             if mat_s.startswith("wood") and "scale=" not in mat_s:  # floor-sized figure, not room-sized swirls
