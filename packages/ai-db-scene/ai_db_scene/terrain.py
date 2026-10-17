@@ -357,6 +357,13 @@ def _lift(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             if a in ground_ids or a in water_ids:
                 notes.append(f"relations[{i}]: dropped (its subject '{a}' is the ground / water itself)")
                 continue
+            side_rel = _wall_word_rel(b, setting.get("water")) if has_water and b not in cats and rel != "facing" else None
+            if side_rel is not None:
+                notes.append(f"relations[{i}]: '{a} {r.get('rel')} {b}' read as '{a} {side_rel} water' (outdoors the "
+                             f"{'back' if side_rel == 'back_of' else 'front'} is "
+                             f"{'away from' if side_rel == 'back_of' else 'toward'} the water)")
+                out.append({"a": a, "rel": side_rel, "b": WATER})
+                continue
             to_water = b in water_ids or (has_water and _word(b) in shore_words)
             to_ground = b in ground_ids or (_word(b) in GROUND_ALIASES or _word(b) in _GROUND_WORDS) and not to_water
             if to_ground and has_water and (REL_ALIASES.get(rel) == "back_of" or cats.get(a) in OVER_WATER):
@@ -377,6 +384,41 @@ def _lift(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             out.append(r)
         d["relations"] = out
     return d, notes
+
+
+#: words around a side in a wall name (back_wall, the north side, rear edge of the beach)
+_SIDE_FILLER = ("wall", "walls", "side", "the", "edge", "of", "area", "border", "boundary", "perimeter", "line", "end",
+                "part", "beach", "scene", "setting", "cove")
+_SIDE_WORD = {"back": "back", "rear": "back", "behind": "back", "front": "front",
+              "north": "north", "south": "south", "east": "east", "west": "west"}
+_OPPOSITE_SIDE = {"north": "south", "south": "north", "east": "west", "west": "east"}
+
+
+def _wall_word_rel(b: Any, water: Any) -> str | None:
+    """The relation to the water a wall word means outdoors, else None: ``back_wall`` / ``rear`` /
+    the side opposite the water -> back_of (along the back, away from the water); ``front`` / the
+    water's own side -> near. A side across the shore (east with the sea north) means nothing here.
+    Bench beach_cove: "ferns along the back" written ``along back_wall`` was dropped (no walls
+    outdoors)."""
+    words = [w.removesuffix("ern") for w in _word(b).split("_") if w and w not in _SIDE_FILLER]
+    sides = {_SIDE_WORD[w] for w in words if w in _SIDE_WORD}
+    if len(sides) != 1 or len(words) != 1:
+        return None
+    side = sides.pop()
+    if side in ("back", "front"):
+        return "back_of" if side == "back" else "near"
+    wside: Any = None
+    if isinstance(water, str):
+        wside = _word(water) if _word(water) in SIDES else ("north" if water_kind(water) not in (None, "pond") else None)
+    elif isinstance(water, dict):
+        wside = _word(water.get("side")) or None
+        if wside is None and water.get("region") is None and water_kind(water.get("kind", "sea")) != "pond":
+            wside = "north"  # parse_water's default side
+    elif water is True:
+        wside = "north"
+    if wside not in SIDES:
+        return None
+    return "near" if side == wside else "back_of" if side == _OPPOSITE_SIDE[wside] else None
 
 
 def hold_water_relations(data: Any) -> tuple[Any, list[dict[str, Any]]]:
