@@ -1,0 +1,434 @@
+{
+ "source": "bench aidb7 runs (2026-10-17): the last stored build_scene version's spec + brief from aidb/scene_memory.db (model-written, repaired)",
+ "last/qwen/park_corner": {
+  "spec": {
+   "setting": {
+    "kind": "outdoor",
+    "bounds_m": [
+     10.0,
+     10.0,
+     5.0
+    ],
+    "style": null,
+    "floor_material": "concrete"
+   },
+   "objects": [
+    {
+     "id": "bench1",
+     "category": "bench",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "bench2",
+     "category": "bench",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "bench3",
+     "category": "bench",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "fountain",
+     "category": "fountain",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "stone"
+    },
+    {
+     "id": "tree1",
+     "category": "tree",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "tree2",
+     "category": "tree",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "trash_can",
+     "category": "trash_can",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "lamp1",
+     "category": "street_lamp",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "lamp2",
+     "category": "street_lamp",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "metal"
+    }
+   ],
+   "relations": [
+    {
+     "a": "bench1",
+     "rel": "facing",
+     "b": "fountain"
+    },
+    {
+     "a": "bench2",
+     "rel": "facing",
+     "b": "fountain"
+    },
+    {
+     "a": "bench3",
+     "rel": "facing",
+     "b": "fountain"
+    },
+    {
+     "a": "tree1",
+     "rel": "beside",
+     "b": "fountain"
+    },
+    {
+     "a": "tree2",
+     "rel": "beside",
+     "b": "fountain"
+    },
+    {
+     "a": "trash_can",
+     "rel": "beside",
+     "b": "bench1"
+    }
+   ],
+   "lighting": {},
+   "camera": {}
+  },
+  "brief": "A park corner outdoors: three benches facing a fountain, two trees, a trash bin, and two street lamps. Real-world scale in metres with the floor at z=0; every requested object present and recognisable; a material on every object; lighting; an active scene camera that frames the scene."
+ },
+ "last/qwen/beach_cove": {
+  "spec": {
+   "setting": {
+    "kind": "outdoor",
+    "bounds_m": [
+     28.8,
+     21.6,
+     2.0
+    ],
+    "style": "tropical",
+    "ground": "sand",
+    "water": {
+     "kind": "lagoon",
+     "side": "north",
+     "fraction": 0.3
+    }
+   },
+   "objects": [
+    {
+     "id": "palm1",
+     "category": "palm_tree",
+     "count": 5,
+     "hero": false,
+     "detail": "standard",
+     "material": "foliage:#4a7a3a"
+    },
+    {
+     "id": "bushes",
+     "category": "tropical_bush",
+     "count": 3,
+     "hero": false,
+     "detail": "standard",
+     "material": "foliage:#3f6f2a"
+    },
+    {
+     "id": "boardwalk",
+     "category": "boardwalk",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "loungers",
+     "category": "sun_lounger",
+     "count": 2,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood:pine:#b08a55"
+    },
+    {
+     "id": "parasol",
+     "category": "parasol",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "fabric:canvas"
+    },
+    {
+     "id": "rocks",
+     "category": "rock",
+     "count": 4,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "ferns",
+     "category": "fern",
+     "count": 2,
+     "hero": false,
+     "detail": "standard",
+     "material": "foliage:#3f6f2a"
+    }
+   ],
+   "relations": [
+    {
+     "a": "loungers",
+     "rel": "under",
+     "b": "parasol"
+    },
+    {
+     "a": "bushes",
+     "rel": "beside",
+     "b": "boardwalk"
+    },
+    {
+     "a": "ferns",
+     "rel": "beside",
+     "b": "boardwalk"
+    },
+    {
+     "a": "boardwalk",
+     "rel": "leads_to",
+     "b": "water"
+    },
+    {
+     "a": "rocks",
+     "rel": "at_edge_of",
+     "b": "water"
+    }
+   ],
+   "lighting": {},
+   "camera": {}
+  },
+  "brief": "A tropical beach cove outdoors: a sandy beach sloping into calm turquoise water, five palm trees, dense green bushes and ferns along the back, a wooden boardwalk from the bushes to the water, two sun loungers under a parasol, and a few rocks at the water's edge."
+ },
+ "last/lightning/park_corner": {
+  "spec": {
+   "setting": {
+    "kind": "outdoor",
+    "bounds_m": [
+     20.0,
+     20.0,
+     5.0
+    ],
+    "style": "park",
+    "ground": "grass"
+   },
+   "objects": [
+    {
+     "id": "bench1",
+     "category": "bench",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "bench2",
+     "category": "bench",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "bench3",
+     "category": "bench",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "fountain",
+     "category": "fountain",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "tree1",
+     "category": "tree",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "tree2",
+     "category": "tree",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "trashbin",
+     "category": "trash_can",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "lamp1",
+     "category": "street_lamp",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "lamp2",
+     "category": "street_lamp",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    }
+   ],
+   "relations": [
+    {
+     "a": "bench1",
+     "rel": "facing",
+     "b": "fountain"
+    },
+    {
+     "a": "bench2",
+     "rel": "facing",
+     "b": "fountain"
+    },
+    {
+     "a": "bench3",
+     "rel": "facing",
+     "b": "fountain"
+    },
+    {
+     "a": "lamp1",
+     "rel": "beside",
+     "b": "bench1"
+    },
+    {
+     "a": "lamp2",
+     "rel": "beside",
+     "b": "bench3"
+    }
+   ],
+   "lighting": {},
+   "camera": {}
+  },
+  "brief": "A park corner outdoors: three benches facing a fountain, two trees, a trash can and two street lamps. Real-world scale in metres with floor at z=0; every requested object present and recognizable; a material on every object; lighting; an active scene camera that frames the scene."
+ },
+ "last/lightning/beach_cove": {
+  "spec": {
+   "setting": {
+    "kind": "outdoor",
+    "bounds_m": [
+     50.0,
+     50.0,
+     10.0
+    ],
+    "style": null,
+    "ground": "sand",
+    "water": {
+     "kind": "lagoon",
+     "side": "north",
+     "fraction": 0.3
+    }
+   },
+   "objects": [
+    {
+     "id": "palm1",
+     "category": "palm_tree",
+     "count": 5,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "bush1",
+     "category": "tropical_bush",
+     "count": 10,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "fern1",
+     "category": "fern",
+     "count": 4,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "rock1",
+     "category": "rock",
+     "count": 5,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "boardwalk1",
+     "category": "boardwalk",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "lounge1",
+     "category": "sun_lounger",
+     "count": 2,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "parasol1",
+     "category": "parasol",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    }
+   ],
+   "relations": [
+    {
+     "a": "lounge1",
+     "rel": "under",
+     "b": "parasol1"
+    },
+    {
+     "a": "palm1",
+     "rel": "beside",
+     "b": "bush1"
+    },
+    {
+     "a": "boardwalk1",
+     "rel": "leads_to",
+     "b": "water"
+    },
+    {
+     "a": "rock1",
+     "rel": "at_edge_of",
+     "b": "water"
+    }
+   ],
+   "lighting": {},
+   "camera": {}
+  },
+  "brief": "A tropical beach cove outdoors: a sandy beach sloping into calm turquoise water, five palm trees, dense green bushes and ferns along the back, a wooden boardwalk from the bushes to the water, two sun loungers under a parasol, and a few rocks at the water's edge. Real-world scale in metres with the floor at z=0; every requested object present and recognisable; a material on every object; lighting; an active scene camera that frames the scene."
+ }
+}

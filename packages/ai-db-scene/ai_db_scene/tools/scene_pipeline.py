@@ -1191,6 +1191,9 @@ def build_layout_commands(
                  for obj, mat in surfaces if (p := pbr_preset(mat))]
     if wear:
         cmds.append(_wear_command(wear))
+    if spec.setting.kind == "outdoor":  # a park's paved plaza round its fountain (terrain.plaza_commands)
+        pave = spec.setting.floor_material if terrain.paving(spec.setting.floor_material) else terrain.PLAZA_MATERIAL
+        cmds += terrain.plaza_commands(spec, placements, off, material_for("", pave))
     cmds += lighting_commands(spec, placements, off)
     plants = [pl.id for pl in placements if pl.category in FOLIAGE_CATEGORIES]
     if plants and SCENE_FOLIAGE_DENSITY > 0 and geometry == "generated":

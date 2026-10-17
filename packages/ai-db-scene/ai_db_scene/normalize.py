@@ -251,6 +251,7 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     out = _seats(d, out, objs, notes)
     out = _pair_seats(d, out, notes)
     objs = [o for o in d.get("objects") or [] if isinstance(o, dict)]
+    out = _focal_rings(out, objs, prior, notes)
     _round_ids(objs, notes)
     _spread_centered(out, objs, setting, prior, notes)
     if indoor:
@@ -794,6 +795,95 @@ def _teacher_desk(d: dict[str, Any], rels: list[Any], notes: list[str]) -> list[
     rels = [r for r in rels if r not in mine] + [{"a": tid, "rel": "in_front_of", "b": board, "gap_m": 0.4}]
     notes.append(f"'{tid}' in_front_of {board}" + (f" instead of {old}" if old else "")
                  + " (the teacher's desk stands at the front, the teacher behind it facing the class)")
+    return rels
+
+
+#: what a group of seats is turned to when they ring it (benches facing a fountain)
+_FOCAL = ("fountain", "gazebo")
+_RING_SEATS = ("bench", "chair", "armchair", "dining_chair")
+#: centre-to-centre radius of seats round a focal object: one group, a walkway in front of them
+_FOCAL_RING_M = (2.5, 4.0)
+_FOCAL_RING_TARGET_M = 3.0
+_FOCAL_RING_WALK_M = 0.9
+#: relations that place a seat by something else: it keeps them
+_PLACING_RELS = ("on", "against_wall", "in_front_of", "beside", "centered_in", "under", "around")
+
+
+def _focal_rings(rels: list[Any], objs: list[dict[str, Any]], prior: Any, notes: list[str]) -> list[Any]:
+    """Seats ``facing`` / ``around`` / ``in_front_of`` a fountain (gazebo) become a ring round it at
+    2.5-4 m centre to centre, each facing it. Bench park_corner (aidb7, qwen + lightning): three
+    benches ``facing fountain`` stood 6-15 m away anywhere on the lawn, some side-on to it."""
+    by_id = {o.get("id"): o for o in objs}
+    out: list[Any] = []
+    rung: set[tuple[Any, Any]] = set()
+    for r in rels:
+        if not isinstance(r, dict) or r.get("rel") not in ("facing", "around", "in_front_of"):
+            out.append(r)
+            continue
+        a, b = by_id.get(r.get("a")), by_id.get(r.get("b"))
+        if a is None or b is None or a.get("category") not in _RING_SEATS or b.get("category") not in _FOCAL \
+                or any(x is not r and isinstance(x, dict) and x.get("a") == a.get("id") and x.get("b") != b.get("id")
+                       and x.get("rel") in _PLACING_RELS for x in rels):
+            out.append(r)
+            continue
+        pa, pb = prior(a.get("id")), prior(b.get("id"))
+        if pa is None or pb is None:
+            out.append(r)
+            continue
+        if (a["id"], b["id"]) in rung:  # 'facing' next to its own 'around': one ring
+            notes.append(f"dropped '{a['id']} {r.get('rel')} {b['id']}' (it is in the ring round '{b['id']}')")
+            continue
+        ea = pa.typical_m[1] / 2  # a seat faces the centre: its depth runs along the radius
+        eb = max(pb.typical_m[0], pb.typical_m[1]) / 2
+        least = eb + ea + _FOCAL_RING_WALK_M
+        lo, hi = max(_FOCAL_RING_M[0], least), max(_FOCAL_RING_M[1], least)
+        gap = r.get("gap_m") if r.get("rel") == "around" and _num(r.get("gap_m")) else None
+        radius = min(max(eb + ea + gap if gap is not None else _FOCAL_RING_TARGET_M, lo), hi)
+        new = {"a": a["id"], "rel": "around", "b": b["id"], "gap_m": round(radius - eb - ea, 2)}
+        rung.add((a["id"], b["id"]))
+        if new != r:
+            notes.append(f"'{a['id']} {r.get('rel')} {b['id']}' read as '{a['id']} around {b['id']}' "
+                         f"(gap {new['gap_m']:g} m): seats round a {b.get('category')} ring it "
+                         f"{radius:.1f} m from its centre, each facing it")
+        out.append(new)
+    if not rung:
+        return out
+    return _ring_trees(out, by_id, prior, {b for _a, b in rung}, notes)
+
+
+#: tall plants ``beside`` a ringed fountain: they join the ring between the seats, a step further out
+_RING_TREES = ("tree", "palm_tree")
+_RING_TREE_OUT_M = 0.8
+
+
+def _ring_trees(rels: list[Any], by_id: dict[Any, dict[str, Any]], prior: Any, centres: set[Any],
+                notes: list[str]) -> list[Any]:
+    """Trees written ``beside`` / ``near`` a fountain whose seats ring it stood where the ring wanted
+    its seats (qwen park_corner: the benches bunched on one side). They join the ring, between the
+    seats (seat, tree, seat, ...), their trunks ~0.8 m further out."""
+    for b in centres:
+        seats = [r for r in rels if isinstance(r, dict) and r.get("rel") == "around" and r.get("b") == b]
+        trees = [r for r in rels if isinstance(r, dict) and r.get("b") == b and r.get("rel") in ("beside", "near")
+                 and by_id.get(r.get("a"), {}).get("category") in _RING_TREES
+                 and not any(x is not r and isinstance(x, dict) and x.get("a") == r.get("a") for x in rels)]
+        if not trees or not seats:
+            continue
+        pb = prior(b)
+        eb = max(pb.typical_m[0], pb.typical_m[1]) / 2
+        s0 = seats[0]
+        radius = eb + float(s0["gap_m"]) + prior(s0["a"]).typical_m[1] / 2 + _RING_TREE_OUT_M
+        new_trees = []
+        for r in trees:
+            et = max(prior(r["a"]).typical_m[0], prior(r["a"]).typical_m[1]) / 2
+            new_trees.append({"a": r["a"], "rel": "around", "b": b, "gap_m": round(max(radius - eb - et, 0.3), 2)})
+            notes.append(f"'{r['a']} {r['rel']} {b}' read as '{r['a']} around {b}': the tree stands in the ring "
+                         f"between the seats")
+        order: list[Any] = []
+        for i in range(max(len(seats), len(new_trees))):  # seat, tree, seat, tree, ...
+            order += seats[i:i + 1] + new_trees[i:i + 1]
+        first = rels.index(s0)
+        rest = [r for r in rels if not any(r is x for x in (*seats, *trees))]
+        rels = rest[:first] + order + rest[first:]
     return rels
 
 

@@ -44,6 +44,17 @@ OCCLUDER_MIN_TOP_M = 0.85  # plants, armchairs, chair backs, trunks: tall enough
 MIN_HFOV_DEG = 55.0  # never narrower: a room photo, not a close-up
 MAX_HFOV_DEG = 96.0  # ~16 mm on a 36 mm sensor: wider distorts the corners
 SENSOR_MM = 36.0
+#: outdoors: tree trunks and lamp posts between the lens and the subject (qwen aidb7 park: a trunk
+#: filled the middle of the picture) and tops cut by the top of the frame count against a view
+TRUNKS = ("tree", "palm_tree", "street_lamp", "lamp_post_double", "signpost")
+CANOPIES = ("tree", "palm_tree")
+TRUNK_W = 1.5
+CANOPY_CUT_W = 0.7
+OUTDOOR_TREE_W = 0.3
+OUTDOOR_BACK_M = 14.0
+#: outdoors the camera may step back this far beyond the setting's bounds (the ground goes on)
+OUTDOOR_REACH_M = 8.0
+_ASPECT = 16 / 9
 _INSET_M = 0.45  # spots stand this far in from the walls
 _CLEAR_M = 0.35  # and at least this far from any furniture footprint
 
@@ -98,6 +109,8 @@ def focus_weights(spec: SceneSpec, placements: list[Placement]) -> dict[str, flo
     out: dict[str, float] = {}
     for p in placements:
         w = SEATING.get(p.category, 0.0) + FEATURES.get(p.category, 0.0)
+        if spec.setting.kind == "outdoor" and p.category in CANOPIES:
+            w += OUTDOOR_TREE_W  # a park view shows its trees whole, not a trunk at the edge
         if _base(p.id, ids) in heroes:
             w += 0.5
         if _base(p.id, ids) == focus:
@@ -222,9 +235,16 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
         r = math.hypot(ox, oy) or 1e-6
         off = math.atan2(vx * oy - vy * ox, vx * ox + vy * oy)  # signed angle from the view axis
         ang[k] = abs(off) + math.atan2(max(p.dims[0], p.dims[1]) / 2, r) * 0.6
+    outdoor = spec.setting.kind == "outdoor"
     if hfov_deg is None:
         need = max((a for k, a in ang.items() if math.degrees(a) * 2 <= MAX_HFOV_DEG), default=0.0)
         hfov_deg = max(MIN_HFOV_DEG, min(MAX_HFOV_DEG, math.degrees(need) * 2 + 8.0))
+        if outdoor:  # wide enough (up to the limit) for the canopies of the trees in frame
+            t0 = _shift_tan(aim, z, dist, hfov_deg)
+            up = max((_top_tan(p, x, y, z) - t0 for p in placements if p.category in CANOPIES
+                      and abs(_off_angle(p, x, y, vx, vy)) <= math.radians(hfov_deg) / 2), default=0.0)
+            if up > 0:
+                hfov_deg = max(hfov_deg, min(MAX_HFOV_DEG, math.degrees(2 * math.atan(up * 1.08 * _ASPECT))))
     half = math.radians(hfov_deg) / 2
     seen = tuple(k for k, a in ang.items() if a <= half)
     fronts = 0.0
@@ -266,9 +286,47 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
     # from the far wall were specks (lightning aidb5 warehouse)
     fill = min(1.0, max((ang[k] for k in seen), default=0.0) / half)
     cover = sum(f for _k, f in foreground_cover(placements, x, y, z, aim, hfov_deg) if f > COVER_MAX)
-    score = (2.0 * framed + fronts / max(1.0, len(seen)) ** 0.5 + 0.4 * min(dist, 6.0) / 6.0 + 0.8 * fill
-             - (3.0 if clearance < _CLEAR_M else 0.0) - 1.0 * blocked - 6.0 * cover + facing_board)
+    trunks = cut = 0.0
+    if outdoor:
+        t_top = _shift_tan(aim, z, dist, hfov_deg) + math.tan(half) / _ASPECT
+        for p in placements:
+            if p.category not in TRUNKS:
+                continue
+            off = _off_angle(p, x, y, vx, vy)
+            if abs(off) > half:
+                continue
+            r = math.hypot(p.location[0] - x, p.location[1] - y)
+            if r < 0.75 * dist:  # a trunk nearer than the subject, the more the nearer the middle
+                trunks += (1.0 - abs(off) / half) * min(1.0, 4.0 / max(r, 1.0))
+            if p.category in CANOPIES and _top_tan(p, x, y, z) > t_top:
+                cut += 1.0
+    # room to step back: outdoors a park or beach is seen whole from further off (the qwen aidb7
+    # park view stood 4 m from the fountain with a 96 deg lens, the trees cut at the top)
+    back = 0.8 * min(dist, OUTDOOR_BACK_M) / OUTDOOR_BACK_M if outdoor else 0.4 * min(dist, 6.0) / 6.0
+    score = (2.0 * framed + fronts / max(1.0, len(seen)) ** 0.5 + back + 0.8 * fill
+             - (3.0 if clearance < _CLEAR_M else 0.0) - 1.0 * blocked - 6.0 * cover + facing_board
+             - TRUNK_W * trunks - CANOPY_CUT_W * cut)
     return View(x, y, z, aim, hfov_deg, score, seen, fronts)
+
+
+def _off_angle(p: Placement, x: float, y: float, vx: float, vy: float) -> float:
+    """Signed angle of p from the view axis (vx, vy unit)."""
+    ox, oy = p.location[0] - x, p.location[1] - y
+    return math.atan2(vx * oy - vy * ox, vx * ox + vy * oy)
+
+
+def _top_tan(p: Placement, x: float, y: float, z: float) -> float:
+    """tan of the elevation of p's top seen from the eye (at its near side)."""
+    r = math.hypot(p.location[0] - x, p.location[1] - y) - max(p.dims[0], p.dims[1]) / 2
+    return (p.location[2] + p.dims[2] / 2 - z) / max(r, 0.5)
+
+
+def _shift_tan(aim: tuple[float, float, float], z: float, dist: float, hfov_deg: float) -> float:
+    """tan of the frame centre's elevation: the build's level camera shifts its lens toward the aim."""
+    from ai_db_scene.constants import SCENE_CAMERA_MAX_SHIFT
+
+    th = math.tan(math.radians(hfov_deg) / 2)
+    return max(-2 * SCENE_CAMERA_MAX_SHIFT * th, min(2 * SCENE_CAMERA_MAX_SHIFT * th, (aim[2] - z) / max(dist, 0.5)))
 
 
 def near_spots(spec: SceneSpec, placements: list[Placement]) -> list[tuple[float, float]]:
@@ -285,12 +343,26 @@ def near_spots(spec: SceneSpec, placements: list[Placement]) -> list[tuple[float
     pts = tuple((float(p[0]), float(p[1])) for p in spec.setting.points)
     shape = RoomShape(spec.setting.shape, w, d, pts) if spec.setting.shape != "polygon" or len(pts) >= 3 else None
     solid = [p for p in placements if p.dims[2] > 0.05]
+    outdoor = spec.setting.kind == "outdoor"
+    ter = None
+    if outdoor:
+        from ai_db_scene.terrain import terrain_of
+
+        ter = terrain_of(spec)
+    radii = [reach / math.tan(math.radians(35)) + 1.0, reach / math.tan(math.radians(25)) + 1.0]
+    if outdoor:  # step back further: the whole group and the tree tops in one picture
+        radii.append(reach / math.tan(math.radians(18)) + 1.0)
     out = []
-    for r in (reach / math.tan(math.radians(35)) + 1.0, reach / math.tan(math.radians(25)) + 1.0):
+    for r in radii:
         for t in range(0, 360, 30):
             x, y = ax + r * math.cos(math.radians(t)), ay + r * math.sin(math.radians(t))
-            inside = shape.contains(x, y, -_INSET_M) if shape is not None and spec.setting.shape != "rect" else (
-                _INSET_M <= x <= w - _INSET_M and _INSET_M <= y <= d - _INSET_M)
+            if outdoor:  # anywhere on the land round the setting, never in the water
+                m = OUTDOOR_REACH_M
+                inside = -m <= x <= w + m and -m <= y <= d + m and (
+                    ter is None or ter.water is None or ter.signed(x, y) < ter.dry() - 0.5)
+            else:
+                inside = shape.contains(x, y, -_INSET_M) if shape is not None and spec.setting.shape != "rect" else (
+                    _INSET_M <= x <= w - _INSET_M and _INSET_M <= y <= d - _INSET_M)
             if inside and all(_footprint_dist(x, y, p) >= _CLEAR_M for p in solid):
                 out.append((x, y))
     return out

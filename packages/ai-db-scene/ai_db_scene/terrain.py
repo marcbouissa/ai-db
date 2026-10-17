@@ -523,6 +523,16 @@ def water_from_brief(data: Any, brief: Any) -> tuple[Any, str | None]:
             f"setting.water: {{kind: {new['kind']}}} from the brief (the spec named no kind of water)")
 
 
+#: material words that pave rather than grow: a park's floor_material of this kind is its paving
+_PAVING_WORDS = ("concrete", "stone", "paving", "pavement", "asphalt", "brick", "tile", "tiles", "marble", "granite",
+                 "cobblestone", "cobble", "flagstone", "slate", "terrazzo")
+
+
+def paving(material: Any) -> bool:
+    """Is a floor material a paving (concrete, stone, brick, ...)?"""
+    return isinstance(material, str) and material.split(":")[0].strip().lower() in _PAVING_WORDS
+
+
 def apply_brief_defaults(spec: SceneSpec, brief: str | None) -> tuple[SceneSpec, list[str]]:
     """An outdoor spec without ground / water gets the ones its brief names, with a note."""
     st = spec.setting
@@ -534,6 +544,12 @@ def apply_brief_defaults(spec: SceneSpec, brief: str | None) -> tuple[SceneSpec,
     if st.ground is None and ground is not None and st.floor_material is None:
         new_ground = ground
         notes.append(f"setting.ground: '{ground}' from the brief")
+    elif st.ground is None and ground in PLAZA_GROUNDS and paving(st.floor_material):
+        # a park / garden whose model wrote floor_material concrete: a flat grey slab (bench
+        # park_corner, qwen aidb7). The lawn is the ground; the paving goes round the fountain.
+        new_ground = ground
+        notes.append(f"setting.ground: '{ground}' from the brief; floor_material {st.floor_material!r} paves the "
+                     f"plaza round the {' / '.join(PLAZA_CENTRES)} (if any)")
     if st.water is None and water is not None:
         new_water = parse_water(water, st.bounds_m, [])
         notes.append(f"setting.water: {new_water.to_dict() if new_water else water} from the brief")
@@ -1245,6 +1261,111 @@ result = {"terrain": made, "verts": len(verts)}
 BOARDWALK_PARTS = {"deck": "wood:pine:#b8a07a", "frame": "wood:dark", "posts": "wood:dark"}
 _POST_SPACING_M = 1.8
 _POST_EMBED_M = 0.3  # posts reach this far into the sand / sea floor
+
+
+#: a park's paved plaza: round a fountain / gazebo standing on grass or soil, with a path from it
+#: to the nearest open edge of the setting (bench park_corner, aidb7: the fountain and its benches
+#: stood on a flat grey slab, or anywhere on the lawn)
+PLAZA_CENTRES = ("fountain", "gazebo")
+PLAZA_GROUNDS = ("grass", "soil")
+PLAZA_MATERIAL = "stone:#a59e92"  # light paving; a spec's floor_material (concrete, stone) wins
+_PLAZA_RING_CATS = ("bench", "chair", "armchair", "dining_chair", "trash_can")
+_PLAZA_MARGIN_M = 0.9  # paving beyond the ring of benches: the walkway behind them
+_PLAZA_REACH_M = 4.5  # objects this near the centre belong to the plaza
+_PLAZA_MAX_R_M = 7.0
+_PATH_W_M = 1.8
+_PAVE_Z_M = 0.02  # above the ground: never coplanar with it
+
+
+def plaza_layout(spec: SceneSpec, placements: list[Placement]) -> list[dict[str, Any]]:
+    """Per plaza centre: {centre (layout frame), radius, path: (dx, dy) unit direction, length}."""
+    st = spec.setting
+    if st.kind != "outdoor" or terrain_of(spec) is None or Terrain(spec).ground not in PLAZA_GROUNDS:
+        return []
+    out = []
+    for c in placements:
+        if c.category not in PLAZA_CENTRES:
+            continue
+        cx, cy = c.location[0], c.location[1]
+        r = max(c.dims[0], c.dims[1]) / 2 + 1.5
+        for p in placements:
+            d = math.hypot(p.location[0] - cx, p.location[1] - cy)
+            if p is not c and p.category in _PLAZA_RING_CATS and d <= _PLAZA_REACH_M:
+                r = max(r, d + max(p.dims[0], p.dims[1]) / 2 + _PLAZA_MARGIN_M)
+        r = min(r, _PLAZA_MAX_R_M)
+        best = None
+        for k in range(16):  # the path: the clearest short way out to an edge of the setting
+            a = 2 * math.pi * k / 16
+            u = (math.cos(a), math.sin(a))
+            tx = ((st.bounds_m[0] - cx) / u[0] if u[0] > 1e-6 else -cx / u[0] if u[0] < -1e-6 else 1e9)
+            ty = ((st.bounds_m[1] - cy) / u[1] if u[1] > 1e-6 else -cy / u[1] if u[1] < -1e-6 else 1e9)
+            length = min(tx, ty)
+            if length <= r:
+                continue
+            hits = 0
+            for p in placements:
+                if p is c:
+                    continue
+                ox, oy = p.location[0] - cx, p.location[1] - cy
+                along = ox * u[0] + oy * u[1]
+                if r - 0.5 < along < length and abs(-ox * u[1] + oy * u[0]) < _PATH_W_M / 2 + max(p.dims[0], p.dims[1]) / 2:
+                    hits += 1
+            key = (hits, length)
+            if best is None or key < best[0]:
+                best = (key, u, length)
+        out.append({"id": c.id, "centre": (cx, cy), "radius": round(r, 3),
+                    "path": None if best is None else {"dir": best[1], "length": round(best[2], 3)}})
+    return out
+
+
+def plaza_commands(spec: SceneSpec, placements: list[Placement], off: tuple[float, float, float],
+                   material: str) -> list[dict[str, Any]]:
+    """run_code + apply_material: a paved disc round each plaza centre and its path (flat land)."""
+    cmds: list[dict[str, Any]] = []
+    for pz in plaza_layout(spec, placements):
+        payload = {"name": f"plaza_{pz['id']}", "centre": [pz["centre"][0] + off[0], pz["centre"][1] + off[1]],
+                   "z": off[2] + _PAVE_Z_M, "radius": pz["radius"], "path": pz["path"], "path_w": _PATH_W_M}
+        cmds.append({"type": "run_code", "params": {
+            "code": "import json\nCFG = json.loads(" + repr(json.dumps(payload)) + ")\n" + _PLAZA_CODE}})
+        cmds.append({"type": "apply_material", "params": {"name": payload["name"], "material": material}})
+    return cmds
+
+
+_PLAZA_CODE = r'''
+import bpy, bmesh, math
+name, (cx, cy), z, R = CFG["name"], CFG["centre"], CFG["z"], CFG["radius"]
+old = bpy.data.objects.get(name)
+if old is not None:
+    bpy.data.objects.remove(old, do_unlink=True)
+bm = bmesh.new()
+n = 64
+mid = bm.verts.new((cx, cy, z))
+rim = [bm.verts.new((cx + R * math.cos(2 * math.pi * k / n), cy + R * math.sin(2 * math.pi * k / n), z)) for k in range(n)]
+for k in range(n):
+    bm.faces.new((mid, rim[k], rim[(k + 1) % n]))
+p = CFG["path"]
+if p:
+    ux, uy = p["dir"]
+    w = CFG["path_w"] / 2
+    al = math.asin(min(w / R, 1.0))
+    a0 = R * math.cos(al)
+    # from the plaza's rim (the arc between the two corners), no overlap with the disc
+    arc = [(R * math.cos(t), R * math.sin(t)) for t in (al - 2 * al * k / 8 for k in range(1, 8))]
+    q = [(a0, -w), (p["length"], -w), (p["length"], w), (a0, w), *arc]
+    vs = [bm.verts.new((cx + a * ux - b * uy, cy + a * uy + b * ux, z)) for a, b in q]
+    bm.faces.new(vs)
+bm.normal_update()
+for f in bm.faces:  # every face up (a face seen from below rendered black)
+    if f.normal.z < 0:
+        f.normal_flip()
+me = bpy.data.meshes.new(name)
+bm.to_mesh(me)
+bm.free()
+ob = bpy.data.objects.new(name, me)
+bpy.context.scene.collection.objects.link(ob)
+ob["category"] = "ground"  # flat paving: part of the ground for the checks (bounds, open mesh)
+result = {"plaza": name, "radius": R}
+'''
 
 
 def boardwalk_commands(spec: SceneSpec, pl: Placement, off: tuple[float, float, float], seed: int,

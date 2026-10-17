@@ -287,6 +287,10 @@ def _face_yaw(ax: float, ay: float, bx: float, by: float) -> float:
     return math.atan2(bx - ax, -(by - ay))
 
 
+#: outdoor sizes of categories whose typical size is an indoor one (a park bin, not a wastebasket)
+OUTDOOR_DIMS: dict[str, Dims] = {"trash_can": (0.5, 0.5, 0.9)}
+
+
 def _angdiff(a: float, b: float) -> float:
     return abs((a - b + math.pi) % (2 * math.pi) - math.pi)
 
@@ -314,6 +318,9 @@ class _Problem:
             prior = priors.get(o.category)
             if prior is None:
                 raise LayoutError(f"object '{o.id}': category '{o.category}' has no prior", [o.id])
+            if self.kind == "outdoor" and o.category in OUTDOOR_DIMS and not (
+                    dims_override.get(o.id + "_1") or dims_override.get(o.id)):
+                dims_override = {**dims_override, o.id: OUTDOOR_DIMS[o.category]}
             if o.shape == "round" and not (dims_override.get(o.id + "_1") or dims_override.get(o.id)):
                 dims_override = {**dims_override, o.id: round_table_dims(o.category, prior.typical_m, o.seats)}
             if o.seats:
