@@ -32,6 +32,9 @@ SEATING = {"sofa": 1.5, "armchair": 1.0, "bench": 0.8, "chair": 0.4, "dining_cha
 FEATURES = {"fireplace": 1.2, "reception_desk": 1.2, "bar_counter": 0.8, "whiteboard": 0.8, "tv": 0.6,
             "tv_stand": 0.5, "kitchen_counter": 0.5, "kitchen_island": 0.5, "bookshelf": 0.4, "desk": 0.4,
             "stove": 0.3, "dresser": 0.3, "wardrobe": 0.3, "fountain": 0.8}
+#: outdoor subjects a view should frame, front or back alike (a beach's shore group: loungers face
+#: the water, the camera looks across them at it)
+SUBJECTS = {"sun_lounger": 0.8, "parasol": 0.6, "boardwalk": 0.4, "picnic_table": 0.5}
 #: what an audience faces: desks and chairs turned to one are seen from behind it (a classroom
 #: photo looks over the class at the board, not from the board at the class)
 BOARDS = ("whiteboard", "blackboard", "chalkboard", "projector_screen")
@@ -41,6 +44,8 @@ _AUDIENCE = ("desk", "chair", "dining_chair", "office_chair")
 NEAR_M = 1.5
 COVER_MAX = 0.08
 OCCLUDER_MIN_TOP_M = 0.85  # plants, armchairs, chair backs, trunks: tall enough to block the view
+OUTDOOR_OCCLUDER_MIN_TOP_M = 0.3  # outdoors the eye is higher: ferns at the lens fill the bottom
+OUTDOOR_NEAR_M = 4.0
 MIN_HFOV_DEG = 55.0  # never narrower: a room photo, not a close-up
 MAX_HFOV_DEG = 96.0  # ~16 mm on a 36 mm sensor: wider distorts the corners
 SENSOR_MM = 36.0
@@ -52,6 +57,8 @@ TRUNK_W = 1.5
 CANOPY_CUT_W = 0.7
 OUTDOOR_TREE_W = 0.3
 OUTDOOR_BACK_M = 14.0
+#: a view toward the water (cosine with the way to it): lightning's aidb7 beach looked inland
+WATER_VIEW_W = 1.2
 #: outdoors the camera may step back this far beyond the setting's bounds (the ground goes on)
 OUTDOOR_REACH_M = 8.0
 _ASPECT = 16 / 9
@@ -109,8 +116,10 @@ def focus_weights(spec: SceneSpec, placements: list[Placement]) -> dict[str, flo
     out: dict[str, float] = {}
     for p in placements:
         w = SEATING.get(p.category, 0.0) + FEATURES.get(p.category, 0.0)
-        if spec.setting.kind == "outdoor" and p.category in CANOPIES:
-            w += OUTDOOR_TREE_W  # a park view shows its trees whole, not a trunk at the edge
+        if spec.setting.kind == "outdoor":
+            w += SUBJECTS.get(p.category, 0.0)
+        if spec.setting.kind == "outdoor" and p.category in CANOPIES and spec.setting.water is None:
+            w += OUTDOOR_TREE_W  # by the water the shore group is the subject: palms frame it  # a park view shows its trees whole, not a trunk at the edge
         if _base(p.id, ids) in heroes:
             w += 0.5
         if _base(p.id, ids) == focus:
@@ -166,7 +175,8 @@ def _aim(placements: dict[str, Placement], weights: dict[str, float]) -> tuple[f
 
 
 def foreground_cover(placements: list[Placement], x: float, y: float, z: float, aim: tuple[float, float, float],
-                     hfov_deg: float, aspect: float = 16 / 9) -> list[tuple[str, float]]:
+                     hfov_deg: float, aspect: float = 16 / 9,
+                     min_top: float = OCCLUDER_MIN_TOP_M, near_m: float = NEAR_M) -> list[tuple[str, float]]:
     """(id, fraction of the frame) of the objects within NEAR_M of the camera in its view. In the
     image plane (tangent space): an object's box seen at the depth of its nearest face, clipped to
     the frame; the frame shifted down/up as the build's level camera does with its lens shift."""
@@ -182,7 +192,7 @@ def foreground_cover(placements: list[Placement], x: float, y: float, z: float, 
     out = []
     for p in placements:
         near = _footprint_dist(x, y, p)
-        if p.location[2] + p.dims[2] / 2 < OCCLUDER_MIN_TOP_M or near > NEAR_M:
+        if p.location[2] + p.dims[2] / 2 < min_top or near > near_m:
             continue  # low pieces (a desk or coffee-table top at the bottom edge) frame a room photo
         ox, oy = p.location[0] - x, p.location[1] - y
         ahead = ox * vx + oy * vy
@@ -285,9 +295,18 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
     # how much of the picture the subject fills: a few racks in one corner of a 50 m hall seen
     # from the far wall were specks (lightning aidb5 warehouse)
     fill = min(1.0, max((ang[k] for k in seen), default=0.0) / half)
-    cover = sum(f for _k, f in foreground_cover(placements, x, y, z, aim, hfov_deg) if f > COVER_MAX)
-    trunks = cut = 0.0
+    cover = sum(f for _k, f in foreground_cover(placements, x, y, z, aim, hfov_deg,
+                                                min_top=OUTDOOR_OCCLUDER_MIN_TOP_M if outdoor else OCCLUDER_MIN_TOP_M,
+                                                near_m=OUTDOOR_NEAR_M if outdoor else NEAR_M)
+                if f > COVER_MAX)
+    trunks = cut = water = 0.0
     if outdoor:
+        from ai_db_scene.terrain import terrain_of
+
+        ter = terrain_of(spec)
+        if ter is not None and ter.water is not None:  # a beach photo looks across the shore to the water
+            n = ter.to_water(x, y)
+            water = vx * n[0] + vy * n[1]
         t_top = _shift_tan(aim, z, dist, hfov_deg) + math.tan(half) / _ASPECT
         for p in placements:
             if p.category not in TRUNKS:
@@ -305,7 +324,7 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
     back = 0.8 * min(dist, OUTDOOR_BACK_M) / OUTDOOR_BACK_M if outdoor else 0.4 * min(dist, 6.0) / 6.0
     score = (2.0 * framed + fronts / max(1.0, len(seen)) ** 0.5 + back + 0.8 * fill
              - (3.0 if clearance < _CLEAR_M else 0.0) - 1.0 * blocked - 6.0 * cover + facing_board
-             - TRUNK_W * trunks - CANOPY_CUT_W * cut)
+             - TRUNK_W * trunks - CANOPY_CUT_W * cut + WATER_VIEW_W * water)
     return View(x, y, z, aim, hfov_deg, score, seen, fronts)
 
 
@@ -353,18 +372,27 @@ def near_spots(spec: SceneSpec, placements: list[Placement]) -> list[tuple[float
     if outdoor:  # step back further: the whole group and the tree tops in one picture
         radii.append(reach / math.tan(math.radians(18)) + 1.0)
     out = []
-    for r in radii:
-        for t in range(0, 360, 30):
-            x, y = ax + r * math.cos(math.radians(t)), ay + r * math.sin(math.radians(t))
-            if outdoor:  # anywhere on the land round the setting, never in the water
-                m = OUTDOOR_REACH_M
-                inside = -m <= x <= w + m and -m <= y <= d + m and (
-                    ter is None or ter.water is None or ter.signed(x, y) < ter.dry() - 0.5)
-            else:
-                inside = shape.contains(x, y, -_INSET_M) if shape is not None and spec.setting.shape != "rect" else (
-                    _INSET_M <= x <= w - _INSET_M and _INSET_M <= y <= d - _INSET_M)
-            if inside and all(_footprint_dist(x, y, p) >= _CLEAR_M for p in solid):
-                out.append((x, y))
+    cands = [(ax + r * math.cos(math.radians(t)), ay + r * math.sin(math.radians(t))) for r in radii
+             for t in range(0, 360, 30)]
+    if ter is not None and ter.water is not None:
+        # inland of the group, looking back across it at the water (the rings are too far apart
+        # for a wide beach: lightning's 50 m cove had one spot left, looking along the shore)
+        n = ter.to_water(ax, ay)
+        for dist in (6.0, 9.0, 13.0, 18.0, 24.0):
+            for t in (-30.0, -15.0, 0.0, 15.0, 30.0):
+                c, sn = math.cos(math.radians(t)), math.sin(math.radians(t))
+                ux, uy = n[0] * c - n[1] * sn, n[0] * sn + n[1] * c
+                cands.append((ax - ux * dist, ay - uy * dist))
+    for x, y in cands:
+        if outdoor:  # anywhere on the land round the setting, never in the water
+            m = OUTDOOR_REACH_M
+            inside = -m <= x <= w + m and -m <= y <= d + m and (
+                ter is None or ter.water is None or ter.signed(x, y) < ter.dry() - 0.5)
+        else:
+            inside = shape.contains(x, y, -_INSET_M) if shape is not None and spec.setting.shape != "rect" else (
+                _INSET_M <= x <= w - _INSET_M and _INSET_M <= y <= d - _INSET_M)
+        if inside and all(_footprint_dist(x, y, p) >= _CLEAR_M for p in solid):
+            out.append((x, y))
     return out
 
 

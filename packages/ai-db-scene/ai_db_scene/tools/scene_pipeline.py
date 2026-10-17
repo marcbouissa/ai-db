@@ -44,7 +44,13 @@ from ai_db_scene.constants import (
     SCENE_PLANK_TOP_M,
     SCENE_REF_FLOOR_M2,
     SCENE_RUG_PILE_DENSITY,
+    SCENE_SKY_STRENGTH_OUTDOOR,
+    SCENE_SUN_BEHIND_CAMERA_DEG,
+    SCENE_SUN_COLOR_OUTDOOR,
+    SCENE_SUN_ELEVATION_OUTDOOR,
     SCENE_SUN_ENERGY,
+    SCENE_SUN_ENERGY_OUTDOOR,
+    SCENE_VIEW_LOOK_OUTDOOR,
     SCENE_WALKWAY_INSET_M,
     TREE_BARK_MATERIAL,
 )
@@ -1274,6 +1280,8 @@ def lighting_commands(spec: SceneSpec, placements: list[Placement], off: tuple[f
     with the floor area and a soft ceiling area light (energy by floor area) fills the room."""
     indoor = spec.setting.kind == "indoor"
     area = floor_area_m2(spec)
+    if spec.setting.kind == "outdoor":
+        return outdoor_lighting_commands(spec, placements, off)
     cmds: list[dict[str, Any]] = [{"type": "daylight_rig", "params": {
         "sun_elevation": 40.0, "sun_azimuth": 135.0, "strength": SCENE_SUN_ENERGY, "sky": "nishita",
         "window_portals": indoor, "sky_strength": 0.8, "name": "ai_db_daylight",
@@ -1288,6 +1296,55 @@ def lighting_commands(spec: SceneSpec, placements: list[Placement], off: tuple[f
             "rotation": [0.0, 0.0, 0.0]}})  # shines along -Z: down
         cmds.append({"type": "run_code", "params": {"code": _AREA_SHAPE.format(
             name="ai_db_fill", sx=round(w * SCENE_FILL_SIZE_FRACTION, 3), sy=round(d * SCENE_FILL_SIZE_FRACTION, 3))}})
+    for pl in placements:
+        watts = SCENE_LAMP_W.get(pl.category)
+        if watts is None:
+            continue
+        x, y, z = _shift(pl.location, off)
+        cmds.append({"type": "add_light", "params": {
+            "light_type": "POINT", "name": f"{pl.id}_light", "energy": watts, "color": [1.0, 0.82, 0.62],
+            "location": [x, y, z + pl.dims[2] / 2 - 0.15]}})
+    return cmds
+
+
+def outdoor_sun_azimuth(spec: SceneSpec, placements: list[Placement], off: tuple[float, float, float]) -> float:
+    """Degrees toward the sun (CCW from +X): behind the build camera, a little to its side, so the
+    fronts it looks at are sunlit (a sun in the lens left the beach's fronts in shade)."""
+    import math
+
+    if not placements:
+        return 135.0
+    yaw = camera_poses(spec, placements, off)[0]["rotation"][2]
+    view = 90.0 + yaw  # rotation [90, 0, yaw] looks along +Y turned by yaw
+    return round(math.fmod(view + 180.0 + SCENE_SUN_BEHIND_CAMERA_DEG + 360.0, 360.0), 1)
+
+
+#: the outdoor rig's sun colour and the view look (daylight_rig sets a neutral sun, no look)
+_OUTDOOR_RIG = """
+import bpy
+scene = bpy.context.scene
+sun = next((o for o in scene.objects if o.type == "LIGHT" and o.data.type == "SUN" and o.name.startswith("ai_db_daylight")), None)
+if sun is not None:
+    sun.data.color = {color!r}
+try:
+    scene.view_settings.look = {look!r}
+except TypeError:
+    pass
+result = {{"sun": sun.name if sun else None, "look": scene.view_settings.look}}
+"""
+
+
+def outdoor_lighting_commands(spec: SceneSpec, placements: list[Placement],
+                              off: tuple[float, float, float]) -> list[dict[str, Any]]:
+    """A clear sunny day: a warm high sun behind the camera, hard shadows, a weak sky fill, AgX with
+    more contrast; warm point lights in street lamps. aidb7 beach and park were dusky: the sky at
+    0.8 swamped a 4 W/m² sun, the sand rendered grey and the lagoon's turquoise did not show."""
+    cmds: list[dict[str, Any]] = [{"type": "daylight_rig", "params": {
+        "sun_elevation": SCENE_SUN_ELEVATION_OUTDOOR, "sun_azimuth": outdoor_sun_azimuth(spec, placements, off),
+        "strength": SCENE_SUN_ENERGY_OUTDOOR, "sky": "nishita", "window_portals": False,
+        "sky_strength": SCENE_SKY_STRENGTH_OUTDOOR, "name": "ai_db_daylight", "exposure": SCENE_EXPOSURE_OUTDOOR}},
+        {"type": "run_code", "params": {"code": _OUTDOOR_RIG.format(color=list(SCENE_SUN_COLOR_OUTDOOR),
+                                                                    look=SCENE_VIEW_LOOK_OUTDOOR)}}]
     for pl in placements:
         watts = SCENE_LAMP_W.get(pl.category)
         if watts is None:
@@ -1495,6 +1552,13 @@ def coverage_targets(spec: SceneSpec, placements: list[Placement], n: int = 3) -
     hero_ids = [p.id for p in placements if p.id in heroes or _SUFFIX.sub("", p.id) in heroes]
     if hero_ids:
         return hero_ids
+    if spec.setting.kind == "outdoor":
+        # what camera.py frames (a beach's shore group, a fountain and its benches): the largest
+        # objects were the palms behind the camera, and the check walked to a pose looking inland
+        from ai_db_scene.camera import focus_weights
+
+        w = focus_weights(spec, placements)
+        return [k for k, _w in sorted(w.items(), key=lambda kv: -kv[1])[:max(n, 4)]]
     solid = [p for p in placements if p.category not in _OPENING_KINDS]
     return [p.id for p in sorted(solid, key=lambda p: -(p.dims[0] * p.dims[1] * p.dims[2]))[:n]]
 
@@ -1887,7 +1951,7 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
     exposure: dict[str, Any] | None = None
     if args.get("exposure_check", _c.BUILD_EXPOSURE_CHECK):
         try:
-            exposure = exposure_check()
+            exposure = exposure_check(outdoor=spec.setting.kind == "outdoor")
         except Exception as e:  # noqa: BLE001 - a check must never fail a finished build
             exposure = {"error": str(e)}
         exp_issue = exposure_issue(exposure)
@@ -2357,18 +2421,21 @@ else:
 """
 
 
-def exposure_check() -> dict[str, Any]:
-    """Probe the scene camera's exposure and fix it (see _EXPOSURE). Adds ``in_band``."""
+def exposure_check(outdoor: bool = False) -> dict[str, Any]:
+    """Probe the scene camera's exposure and fix it (see _EXPOSURE). Adds ``in_band``. Outdoors
+    in the sun the band is brighter (BUILD_EXPOSURE_BAND_OUTDOOR)."""
     from ai_db_scene import constants as c
 
+    band = c.BUILD_EXPOSURE_BAND_OUTDOOR if outdoor else c.BUILD_EXPOSURE_BAND
     payload = json.dumps({
         "res": list(c.BUILD_EXPOSURE_PROBE_RESOLUTION), "samples": c.BUILD_EXPOSURE_PROBE_SAMPLES,
-        "band": list(c.BUILD_EXPOSURE_BAND), "target": c.BUILD_EXPOSURE_TARGET, "clip": list(c.BUILD_EXPOSURE_CLIP),
+        "band": list(band), "target": c.BUILD_EXPOSURE_TARGET_OUTDOOR if outdoor else c.BUILD_EXPOSURE_TARGET,
+        "clip": list(c.BUILD_EXPOSURE_CLIP),
         "max_bright": c.BUILD_EXPOSURE_MAX_BRIGHT_FRAC, "rounds": c.BUILD_EXPOSURE_MAX_ROUNDS,
         "max_step": c.BUILD_EXPOSURE_MAX_STEP, "max_total": c.BUILD_EXPOSURE_MAX_TOTAL})
     res = dict(BlenderClient(timeout=300.0).run_code(_EXPOSURE.format(payload=payload), timeout=300.0))
     if "mean" in res:
-        lo, hi = c.BUILD_EXPOSURE_BAND
+        lo, hi = band
         res["in_band"] = lo <= res["mean"] <= hi and res.get("bright_frac", 0.0) <= c.BUILD_EXPOSURE_MAX_BRIGHT_FRAC
     return res
 

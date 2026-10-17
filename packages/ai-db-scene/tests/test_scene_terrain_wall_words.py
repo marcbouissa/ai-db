@@ -42,7 +42,8 @@ def test_compass_walls_relative_to_the_waters_side():
                                 {"a": "rocks", "rel": "along", "b": "east_wall"}]))
     assert rels == [("bushes", "near", "water"), ("ferns", "back_of", "water")]
     _spec, rels = _rels(_beach([{"a": "ferns", "rel": "along", "b": "west side"}], {"kind": "sea", "side": "east"}))
-    assert rels == [("ferns", "back_of", "water")]
+    # bushes with no place of their own go along the back too (aidb7 beach_cove)
+    assert sorted(rels) == [("bushes", "back_of", "water"), ("ferns", "back_of", "water")]
     # a pond has no side: only back / front mean something
     _spec, rels = _rels(_beach([{"a": "ferns", "rel": "along", "b": "back_wall"},
                                 {"a": "bushes", "rel": "along", "b": "north_wall"}], {"kind": "pond"}))

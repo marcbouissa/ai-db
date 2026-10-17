@@ -30,7 +30,16 @@ LAYOUT_DOOR_CLEAR_M = 0.9  # free zone (door width x this deep) kept on both sid
 
 SCENE_SUN_ENERGY = 4.0  # W/m² of the daylight sun apply_layout adds (AgX view: a bright interior)
 SCENE_EXPOSURE_INDOOR = 0.5  # stops for a reference room (SCENE_REF_FLOOR_M2): windows light it well
-SCENE_EXPOSURE_OUTDOOR = -0.7  # open air gets the full sun and sky: +1 stop washed scenes out
+SCENE_EXPOSURE_OUTDOOR = -0.4  # open air: a strong sun and a weak sky (below); +1 stop washed scenes out
+#: outdoor daylight (aidb7 beach/park: dusky, grey sand, no turquoise): the Nishita sky at 0.8 swamped
+#: the sun (flat blue light, faint shadows) and the exposure probe then took 2 stops off. A clear
+#: sunny day is a warm, high sun with hard shadows and a weak sky fill.
+SCENE_SUN_ENERGY_OUTDOOR = 7.0
+SCENE_SUN_ELEVATION_OUTDOOR = 50.0
+SCENE_SUN_COLOR_OUTDOOR = (1.0, 0.9, 0.76)
+SCENE_SKY_STRENGTH_OUTDOOR = 0.2
+SCENE_SUN_BEHIND_CAMERA_DEG = 35.0  # the sun behind the camera, this far off to its side
+SCENE_VIEW_LOOK_OUTDOOR = "AgX - Medium High Contrast"
 SCENE_REF_FLOOR_M2 = 20.0  # floor area the indoor exposure is tuned for
 SCENE_EXPOSURE_PER_DOUBLING = 0.35  # stops added each time the floor area doubles (deeper rooms)
 SCENE_EXPOSURE_RANGE = (0.2, 1.5)  # indoor exposure clamp, stops
@@ -57,6 +66,10 @@ BUILD_EXPOSURE_PROBE_RESOLUTION = (160, 90)
 BUILD_EXPOSURE_PROBE_SAMPLES = 8  # Cycles, no denoise: the mean is all we need
 BUILD_EXPOSURE_BAND = (0.25, 0.6)  # mean display luminance (0..1) accepted
 BUILD_EXPOSURE_TARGET = 0.42  # the mean aimed for when out of band
+#: outdoors in the sun a brighter picture is right (sand, paving, sky): the indoor band darkened
+#: the aidb7 beaches by ~2 stops into dusk
+BUILD_EXPOSURE_BAND_OUTDOOR = (0.3, 0.72)
+BUILD_EXPOSURE_TARGET_OUTDOOR = 0.55
 BUILD_EXPOSURE_CLIP = (0.02, 0.98)  # pixel luminance under / over: clipped dark / bright
 BUILD_EXPOSURE_MAX_BRIGHT_FRAC = 0.25  # more clipped-bright pixels than this: too bright even in band
 BUILD_EXPOSURE_MAX_ROUNDS = 3  # adjustments (a probe render each)

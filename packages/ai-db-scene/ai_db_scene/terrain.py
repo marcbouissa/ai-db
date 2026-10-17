@@ -387,7 +387,32 @@ def _lift(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                 continue
             out.append(r)
         d["relations"] = out
+    if has_water:
+        _back_plants(d, notes)
     return d, notes
+
+
+#: dense low plants of a beach / lakeside: along the back, away from the water, unless placed
+BACK_PLANTS = ("tropical_bush", "bush", "fern", "hedge")
+
+
+def _back_plants(d: dict[str, Any], notes: list[str]) -> None:
+    """Bushes and ferns with no place of their own (or only ``beside`` something) go along the back
+    of the shore (``back_of water``). Bench beach_cove (aidb7): lightning's ten bushes and four ferns
+    stood scattered over the sand; qwen's stood beside the boardwalk at the water."""
+    rels: list[Any] = d["relations"] if isinstance(d.get("relations"), list) else []
+    for o in d.get("objects") or []:
+        if not isinstance(o, dict) or o.get("category") not in BACK_PLANTS:
+            continue
+        oid = o.get("id")
+        mine = [r for r in rels if isinstance(r, dict) and r.get("a") == oid]
+        if any(r.get("rel") != "beside" for r in mine):
+            continue
+        rels = [r for r in rels if not any(r is m for m in mine)] + [{"a": oid, "rel": "back_of", "b": WATER}]
+        dropped = [f"{m.get('a')} beside {m.get('b')}" for m in mine]
+        notes.append(f"'{oid}' ({o['category']}) goes along the back, away from the water: added '{oid} back_of water'"
+                     + (f" (dropped {dropped})" if dropped else ""))
+    d["relations"] = rels
 
 
 #: words around a side in a wall name (back_wall, the north side, rear edge of the beach)
