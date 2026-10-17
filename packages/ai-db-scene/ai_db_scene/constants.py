@@ -40,9 +40,7 @@ SCENE_FILL_SIZE_FRACTION = 0.5  # fill light size as a fraction of the room foot
 SCENE_FILL_CEILING_GAP_M = 0.05  # below the ceiling plane, so it is inside the room
 SCENE_LAMP_W = {"floor_lamp": 80.0, "table_lamp": 40.0, "pendant_lamp": 100.0, "ceiling_light": 150.0,
                 "wall_sconce": 40.0, "street_lamp": 300.0, "lamp_post_double": 500.0}  # a point light in each lamp object
-SCENE_CAMERA_INSET = 0.12  # interior camera: corner inset as a fraction of the room size
 SCENE_CAMERA_HEIGHT_M = 1.4  # indoors (outdoors: 2.5 m); interior photographers shoot from 1.2-1.5 m
-SCENE_CAMERA_LENS_MM = 20.0  # indoors; wider than ~16 mm distorts the corners (outdoors: 24 mm)
 SCENE_CAMERA_MAX_SHIFT = 0.35  # lens shift that frames the subject while the camera stays level
 REPAIR_GROWTH = 1.2  # build_scene: room x/y growth per repair step
 REPAIR_MAX_AREA_GROWTH = 2.25  # build_scene: the floor area never grows past this times the requested one

@@ -62,6 +62,10 @@ OP_ALIASES: dict[str, str] = {
 _NOOP_OPS = ("validate", "validate_scene", "apply_fixes", "fix", "build", "rebuild", "build_scene", "render",
              "snapshot", "save")
 #: absolute transforms: the solver places objects from relations, so these cannot be honoured
+#: camera edits (qwen aidb5: update_camera, update_setting {camera: ...}): the build places the camera
+_CAMERA_OPS = ("update_camera", "set_camera", "camera", "move_camera", "adjust_camera", "camera_position")
+_CAMERA_WHY = ("the build places its camera itself, on the open side looking at the fronts of the seating; to "
+               "change the view, call set_camera after the edit (camera.focus in the spec picks what it looks at)")
 _TRANSFORM_KEYS = ("location", "position", "translate", "offset", "offset_m", "rotation", "rotation_euler",
                    "rotation_deg", "yaw", "yaw_deg", "scale", "xy", "at")
 _SPEC_ID = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -119,6 +123,9 @@ def normalize_step(step: Any) -> tuple[dict[str, Any] | None, list[str], str | N
     op = op.strip().lower()
     if op in _NOOP_OPS:
         return {"op": "noop", "was": op}, notes, None
+    if op in _CAMERA_OPS or (op in ("update_setting", "setting", "set_setting") and isinstance(s.get("set"), dict)
+                             and set(s["set"]) <= {"camera"}):
+        return {"op": "noop", "was": op, "why": _CAMERA_WHY}, notes, None
     if op in OP_ALIASES:
         notes.append(f"op '{op}' read as '{OP_ALIASES[op]}'")
         op = OP_ALIASES[op]
@@ -240,7 +247,8 @@ def apply_steps(spec: dict[str, Any], steps: Any) -> tuple[dict[str, Any] | None
         objs = data["objects"]
         ids = {o["id"] for o in objs}
         if op == "noop":
-            done.append(f"skipped '{step['was']}': edit_scene validates, fixes and rebuilds on every call")
+            done.append(f"skipped '{step['was']}': " + step.get("why", "edit_scene validates, fixes and rebuilds "
+                                                                       "on every call"))
             continue
         if op == "add_object":
             obj = step.get("object")
@@ -350,6 +358,9 @@ def apply_steps(spec: dict[str, Any], steps: Any) -> tuple[dict[str, Any] | None
             if not isinstance(changes, dict) or not changes:
                 return None, done, [(f"{p}: update_setting needs 'set': {{field: value}} (got keys {_keys(raw)}); "
                                       f"editable fields {list(_SETTING_FIELDS)}")]
+            if "camera" in changes:  # with other fields: those apply, the camera is the build's
+                changes = {k: v for k, v in changes.items() if k != "camera"}
+                how += f" (camera skipped: {_CAMERA_WHY})"
             bad = sorted(set(changes) - set(_SETTING_FIELDS))
             if bad:
                 return None, done, [f"{p}.set: fields {bad} not editable; allowed {list(_SETTING_FIELDS)}"]

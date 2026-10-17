@@ -103,8 +103,8 @@ def test_build_commands_placeholder_and_mapped():
     assert cam["type"] == "set_camera" and cam["params"]["location"][2] == pytest.approx(1.4)
     assert cam["params"]["rotation"][0] == 90.0  # level: verticals stay vertical
     assert cmds[-1]["type"] == "run_code" and "shift_y" in cmds[-1]["params"]["code"]  # framed by lens shift
-    x, y, _ = cam["params"]["location"]  # inside the (centred) room, at a corner
-    assert abs(x) < 3 and abs(y) < 2.5 and abs(x) > 1.5 and abs(y) > 1.0
+    x, y, _ = cam["params"]["location"]  # inside the (centred) room, by a wall (camera.py picks which)
+    assert abs(x) < 3 and abs(y) < 2.5 and (abs(x) > 2.0 or abs(y) > 1.5)
     assert any(c["type"] == "daylight_rig" for c in cmds)
     assert any(c["type"] == "add_light" and c["params"]["name"] == "lamp_light" for c in cmds)
     cmds2, _ = sp.build_layout_commands(spec, pls, {"sofa": {"filepath": "/l.blend", "asset_name": "Sofa1"}})
@@ -498,22 +498,24 @@ def test_live_exposure_check_brings_dark_render_into_band(private_blender, mem):
 def test_camera_spots_stay_inside_curved_and_polygon_rooms():
     import math
 
+    from ai_db_scene.camera import spots
+
     oval = dict(SPEC, setting={"kind": "indoor", "bounds_m": [10, 7, 4], "shape": "ellipse"},
                 relations=[{"a": "sofa", "rel": "against_wall", "b": "wall", "at_deg": 90}, *SPEC["relations"][1:]])
     spec, errors = sp._parse_spec(oval)
     assert spec, errors
-    for x, y in sp._camera_spots(spec):
+    for x, y in spots(spec, []):
         assert ((x - 5) / 5) ** 2 + ((y - 3.5) / 3.5) ** 2 < 1  # a bbox corner is outside the oval
     poly = dict(SPEC, setting={"kind": "indoor", "bounds_m": [6, 6, 3], "shape": "polygon",
                                "points": [[0, 0], [6, 0], [6, 3], [3, 3], [3, 6], [0, 6]]},
                 relations=[{"a": "sofa", "rel": "against_wall", "b": "wall_1"}, *SPEC["relations"][1:]])
     spec, errors = sp._parse_spec(poly)
     assert spec, errors
-    assert all(sp._inside_polygon(x, y, spec.setting.points) for x, y in sp._camera_spots(spec))
+    assert all(sp._inside_polygon(x, y, spec.setting.points) for x, y in spots(spec, []))
     pls = sp.parse_placements(sp._handle_solve_layout({"spec": oval})["placements"])
     spec, _ = sp._parse_spec(oval)
     poses = sp.camera_poses(spec, pls, sp.frame_offset(spec))
-    assert len(poses) == 8 and len({p["location"][2] for p in poses}) == 2
+    assert len(poses) == 2 * len(spots(spec, pls)) and len({p["location"][2] for p in poses}) == 2
     assert sp.camera_command(spec, pls, sp.frame_offset(spec))["params"] == {k: v for k, v in poses[0].items()
                                                                              if k != "shift_y"}
     assert all(p["rotation"][0] == 90.0 and abs(p["shift_y"]) <= 0.35 for p in poses)

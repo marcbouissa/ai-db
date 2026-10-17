@@ -21,8 +21,6 @@ from ai_db_scene.constants import (
     FOLIAGE_CATEGORIES,
     LAYOUT_DOOR_HEIGHT_M,
     SCENE_CAMERA_HEIGHT_M,
-    SCENE_CAMERA_INSET,
-    SCENE_CAMERA_LENS_MM,
     SCENE_CAMERA_MAX_SHIFT,
     SCENE_CEILING,
     SCENE_EXPOSURE_INDOOR,
@@ -1292,62 +1290,52 @@ def footprint(spec: SceneSpec, off: tuple[float, float, float], n: int = 48) -> 
     return [[off[0], off[1]], [w + off[0], off[1]], [w + off[0], d + off[1]], [off[0], d + off[1]]]
 
 
-def _camera_spots(spec: SceneSpec) -> list[tuple[float, float]]:
-    """Candidate camera spots (layout frame), all inside the room: the bounding box's corners for a
-    rectangle (or outdoors), points on a shrunken outline for an ellipse or polygon (a corner of an
-    oval room's bounding box is outside its walls: judges saw the room from outside)."""
-    import math
-
-    st = spec.setting
-    w, d, _h = st.bounds_m
-    i = SCENE_CAMERA_INSET
-    if st.kind != "indoor" or st.shape == "rect" or (st.shape == "polygon" and len(st.points) < 3):
-        return [(fxr * w, fyr * d) for fxr in (i, 1 - i) for fyr in (i, 1 - i)]
-    if st.shape == "ellipse":
-        r = 1 - 2 * i
-        return [(w / 2 * (1 + r * math.cos(math.radians(a))), d / 2 * (1 + r * math.sin(math.radians(a))))
-                for a in (45, 135, 225, 315)]
-    pts = st.points
-    cx, cy = sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
-    spots = [(p[0] + (cx - p[0]) * 2 * i, p[1] + (cy - p[1]) * 2 * i) for p in pts]
-    return [sp for sp in spots if _inside_polygon(sp[0], sp[1], pts)] or [(cx, cy)]
-
-
 def camera_poses(spec: SceneSpec, placements: list[Placement], off: tuple[float, float, float]) -> list[dict[str, Any]]:
-    """set_camera params for every candidate (spot x eye height, then a higher one), best guess
-    first: clear of furniture, then the farthest from the focus (the widest view of it), aimed at
-    the heroes (else at everything)."""
+    """set_camera params for every candidate (spot x eye height, then a higher one), best first:
+    from the open side, looking at the fronts of the seating and at the heroes and features
+    (camera.py), the lens wide enough to take them in. Level camera with a lens shift.
+    The old pick (the clearest corner, farthest from the heroes) stood behind the lobby's
+    seating looking at a blank wall (Marc's review of the aidb5 round lobby)."""
     import math
+
+    from ai_db_scene.camera import best_views
 
     h = spec.setting.bounds_m[2]
-    heroes = {o.id for o in spec.objects if o.hero}
-    focus = [p for p in placements if _SUFFIX.sub("", p.id) in heroes or p.id in heroes] or placements
-    fx = sum(p.location[0] for p in focus) / len(focus)
-    fy = sum(p.location[1] for p in focus) / len(focus)
     indoor = spec.setting.kind == "indoor"
     eye = SCENE_CAMERA_HEIGHT_M if indoor else 2.5
     heights = [eye, round(min(eye + 0.8, h - 0.3), 2) if indoor else eye + 2.0]
-
-    def clearance(cx: float, cy: float) -> float:
-        return min((max(abs(cx - p.location[0]) - p.dims[0] / 2, abs(cy - p.location[1]) - p.dims[1] / 2, 0.0)
-                    for p in placements if p.dims[2] > 0.05), default=99.0)
-
-    spots = sorted(_camera_spots(spec), key=lambda c: (min(clearance(*c), 0.6), math.hypot(c[0] - fx, c[1] - fy)),
-                   reverse=True)
     poses = []
     for height in dict.fromkeys(heights):
-        for cx, cy in spots:
-            dx, dy, dz = fx - cx, fy - cy, 0.8 - height
-            yaw = math.degrees(math.atan2(-dx, dy))  # Euler Z: [90, 0, 0] looks along +Y
+        for v in best_views(spec, placements, height):
+            dx, dy, dz = v.aim[0] - v.x, v.aim[1] - v.y, v.aim[2] - height
+            lens = round(max(v.lens_mm, 16.0) if indoor else max(v.lens_mm, 24.0), 1)
             # Level camera (pitch 90): verticals stay vertical (two-point perspective, as interior
             # photographers shoot); a vertical lens shift brings the subject into frame instead of
             # tilting, which made walls lean in. Blender's shift is a fraction of the sensor width.
-            lens = SCENE_CAMERA_LENS_MM if indoor else 24.0
             shift = dz / max(math.hypot(dx, dy), 0.5) * lens / 36.0
             shift = max(-SCENE_CAMERA_MAX_SHIFT, min(SCENE_CAMERA_MAX_SHIFT, shift))
-            poses.append({"location": _shift((cx, cy, height), off), "rotation": [90.0, 0.0, round(yaw, 2)],
+            poses.append({"location": _shift((v.x, v.y, height), off), "rotation": [90.0, 0.0, round(v.yaw_deg, 2)],
                           "name": "ai_db_camera", "lens": lens, "shift_y": round(shift, 4)})
     return poses
+
+
+#: the last build's spec and placements: set_camera says when a model's own camera looks at a
+#: wall or at the backs of the seating (scene_tools)
+_LAST_BUILD: dict[str, Any] = {}
+
+
+def camera_hint(location: Any, rotation: Any, lens: Any = 50.0) -> str | None:
+    """Why a set_camera pose (Blender frame) is a poor view of the last build, with a better one."""
+    from ai_db_scene.camera import view_issue
+
+    spec, placements = _LAST_BUILD.get("spec"), _LAST_BUILD.get("placements")
+    if spec is None or not placements or spec.setting.kind in ("single_asset", "tabletop"):
+        return None
+    try:
+        lens_mm = float(lens) if lens is not None else 50.0
+    except (TypeError, ValueError):
+        lens_mm = 50.0
+    return view_issue(spec, placements, location, rotation, lens_mm, off=frame_offset(spec))
 
 
 def camera_command(spec: SceneSpec, placements: list[Placement], off: tuple[float, float, float]) -> dict[str, Any]:
@@ -1783,6 +1771,11 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
         return {"status": "conflict", "message": str(e), "conflicts": e.conflicts if e else [], "repairs": repairs,
                 "spec": data, "hint": fixed.hint}
     spec, placements = fixed.spec, fixed.placements
+    _LAST_BUILD.update(spec=spec, placements=placements)
+    if set(spec.camera) - {"focus"}:  # qwen aidb5/aidb6 specs carried camera position/rotation/fov
+        repairs.append(f"camera: {sorted(set(spec.camera) - {'focus'})} ignored: the build places its camera on the "
+                       "open side, looking at the fronts of the seating and the main objects (camera.focus picks "
+                       "what it looks at; set_camera after the build overrides it)")
     if args.get("clear"):
         try:
             BlenderClient().request("clear_scene", {"keep_camera": False, "purge_orphans": True})

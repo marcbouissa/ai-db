@@ -69,6 +69,19 @@ def _make_forward(tool: str) -> Any:
     return lambda args: _forward(tool, args)
 
 
+def _handle_set_camera(args: dict[str, Any]) -> Any:
+    """Forward set_camera; when it looks at a blank wall or at the backs of the seating of the
+    last build, say so and give the build's own pose (Marc: "sofas facing the wall")."""
+    out = _forward("set_camera", args)
+    if isinstance(out, dict) and out.get("status") == "success":
+        from ai_db_scene.tools.scene_pipeline import camera_hint
+
+        hint = camera_hint(args.get("location"), args.get("rotation"), args.get("lens", 50.0))
+        if hint:
+            out["hint"] = hint
+    return out
+
+
 def _handle_snapshot_scene(args: dict[str, Any]) -> Any:
     memory = get_scene_memory()
     scene_id = memory.snapshot_scene(
@@ -726,6 +739,7 @@ _MEMORY_HANDLERS: dict[str, Any] = {
     "fork_scene": _handle_fork_scene,
     "get_scene_versions": _handle_get_scene_versions,
     "get_blender_libraries": _handle_get_blender_libraries,
+    "set_camera": _handle_set_camera,
 }
 
 
