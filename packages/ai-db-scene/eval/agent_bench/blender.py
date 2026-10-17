@@ -144,6 +144,9 @@ def client(port: int) -> Any:
     return BlenderClient(port=port, timeout=300.0)
 
 
+#: bump when the layout data changes: bench.py rescore --inventory redoes older ones
+LAYOUT_VERSION = 2
+
 _INVENTORY = """
 import bpy
 from mathutils import Vector
@@ -170,6 +173,61 @@ for o in bpy.context.scene.objects:
                  "size_m": _size(o) if o.parent is None else None})
 result = {"objects": objs, "camera": bpy.context.scene.camera.name if bpy.context.scene.camera else None,
           "lights": sum(1 for o in bpy.context.scene.objects if o.type == "LIGHT")}
+
+# layout data for the layout-sanity score (bench.py, layout_sanity.py): per root its world box and
+# yaw; the scene camera's pose and what a grid of rays through its frame hits first
+import math, statistics
+scene = bpy.context.scene
+
+def _box(o):
+    pts = [m.matrix_world @ Vector(c) for m in _meshes(o) for c in m.bound_box]
+    if not pts:
+        return None
+    return [[round(min(p[i] for p in pts), 3) for i in range(3)], [round(max(p[i] for p in pts), 3) for i in range(3)]]
+
+roots = {}
+for o in scene.objects:
+    if o.parent is not None or o.type in ("CAMERA", "LIGHT") or o.name == "bench_probe":
+        continue
+    b = _box(o)
+    if b is None:
+        continue
+    roots[o.name] = {"box": b, "loc": [round(v, 3) for v in o.matrix_world.translation],
+                     "yaw_deg": round(math.degrees(o.matrix_world.to_euler().z), 1),
+                     "terrain": bool(o.get("ai_db_terrain"))}
+cam = scene.camera
+camera = None
+if cam is not None and cam.type == "CAMERA":
+    def _root(o):
+        while o.parent is not None:
+            o = o.parent
+        return o
+    dg = bpy.context.evaluated_depsgraph_get()
+    m3 = cam.matrix_world.to_3x3()
+    origin = cam.matrix_world.translation
+    frame = [Vector(c) for c in cam.data.view_frame(scene=scene)]  # tr, br, bl, tl (camera space)
+    tr, br, bl, tl = frame
+    nx, ny = 24, 14
+    hits, dists = {}, []
+    for j in range(ny):
+        for i in range(nx):
+            u, v = (i + 0.5) / nx, (j + 0.5) / ny
+            p = bl + (br - bl) * u + (tl - bl) * v
+            d = (m3 @ p).normalized()
+            ok, loc, _n, _i, obj, _m = scene.ray_cast(dg, origin, d, distance=1000.0)
+            if not ok:
+                continue
+            r = _root(obj).name
+            dist = (loc - origin).length
+            dists.append(dist)
+            hits.setdefault(r, []).append((dist, abs(u - 0.5) < 0.25))
+    fwd = m3 @ Vector((0.0, 0.0, -1.0))
+    camera = {"loc": [round(v, 3) for v in origin], "dir": [round(v, 4) for v in fwd],
+              "rays": nx * ny, "median_m": round(statistics.median(dists), 3) if dists else None,
+              # per root: rays, median distance, rays in the middle half of the frame's width
+              "hits": {k: [len(v), round(statistics.median(d for d, _c in v), 3), sum(c for _d, c in v)]
+                       for k, v in hits.items()}}
+result["layout"] = {"v": LAYOUT_V, "roots": roots, "camera": camera}
 """
 
 _PROBE_CAMERA = """
@@ -235,10 +293,14 @@ result = {"camera": cam.name, "clipped": VIEW == "plan" and covered}
 """
 
 
+def inventory_code() -> str:
+    return "LAYOUT_V = " + repr(LAYOUT_VERSION) + "\n" + _INVENTORY
+
+
 def finish(port: int, out_dir: str, save: bool = True) -> dict[str, Any]:
     """Save the scene, render the agent's own camera view and two probe views; inventory."""
     c = client(port)
-    inv = c.run_code(_INVENTORY)
+    inv = c.run_code(inventory_code())
     renders: dict[str, str] = {}
     agent_cam = inv.get("camera")
     if save:

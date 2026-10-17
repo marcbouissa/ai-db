@@ -1,4 +1,24 @@
-"""bench/REPORT.md from every run's metrics.json and judge.json."""
+"""bench/REPORT.md from every run's metrics.json and judge.json.
+
+Quality score (bench.score), formula v3 (2026-10-17): v2 x (1 - 0.25 x the share of the
+applicable layout-sanity checks failed): a penalty of up to a quarter, never a bonus (a near
+empty scene passes most of them trivially).
+
+* v2 = 40 % brief checklist (geometry-weighted) + 15 % size plausibility + 10 % mesh coverage +
+  25 % validator (100 - 8 / blocking - 2 / warning) + 10 % basics (camera, lights, materials).
+* layout sanity (layout_sanity.py) = the share of its applicable checks a scene passes, each
+  pass / fail / n.a. with its reason in metrics.json quality.layout:
+  facing_focus (seats face their table / TV / fountain), seat_groups (sofas and armchairs within
+  2 m of their table, benches within 3 m of their fountain), chairs_at_tables, fill_ratio
+  (rooms: furniture footprint / floor 0.10-0.60), in_bounds (rooms), grounded (no floating
+  objects), no_occluder (nothing in front of the subject fills the camera's frame),
+  seating_fronts (the camera sees the fronts of the main seating). It reads the inventory's
+  layout data (root boxes and yaws, the scene camera and a grid of rays through its frame);
+  `bench.py rescore --inventory` adds that data to older runs from their scene.blend.
+
+v2 alone saturated (aidb7 ~99) while the visual review found real layout problems; a scene
+without layout data (no scene.blend) keeps formula v2.
+"""
 
 from __future__ import annotations
 
@@ -93,7 +113,11 @@ def write(out: str) -> str:
           "offers them; aidb7 = aidb6's prompt on outdoor terrain (sand, water, palms), round rooms, the "
           "open-side camera and classroom rows). `ai-db` = short hash of the "
           "ai-db-scene code a scene ran with (results of different versions must not be mixed). Same briefs, same Blender build, a fresh Blender per scene, 30 min cap."),
-          ("Quality (formula v2) = 40% brief checklist + 15% size plausibility + 10% mesh coverage + 25% "
+          ("Quality (formula v3) = v2 x (1 - 0.25 x share of applicable layout-sanity checks failed) "
+          "(seats face their table/TV/fountain, seat groups together, chairs at tables, room fill ratio 0.10-0.60, "
+          "objects inside the room, nothing floating, no foreground occluder in the camera's frame, the camera sees "
+          "the fronts of the main seating; per-check pass/fail and reason in metrics.json quality.layout). "
+          "v2 = 40% brief checklist + 15% size plausibility + 10% mesh coverage + 25% "
           "validator (100 - 8/blocking - 2/warning) + 10% basics (camera, lights, materials). The checklist "
           "counts an object matched by name or category only for real geometry: an asset root with >= 2 mesh "
           "parts or one mesh with > 12 faces counts 1, a lone box 0.5, an empty 0. Size = share of matched "
@@ -101,7 +125,7 @@ def write(out: str) -> str:
           "(min..max, 10% slack, footprint either way round); no categorised object -> its weight goes to "
           "the checklist. Coverage = meshes / (2 x objects the brief needs), capped at 1. Scenes scored "
           "before v2 (no `formula` field) used 50% name-only checklist + 30% validator + 20% basics: "
-          "run `bench.py rescore` to put every scene on v2. "
+          "run `bench.py rescore --inventory` to put every scene on v3 (v2 where no scene.blend is left). "
           f"Judges: {judges}; blind (scenes anonymised, one judge per brief and "
           "mode, comparing all scenes of the brief). `aidb` = ai-db rubric + ai-db measurements, `plain` = "
           "renders + brief only."), ""]

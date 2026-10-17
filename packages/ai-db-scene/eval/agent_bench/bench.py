@@ -2,7 +2,10 @@
 
     python bench.py run <arm> <brief>      one scene: fresh Blender, agent, save + renders, quality
     python bench.py judge <arm> <brief>    both judge modes (Opus, with and without ai-db context)
-    python bench.py rescore                quality of every finished scene with the current score()
+    python bench.py rescore [--inventory] [arm ...]
+                                           quality of every finished scene (or of these arms) with the
+                                           current score(); --inventory first adds the layout data to
+                                           inventories without it (opens each scene.blend headless)
     python bench.py report                 bench/REPORT.md
 
 Arms: <model>-aidb / <model>-raw, model = strata, one of OPENCODE_FREE, one of LOCAL_MODELS (start
@@ -220,6 +223,8 @@ def _roots(inv: dict[str, Any]) -> list[dict[str, Any]]:
 
 #: score weights (sum 1.0); see score() and the report header
 W_CHECKLIST, W_SIZE, W_COVERAGE, W_VALID, W_BASICS = 0.40, 0.15, 0.10, 0.25, 0.10
+#: v3: the most the layout-sanity checks take off (all failed: v2 x 0.75)
+W_LAYOUT = 0.25
 SIZE_SLACK = 0.10  # a size within 10% outside the prior's min..max still counts as plausible
 BOX_FACES = 12  # at most this many faces: a box (6) or a box-like slab, not a modelled object
 PARTS_PER_ITEM = 2  # coverage: a real object has at least two mesh parts
@@ -284,7 +289,10 @@ def checklist(brief: str, inv: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def score(brief: str, inv: dict[str, Any], validation: dict[str, Any]) -> dict[str, Any]:
-    """0..100 = 40% checklist (geometry-weighted) + 15% size plausibility + 10% mesh coverage
+    """0..100. v3 (inventories with layout data) = v2 x (1 - 0.25 x the share of layout-sanity checks
+    failed) (layout_sanity.py: of its applicable checks): a scene failing them all loses a quarter,
+    one passing them all keeps v2 (an empty scene, which passes most checks trivially, gains
+    nothing). v2 = 40% checklist (geometry-weighted) + 15% size plausibility + 10% mesh coverage
     + 25% validator + 10% basics.
 
     - checklist: per item min(real / need, 1), real counting an object by geometry_weight
@@ -325,13 +333,53 @@ def score(brief: str, inv: dict[str, Any], validation: dict[str, Any]) -> dict[s
     w_check, w_size = (W_CHECKLIST, W_SIZE) if size_pct is not None else (W_CHECKLIST + W_SIZE, 0.0)
     total = (w_check * cover + w_size * (size_pct or 0.0) + W_COVERAGE * coverage + W_VALID * valid
              + W_BASICS * basics)
-    return {"score": round(total, 1), "formula": "v2", "checklist_pct": round(cover, 1),
+    import layout_sanity
+
+    layout = layout_sanity.check(inv)
+    layout_pct = layout_sanity.score(layout)
+    v2 = total
+    if layout_pct is not None:  # a penalty, never a bonus: a near-empty scene passes most checks trivially
+        total = v2 * (1 - W_LAYOUT * (1 - layout_pct / 100))
+    return {"score": round(total, 1), "formula": "v2" if layout_pct is None else "v3",
+            "score_v2": round(v2, 1), "layout_pct": layout_pct, "layout": layout,
+            "checklist_pct": round(cover, 1),
             "checklist_name_pct": round(cover_name, 1),
             "size_pct": None if size_pct is None else round(size_pct, 1), "sized_objects": sized,
             "coverage_pct": round(coverage, 1), "validator_pct": round(valid, 1),
             "basics_pct": round(basics, 1), "blocking": blocking, "warnings": warnings,
             "issue_kinds": kinds, "checklist": items, "meshes": len(meshes),
             "triangles": sum(o["tris"] for o in inv["objects"])}
+
+
+def add_layout(mp: str) -> str | None:
+    """Add the inventory's layout data (blender._INVENTORY) to a finished scene from its scene.blend,
+    in a fresh headless Blender (sandboxed as the run was). The rest of the inventory is kept."""
+    with open(mp, encoding="utf-8") as f:
+        m = json.load(f)
+    if (m.get("inventory", {}).get("layout") or {}).get("v") == blender.LAYOUT_VERSION:
+        return None
+    rd = os.path.dirname(mp)
+    blend = os.path.join(rd, "scene.blend")
+    if not os.path.exists(blend):
+        return "no scene.blend: layout not scored"
+    port = reserve_port()
+    try:
+        proc = blender.start(port, os.path.join(rd, "blender_layout.log"), blend,
+                             sandbox_dir=rd if m.get("blender_sandboxed") else None)
+        try:
+            inv = blender.client(port).run_code(blender.inventory_code())
+        finally:
+            blender.stop(proc)
+    except Exception as e:  # noqa: BLE001 - one broken scene must not stop the rescore
+        return f"layout failed: {e}"
+    finally:
+        release_port(port)
+    with open(mp, encoding="utf-8") as f:  # re-read: nothing else writes it meanwhile, but be safe
+        m = json.load(f)
+    m["inventory"]["layout"] = inv.get("layout")
+    with open(mp, "w", encoding="utf-8") as f:
+        json.dump(m, f, indent=1)
+    return None
 
 
 def main() -> int:
@@ -365,7 +413,19 @@ def main() -> int:
         return 0
     if cmd == "rescore":  # recompute quality of every finished scene with the current formula
         import glob
-        for mp in sorted(glob.glob(os.path.join(OUT, "*", "*", "metrics.json"))):
+        args = sys.argv[2:]
+        with_inv = "--inventory" in args
+        arms = [a for a in args if a != "--inventory"]
+        paths = sorted(p for p in glob.glob(os.path.join(OUT, "*", "*", "metrics.json"))
+                       if not arms or os.path.basename(os.path.dirname(os.path.dirname(p))) in arms)
+        if with_inv:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                for mp, note in zip(paths, pool.map(add_layout, paths), strict=True):
+                    if note:
+                        print(f"{os.path.relpath(mp, OUT)}: {note}", flush=True)
+        for mp in paths:
             with open(mp, encoding="utf-8") as f:
                 m = json.load(f)
             m["quality"] = score(m["brief"], m["inventory"], m["validation"])
