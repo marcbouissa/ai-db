@@ -894,7 +894,32 @@ _OWN_FINISH: dict[str, tuple[str, ...]] = {
     "pallet_rack": ("metal", "steel", "chrome"), "forklift": ("metal", "steel", "chrome"),
     "safety_barrier": ("metal", "steel", "chrome"), "conveyor": ("metal", "steel", "chrome"),
     "shelving_unit": ("metal", "steel", "chrome"), "workbench": ("metal", "steel", "chrome", "wood"),
-    "pallet": ("wood",), "crate": ("wood",)}
+    "pallet": ("wood",), "crate": ("wood",), "trash_can": ("metal", "steel")}
+
+
+#: what makes a setting a warehouse / stock room: its crates are cartons
+WAREHOUSE_CATEGORIES = ("pallet_rack", "forklift", "pallet", "conveyor", "loading_dock", "shelving_unit")
+WAREHOUSE_STYLES = ("industrial", "warehouse", "factory", "logistics", "storage")
+
+
+def context_recipe(spec: SceneSpec, category: str, ospec: Any) -> str | None:
+    """The recipe a category gets in this setting instead of its own (recipes._KINDS), else None:
+    a crate in a warehouse is a cardboard carton unless the spec makes it wooden (a wood variant or
+    tint, or 'wood' in its id; a bare 'wood' is the material every crate gets: aidb7 review, the
+    qwen warehouse's crates read as wooden props on the pallets); an outdoor bin a park litter bin."""
+    if category == "trash_can" and spec.setting.kind == "outdoor":
+        return "litter_bin"
+    if category != "crate":
+        return None
+    cats = {o.category for o in spec.objects}
+    style = str(spec.setting.style or "").lower()
+    if not cats & set(WAREHOUSE_CATEGORIES) and not any(w in style for w in WAREHOUSE_STYLES):
+        return None
+    mat = str(getattr(ospec, "material", None) or "")
+    oid = str(getattr(ospec, "id", "")).lower()
+    if (mat.startswith("wood") and mat != "wood") or "wood" in oid:
+        return None
+    return "cardboard_box"
 
 
 def _plain_finish(category: str, material: str | None) -> bool:
@@ -913,6 +938,8 @@ _KEEP_PARTS = {**{c: ("leg", "arm_frame", "arm_rib", "base_rail", "plinth", "pil
                # beach furniture: a "fabric" lounger is its cushions on a teak frame, a parasol's canopy
                "sun_lounger": ("leg", "rail", "end_", "slat", "back_frame", "back_strut"),
                "parasol": ("base", "pole", "hub", "finial"),
+               # a "wood" park bench is its slats on the cast-iron frames; a bin keeps its dark liner
+               "bench": ("frame_",), "trash_can": ("liner", "mouth"),
                # lamps: a "brass lamp" is brass metalwork under a fabric shade and a bulb
                **{c: ("shade", "bulb", "diffuser") for c in ("floor_lamp", "table_lamp", "pendant_lamp",
                                                              "wall_sconce", "ceiling_light")}}
@@ -1138,8 +1165,11 @@ def build_layout_commands(
                                "keep": list(_KEEP_PARTS.get(pl.category, ()))})
         elif geometry == "generated" and has_recipe(pl.category):
             loc = _shift(pl.location, off)
+            kind = context_recipe(spec, pl.category, by_id.get(base))
             cmds.append({"type": "build_asset", "params": {"spec": recipe_spec(
-                pl.category, pl.id, pl.dims, seed=pl.id if pl.category in _SEEDED_RECIPES else None)}})
+                pl.category, pl.id, pl.dims, seed=pl.id if pl.category in _SEEDED_RECIPES else None, kind=kind)}})
+            if kind == "cardboard_box" and _plain_finish(pl.category, materials.get(base)):
+                materials[base] = None  # a warehouse "wood" crate: a carton in its own cardboard
             if pl.category in _SEEDED_RECIPES and materials.get(base) == "stone":
                 materials[base] = None  # plain stone: keep each rock's own tones
             if _plain_finish(pl.category, materials.get(base)):
@@ -1199,10 +1229,11 @@ def build_layout_commands(
     if wear:
         cmds.append(_wear_command(wear))
     if spec.setting.kind == "outdoor":  # a park's paved plaza round its fountain (terrain.plaza_commands)
-        pave = spec.setting.floor_material if terrain.paving(spec.setting.floor_material) else terrain.PLAZA_MATERIAL
+        pave, _note = terrain.plaza_material(spec.setting.floor_material)
         cmds += terrain.plaza_commands(spec, placements, off, material_for("", pave))
     cmds += lighting_commands(spec, placements, off)
-    plants = [pl.id for pl in placements if pl.category in FOLIAGE_CATEGORIES]
+    plants = [pl.id for pl in placements if pl.category in FOLIAGE_CATEGORIES
+              and not (vegetation.has_plant(pl.category) and not user_overrides(pl.category))]  # grown leaves
     if plants and SCENE_FOLIAGE_DENSITY > 0 and geometry == "generated":
         cmds.append({"type": "run_code", "params": {"code": _FOLIAGE.format(payload=json.dumps({
             "roots": plants, "density": SCENE_FOLIAGE_DENSITY, "max_leaves": SCENE_FOLIAGE_MAX_LEAVES,

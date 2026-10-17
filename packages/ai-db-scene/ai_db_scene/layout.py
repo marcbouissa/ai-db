@@ -71,6 +71,12 @@ SHELF_LEVELS: dict[str, tuple[float, ...]] = {"pallet_rack": (0.0, 0.381, 0.711)
 _SHELF_SPACING_M = 0.08  # between neighbours on one level
 #: categories that stack on copies of themselves when their support's top is full (crates on a pallet)
 STACKABLE = ("crate", "pallet", "book_stack", "barrel")
+#: clearance (m, box to box) between kinds with no relation of their own: a street lamp stood
+#: 0.3 m from a park bench's end (lightning aidb7 park), crowding it
+PAIR_CLEARANCE_M: dict[frozenset[str], float] = {
+    **{frozenset((lamp, seat)): 1.5 for lamp in ("street_lamp", "lamp_post_double")
+       for seat in ("bench", "picnic_table", "trash_can")},
+    frozenset(("street_lamp", "street_lamp")): 3.0}
 _RING_YAW_TOL_DEG = 3.0  # a ring member faces the centre of what it stands round
 
 
@@ -375,6 +381,8 @@ class _Problem:
                 default = {"in_front_of": LAYOUT_DEFAULT_IN_FRONT_GAP_M, "beside": LAYOUT_DEFAULT_BESIDE_GAP_M,
                            "around": LAYOUT_DEFAULT_AROUND_GAP_M, "above": LAYOUT_DEFAULT_ABOVE_GAP_M}.get(r.rel, 0.0)
                 gap = default if r.gap_m is None else r.gap_m
+                if r.gap_m is None and r.rel == "beside" and r.b in by_base:  # a lamp beside a bench: not at its end
+                    gap = max(gap, PAIR_CLEARANCE_M.get(frozenset((a.category, self.insts[bi].category)), 0.0))
                 if r.rel == "against_wall" and a.prior.support in ("wall", "ceiling"):
                     gap = 0.0  # a picture or window hangs on the wall itself
                 label = f"{ai} {r.rel} {bi}" + (f" (gap {gap:g} m)" if r.rel in (*_GAP_RELS, "above")
@@ -769,6 +777,8 @@ class _Problem:
     def margin(self, a: _Inst, b: _Inst) -> float:
         m = max(a.prior.default_clearance_m, b.prior.default_clearance_m)
         g = self.pair_gap.get(frozenset((a.id, b.id)))
+        if g is None:  # no relation between them: kinds that must not crowd each other keep apart
+            m = max(m, PAIR_CLEARANCE_M.get(frozenset((a.category, b.category)), 0.0))
         return m if g is None else min(m, g)
 
     def pair_conflict(self, a: _Inst, pa: _Pose, b: _Inst, pb: _Pose) -> bool:

@@ -1,8 +1,10 @@
-"""Generated plants for outdoor scenes: palm tree, fern, tropical bush.
+"""Generated plants: palm tree, fern, tropical bush (outdoors) and a potted plant.
 
 Each is grown in Blender from a seed (run_code, like the broadleaf tree in scene_pipeline): a
 palm's curved, ringed trunk and arching fronds with V-set leaflets; a fern's rosette of pinnate
-fronds; a tropical bush's broad, folded leaves on stalks. Every plant is fitted to the
+fronds; a tropical bush's broad, folded leaves on stalks; a potted plant's terracotta pot (rim,
+soil) with leaves of varied size and shape on stalks rising from it (the old recipe was a stack
+of foliage balls with no pot to be seen, aidb7 review). Every plant is fitted to the
 placement's exact [w, d, h] (base at z=0, footprint centred), so it never changes the layout.
 """
 
@@ -12,13 +14,18 @@ import json
 from typing import Any
 
 #: category -> generator kind
-GENERATED_PLANTS = {"palm_tree": "palm", "fern": "fern", "tropical_bush": "tropical_bush"}
+GENERATED_PLANTS = {"palm_tree": "palm", "fern": "fern", "tropical_bush": "tropical_bush", "potted_plant": "potted"}
 #: part suffix -> material when the spec names none (the spec's material goes on the leaves)
 PART_MATERIALS = {
     "palm": {"trunk": "stone:#7a6a55", "leaves": "foliage:#4f7d2e", "nuts": "wood:dark"},
     "fern": {"leaves": "foliage:#3f6f2a", "base": "foliage:#3a4a26"},
     "tropical_bush": {"leaves": "foliage:#2f6b2c", "stems": "foliage:#4f7a35"},
+    "potted": {"pot": "ceramic:#b5603a", "soil": "stone:#3b2e25", "leaves": "foliage:#2f6b2c",
+               "stems": "foliage:#4f7a35"},
 }
+#: material kinds of a pot, not of leaves: a potted plant's spec material of these goes on the pot
+POT_KINDS = ("ceramic", "concrete", "stone", "plastic", "paint", "metal", "brass", "gold", "chrome", "marble",
+             "wood", "glass", "rubber", "plaster")
 
 
 def has_plant(category: str) -> bool:
@@ -33,8 +40,10 @@ def plant_commands(category: str, name: str, dims: tuple[float, float, float] | 
                "location": [float(v) for v in base], "rot_z": float(rot_z_deg)}
     cmds: list[dict[str, Any]] = [{"type": "run_code", "params": {
         "code": "import json\nCFG = json.loads(" + repr(json.dumps(payload)) + ")\n" + _PLANT_CODE}}]
+    on_pot = kind == "potted" and bool(leaf_material) and str(leaf_material).split(":")[0] in POT_KINDS
     for part, mat in PART_MATERIALS[kind].items():
-        chosen = leaf_material if part == "leaves" and leaf_material else mat
+        target = "pot" if on_pot else "leaves"  # "ceramic" potted plant: the pot is ceramic
+        chosen = leaf_material if part == target and leaf_material else mat
         cmds.append({"type": "apply_material", "params": {
             "name": f"{name}_{part}", "material": chosen if chosen.startswith("color") or ":proj=" in chosen
             else f"{chosen}:proj=box"}})
@@ -169,7 +178,7 @@ def mesh_obj(name, bm):
     return ob
 
 name = CFG["name"]
-for suffix in ("", "_trunk", "_leaves", "_nuts", "_base", "_stems"):
+for suffix in ("", "_trunk", "_leaves", "_nuts", "_base", "_stems", "_pot", "_soil"):
     old = bpy.data.objects.get(name + suffix)
     if old is not None:
         bpy.data.objects.remove(old, do_unlink=True)
@@ -226,6 +235,37 @@ elif kind == "fern":
     bmesh.ops.create_icosphere(bb, subdivisions=2, radius=rad,
                                matrix=Matrix.Translation((0, 0, 0.0)) @ Matrix.Diagonal((1.0, 1.0, 0.35, 1.0)))
     parts.append(mesh_obj(name + "_base", bb))
+elif kind == "potted":
+    pr = R * rng.uniform(0.5, 0.6)  # the pot's top radius: the leaves spread wider than the pot
+    ph = H * rng.uniform(0.28, 0.34)
+    bm = bmesh.new()
+    n = 28
+    pts = [Vector((0, 0, ph * t)) for t in (0.0, 0.25, 0.5, 0.75, 0.9)]
+    rads = [pr * (0.72 + 0.28 * t) for t in (0.0, 0.25, 0.5, 0.75, 0.9)]
+    tube(bm, pts + [Vector((0, 0, ph * 0.9)), Vector((0, 0, ph))], rads + [pr * 1.08, pr * 1.08], n)  # rim
+    parts.append(mesh_obj(name + "_pot", bm))
+    bsoil = bmesh.new()
+    bmesh.ops.create_cone(bsoil, cap_ends=True, segments=n, radius1=pr * 0.97, radius2=pr * 0.9, depth=ph * 0.06,
+                          matrix=Matrix.Translation((0, 0, ph * 0.94)))
+    parts.append(mesh_obj(name + "_soil", bsoil))
+    bl, bs = bmesh.new(), bmesh.new()
+    nl = rng.randint(14, 20)
+    top = H - ph
+    base = Vector((0, 0, ph * 0.95))
+    for k in range(nl):  # stalks from the soil, upright in the middle, arching out at the edge;
+        az = 2 * math.pi * k / nl * 2.618 + rng.uniform(-0.3, 0.3)  # every leaf its own size and shape
+        inner = k % 3 == 0
+        elev = rng.uniform(1.15, 1.45) if inner else rng.uniform(0.7, 1.15)
+        stalk = top * (rng.uniform(0.45, 0.7) if inner else rng.uniform(0.25, 0.5))
+        d = Vector((math.cos(elev) * math.cos(az), math.cos(elev) * math.sin(az), math.sin(elev)))
+        start = base + Vector((rng.uniform(-0.3, 0.3) * pr, rng.uniform(-0.3, 0.3) * pr, 0))
+        end = start + d * stalk
+        tube(bs, [start, start.lerp(end, 0.5) + Vector((0, 0, 0.01 * H)), end], [0.012 * H, 0.009 * H, 0.007 * H], 5)
+        out = Vector((d.x, d.y, 0.55 if inner else 0.2)).normalized()
+        ln = top * rng.uniform(0.3, 0.5) * (0.8 if inner else 1.0)
+        blade(bl, end, out, ln, ln * rng.uniform(0.32, 0.62), ln * rng.uniform(0.15, 0.45))
+    parts.append(mesh_obj(name + "_leaves", bl))
+    parts.append(mesh_obj(name + "_stems", bs))
 else:  # tropical_bush: broad leaves on stalks from one clump
     bl, bs = bmesh.new(), bmesh.new()
     nl = rng.randint(24, 32)

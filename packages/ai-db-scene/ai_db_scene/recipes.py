@@ -77,6 +77,65 @@ def _brace(pid: str, x: float, y0: float, z0: float, y1: float, z1: float, tx: f
                 mat, rotation_deg=[round(ang, 2), 0, 0])
 
 
+def _park_bench() -> list[dict[str, Any]]:
+    iron = _CAST_IRON
+    wood = "wood:pine"
+    parts: list[dict[str, Any]] = []
+    for s, x in (("l", -0.47), ("r", 0.47), ("m", 0.0)):
+        side = s != "m"
+        parts += [
+            _box(f"frame_{s}_front_leg", [0.05, 0.05, 0.4], [x, -0.2, 0], iron),
+            _brace(f"frame_{s}_rear_leg", x, 0.16, 0.0, 0.26, 0.86, 0.05, 0.05, iron),
+            _box(f"frame_{s}_seat_rail", [0.05, 0.46, 0.04], [x, -0.01, 0.37], iron)]
+        if side:
+            parts += [_box(f"frame_{s}_arm_post", [0.04, 0.04, 0.2], [x, -0.2, 0.41], iron),
+                      _box(f"frame_{s}_arm", [0.06, 0.4, 0.035], [x, -0.04, 0.6], iron),
+                      _box(f"frame_{s}_foot", [0.07, 0.48, 0.02], [x, -0.01, 0], iron)]
+    parts += [_box(f"slat_seat_{k}", [1.0, 0.075, 0.035], [0, round(-0.215 + k * 0.09, 4), 0.41], wood)
+              for k in range(5)]
+    parts += [_box(f"slat_back_{k}", [1.0, 0.03, 0.075], [0, round(0.205 + k * 0.022, 4), round(0.5 + k * 0.11, 4)],
+                   wood) for k in range(3)]
+    return parts
+
+
+def _litter_bin() -> list[dict[str, Any]]:
+    """A park litter bin: a lidded drum of vertical steel slats round a dark liner, a domed lid
+    with the dark mouth of its throw-in opening, a base ring."""
+    import math
+
+    steel = "paint:#2e3a33"  # powder-coated park green-black
+    parts = [_cyl("base", [1.0, 1.0, 0.05], [0, 0, 0], steel),
+             _cyl("liner", [0.84, 0.84, 0.8], [0, 0, 0.05], "plastic:#141414"),
+             _cyl("ring_low", [0.98, 0.98, 0.04], [0, 0, 0.12], steel),
+             _cyl("ring_high", [0.98, 0.98, 0.04], [0, 0, 0.74], steel)]
+    n = 16
+    for k in range(n):  # vertical slats with gaps: the dark liner shows between them
+        a = 2 * math.pi * k / n
+        parts.append(_box(f"slat_{k}", [0.13, 0.03, 0.72], [round(0.46 * math.cos(a), 4), round(0.46 * math.sin(a), 4),
+                                                              0.08], steel, rotation_deg=[0, 0, round(math.degrees(a) + 90, 2)]))
+    parts += [{"id": "lid", "shape": "tapered_cylinder", "size": [1.0, 1.0, 0.12], "at": [0, 0, 0.8],
+               "radius": 1.0, "radius_top": 0.55, "material": steel},
+              _cyl("lid_top", [0.56, 0.56, 0.04], [0, 0, 0.92], steel),
+              _box("mouth", [0.34, 0.05, 0.07], [0, -0.42, 0.81], "plastic:#0c0c0c"),
+              _cyl("knob", [0.12, 0.12, 0.04], [0, 0, 0.96], "metal:brushed")]
+    return parts
+
+
+def _cardboard_box() -> list[dict[str, Any]]:
+    """A taped carton: the body, the seam between the top flaps, packing tape over it and down the
+    ends, a shipping label (a warehouse's "crates", which read as wood props otherwise)."""
+    tape = "plastic:#c9a86a"
+    return [_box("body", [1.0, 1.0, 0.98], [0, 0, 0], _CARDBOARD),
+            _box("flap_seam", [1.0, 0.012, 0.004], [0, 0, 0.98], "plaster:#6e5536"),
+            _box("tape_top", [1.0, 0.16, 0.012], [0, 0, 0.978], tape),
+            *[_box(f"tape_{s}", [0.006, 0.16, 0.25], [x, 0, 0.74], tape) for s, x in (("l", -0.5), ("r", 0.5))],
+            _box("label", [0.28, 0.006, 0.18], [0.22, -0.5, 0.55], "paint:#f2f0e8")]
+
+
+#: recipes chosen by context, not by category (recipe_spec(kind=...)): a warehouse's crate is a carton
+_KINDS: dict[str, Any] = {"cardboard_box": _cardboard_box, "litter_bin": _litter_bin}
+
+
 def _rack() -> list[dict[str, Any]]:
     """Selective pallet rack (2.7 x 1.1 x 4.5 m): two upright frames (front and back posts with
     zig-zag bracing), orange step beams at three levels, wire decks, a loaded pallet per bay level."""
@@ -302,15 +361,11 @@ _RECIPES: dict[str, Any] = {
           for i, (x, y) in enumerate(((-0.3, -0.3), (0.3, -0.3), (-0.3, 0.3), (0.3, 0.3)))],
         *[_box(f"footrest_{s}", [0.67, 0.05, 0.03], [0, y, 0.33], _STEEL) for s, y in (("f", -0.3), ("b", 0.3))],
         *[_box(f"footrest_{s}", [0.05, 0.55, 0.03], [x, 0, 0.33], _STEEL) for s, x in (("l", -0.3), ("r", 0.3))]],
-    "bench": lambda: [
-        # two side frames carry the seat; posts rise from them and carry the backrest
-        _box("frame_l", [0.05, 0.55, 0.42], [-0.47, 0.02, 0], _DARK),
-        _box("frame_r", [0.05, 0.55, 0.42], [0.47, 0.02, 0], _DARK),
-        _box("seat", [1.0, 0.5, 0.05], [0, 0.0, 0.42], "wood:pine"),
-        _box("post_l", [0.05, 0.05, 0.45], [-0.47, 0.265, 0.42], _DARK),
-        _box("post_r", [0.05, 0.05, 0.45], [0.47, 0.265, 0.42], _DARK),
-        _box("backrest", [1.0, 0.04, 0.24], [0, 0.265, 0.63], "wood:pine")],
+    # park bench: wooden slats on two cast-iron side frames (front leg, rear leg rising into the
+    # backrest post, seat rail, armrest), a middle support; the slats are separate boards with gaps
+    "bench": _park_bench,
     # street bin: a brushed steel body (hollow, open top) round a dark liner, a rim and a base ring
+    # (outdoors: the park litter bin, _KINDS)
     "trash_can": lambda: [
         _cyl("base", [1.0, 1.0, 0.04], [0, 0, 0], _DARK),
         {"id": "body", "shape": "cylinder", "size": [0.96, 0.96, 0.92], "at": [0, 0, 0.04], "material": "metal:brushed",
@@ -991,16 +1046,19 @@ def variant_categories() -> list[str]:
 
 
 def recipe_spec(category: str, name: str, dims: tuple[float, float, float] | list[float],
-                seed: int | str | None = None) -> dict[str, Any]:
+                seed: int | str | None = None, kind: str | None = None) -> dict[str, Any]:
     """The build_asset spec of ``category``, named ``name``, scaled to exactly ``dims``.
 
     ``seed`` (None: the fixed recipe) draws a variant for the categories in
     ``variant_categories()``: leg style/thickness, drawer/door/shelf counts, back height.
-    The same seed always gives the same parts; other categories ignore it. A user recipe
+    The same seed always gives the same parts; other categories ignore it. ``kind`` picks a
+    context recipe instead of the category's (``cardboard_box`` for a warehouse crate). A user recipe
     (``create_recipe``) is used for categories without a built-in, or instead of the built-in
     when it was saved with overwrite=true."""
     user = _user_parts(category)
-    if user is not None:
+    if kind is not None and kind in _KINDS and user is None:
+        parts, style = _KINDS[kind](), "ai-db recipe"
+    elif user is not None:
         parts, style = user, "ai-db user recipe"
     elif seed is not None and category in _VARIANTS:
         import random

@@ -573,12 +573,33 @@ def water_from_brief(data: Any, brief: Any) -> tuple[Any, str | None]:
 
 #: material words that pave rather than grow: a park's floor_material of this kind is its paving
 _PAVING_WORDS = ("concrete", "stone", "paving", "pavement", "asphalt", "brick", "tile", "tiles", "marble", "granite",
-                 "cobblestone", "cobble", "flagstone", "slate", "terrazzo")
+                 "cobblestone", "cobble", "flagstone", "slate", "terrazzo", "tarmac", "blacktop", "pavers", "paver")
+#: paving too dark for a park's plaza (a road surface, not a square round a fountain)
+_DARK_PAVING = ("asphalt", "tarmac", "blacktop", "bitumen", "black", "dark", "charcoal", "anthracite", "basalt",
+                "slate")
 
 
 def paving(material: Any) -> bool:
     """Is a floor material a paving (concrete, stone, brick, ...)?"""
     return isinstance(material, str) and material.split(":")[0].strip().lower() in _PAVING_WORDS
+
+
+def plaza_material(material: Any) -> tuple[str, str | None]:
+    """(paving of a park's plaza, note or None): the spec's floor material when it is a light
+    paving; asphalt or a very dark one becomes light stone pavers (the aidb7 park's plaza read as a
+    car park) with a note; no paving: light stone."""
+    if not paving(material):
+        return PLAZA_MATERIAL, None
+    words = re.split(r"[^a-z]+", str(material).lower())
+    m = re.search(r"#([0-9a-fA-F]{6})", str(material))
+    lum = None
+    if m:
+        r, g, b = (int(m.group(1)[i:i + 2], 16) / 255 for i in (0, 2, 4))
+        lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    if any(w in _DARK_PAVING for w in words) or (lum is not None and lum < 0.3):
+        return PLAZA_MATERIAL, (f"setting.floor_material {material!r} is too dark for a park's plaza: paved in light "
+                                f"stone ({PLAZA_MATERIAL}); name a light paving to choose another")
+    return str(material), None
 
 
 def apply_brief_defaults(spec: SceneSpec, brief: str | None) -> tuple[SceneSpec, list[str]]:
@@ -598,6 +619,9 @@ def apply_brief_defaults(spec: SceneSpec, brief: str | None) -> tuple[SceneSpec,
         new_ground = ground
         notes.append(f"setting.ground: '{ground}' from the brief; floor_material {st.floor_material!r} paves the "
                      f"plaza round the {' / '.join(PLAZA_CENTRES)} (if any)")
+        dark = plaza_material(st.floor_material)[1]
+        if dark:
+            notes.append(dark)
     if st.water is None and water is not None:
         new_water = parse_water(water, st.bounds_m, [])
         notes.append(f"setting.water: {new_water.to_dict() if new_water else water} from the brief")
