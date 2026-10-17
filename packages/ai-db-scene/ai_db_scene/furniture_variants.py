@@ -33,6 +33,9 @@ _MARK = "variants"
 _UPH_RANGES = {"arm_width": (0.10, 0.30), "arm_height": (0.52, 0.80), "seat_height": (0.38, 0.50),
                "back_height": (0.70, 1.05), "leg_height": (0.03, 0.22), "softness": (0.0, 1.0)}
 _UPH_SIZE = {"sofa": ((1.3, 3.4), (0.80, 1.15)), "armchair": ((0.62, 1.10), (0.72, 1.00))}
+#: the bauhaus tube frame: satin steel, not a mirror (mirror chrome on the frame read as a
+#: chrome panel in the lobby renders)
+_BRUSHED_STEEL = "metal:brushed"
 _SEAT_W = (0.5, 0.78)  # one seat cushion's width range (m)
 
 #: name -> design. Numbers are (lo, hi) ranges a piece draws from, lists are choices, the rest fixed.
@@ -117,7 +120,7 @@ FAMILIES: dict[str, dict[str, Any]] = {
         "sofa": {"arm_style": "metal_square", "arm_width": (0.16, 0.22), "back_style": "tight", "tufted": False,
                  "bench_seat": [True, False], "leg_style": "metal", "leg_height": (0.06, 0.10),
                  "softness": (0.3, 0.45), "piping": False, "seat_height": (0.42, 0.45), "arm_drop": (0.10, 0.16),
-                 "pillows": 0, "leg_material": ["chrome", "black_metal"]},
+                 "pillows": 0, "leg_material": [_BRUSHED_STEEL, "black_metal"]},
         "fabrics": ["black_leather", "cognac_leather", "charcoal"],
         "pillow_fabrics": ["ivory"],
         "table": {"top_shape": "rect", "leg_style": "metal", "material": ["black_lacquer", "oak"],

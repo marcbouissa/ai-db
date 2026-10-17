@@ -2244,10 +2244,12 @@ def build_verdict(out: dict[str, Any], brief_given: bool = True) -> tuple[str, s
 #: faces per tagged object (its whole hierarchy, modifiers applied) and, over the budget, a
 #: Decimate modifier on the heaviest non-hero objects, each cut just enough (ratio floor
 #: BUILD_DECIMATE_MIN_RATIO) until the scene total fits. Untagged meshes (the room shell) count
-#: towards the total but are never decimated.
+#: towards the total but are never decimated. Only an object's dense parts (>= min_part faces) take
+#: the cut: collapsing a 64-face tube frame folded it into big mirror-chrome triangles across the
+#: armchair's side (qwen aidb7 lobby, poly_budget 50000).
 _POLY_BUDGET = """
 import bpy, json
-budget, floor = json.loads({payload!r})
+budget, floor, min_part = json.loads({payload!r})
 dg = bpy.context.evaluated_depsgraph_get()
 
 def faces(o):
@@ -2265,8 +2267,12 @@ if budget is not None and total > budget:
     for o in sorted((o for o in tagged if not o.get("hero")), key=lambda o: -per[o.name]):
         if total <= budget or per[o.name] == 0:
             break
-        ratio = max(floor, (per[o.name] - (total - budget)) / per[o.name])
-        for p in parts(o):
+        dense = [p for p in parts(o) if faces(p) >= min_part]
+        heavy = sum(faces(p) for p in dense)
+        if not heavy:
+            continue
+        ratio = max(floor, (heavy - (total - budget)) / heavy)
+        for p in dense:
             mod = p.modifiers.get("ai_db_decimate") or p.modifiers.new("ai_db_decimate", "DECIMATE")
             mod.ratio = ratio
         dg.update()
@@ -2281,10 +2287,10 @@ result = {{"faces_total": total, "faces_before": before, "budget": budget, "over
 
 def poly_report(budget: int | None) -> dict[str, Any]:
     """Faces per object after a build; with a budget, decimate down to it (see _POLY_BUDGET)."""
-    from ai_db_scene.constants import BUILD_DECIMATE_MIN_RATIO
+    from ai_db_scene.constants import BUILD_DECIMATE_MIN_PART_FACES, BUILD_DECIMATE_MIN_RATIO
 
     return dict(BlenderClient().run_code(_POLY_BUDGET.format(
-        payload=json.dumps([budget, BUILD_DECIMATE_MIN_RATIO])), timeout=120.0))
+        payload=json.dumps([budget, BUILD_DECIMATE_MIN_RATIO, BUILD_DECIMATE_MIN_PART_FACES])), timeout=120.0))
 
 
 #: rigid bodies on every mesh of the scene: active (convex hull) for the parts of objects the
