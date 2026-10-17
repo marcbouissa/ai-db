@@ -1097,6 +1097,7 @@ def build_layout_commands(
             cmds.append({"type": "apply_material", "params": {
                 "name": pl.id, "material": material_for(pl.category, materials.get(base))}})
         names.append(pl.id)
+    _strip_shelf_loads(spec, cmds)
     if fit:
         cmds.append(fit_command(fit))
     if tag:
@@ -1141,6 +1142,23 @@ def build_layout_commands(
     if shift_cmd:
         cmds.append(shift_cmd)
     return cmds, names
+
+
+#: built-in stock of storage recipes (recipes._rack, shelving_unit): dropped when the spec puts
+#: its own objects on the shelves, or the racked pallets stood inside the recipe's loads
+_SHELF_STOCK = ("load_", "box_")
+
+
+def _strip_shelf_loads(spec: SceneSpec, cmds: list[dict[str, Any]]) -> None:
+    from ai_db_scene.layout import SHELF_LEVELS
+
+    cats = {o.id: o.category for o in spec.objects}
+    loaded = {r.b for r in spec.relations if r.rel == "on" and cats.get(r.b) in SHELF_LEVELS}
+    for c in cmds:
+        asset = c.get("params", {}).get("spec") if c.get("type") == "build_asset" else None
+        name = str(asset.get("asset")) if isinstance(asset, dict) else ""
+        if isinstance(asset, dict) and (name in loaded or _SUFFIX.sub("", name) in loaded):
+            asset["parts"] = [q for q in asset.get("parts", []) if not str(q.get("id", "")).startswith(_SHELF_STOCK)]
 
 
 def floor_area_m2(spec: SceneSpec) -> float:
@@ -1769,9 +1787,10 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
     left = _issues(report)
     # a relation the repair loop had to drop is not "built": the model treated it as success and
     # judges named exactly those (sofa not facing the TV, chairs unpaired)
-    left += [{"check": "dropped_relation", "severity": "warning",
-              "message": f"relation '{lbl}' could not be kept (dropped so the scene could be laid out); "
-                         "change it (edit_scene: move, or a bigger setting) if it matters"} for lbl in fixed.dropped]
+    # judges named exactly those (sofa not facing the TV, chairs unpaired); qwen aidb6's cafe
+    # replied DONE over three dropped table relations, so a dropped relation blocks "done" and
+    # comes with a step that fits
+    left += [dropped_issue(lbl, data, fixed.spec) for lbl in fixed.dropped]
     from ai_db_scene import constants as _c
 
     camera: dict[str, Any] | None = None
@@ -1873,6 +1892,26 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def dropped_issue(label: str, data: dict[str, Any], spec: SceneSpec | None) -> dict[str, Any]:
+    """The blocking issue of a relation the repair loop dropped, with one edit_scene step that
+    keeps A near what it was related to: beside the object that kept the same relation to B
+    (two tables in_front_of one counter: the second beside the first), else beside B itself."""
+    a, rel, b = (label.split(" ") + ["", "", ""])[:3]
+    kept = [r for r in data.get("relations", []) if r.get("rel") == rel and r.get("b") == b and r.get("a") != a]
+    others = {r.get("a") for r in data.get("relations", []) if r.get("b") == a}  # what stands relative to A
+    peer = next((r["a"] for r in kept if r["a"] not in others), None)
+    ids = {o.id for o in spec.objects} if spec is not None else set()
+    if rel == "beside" or b not in ids:
+        step: dict[str, Any] | None = None
+    else:
+        step = {"op": "move", "id": a, "to": {"beside": peer or b, "gap_m": 0.6}}
+    msg = (f"relation '{label}' could not be kept (dropped so the scene could be laid out): the scene does not have it")
+    out: dict[str, Any] = {"check": "dropped_relation", "severity": "blocking", "objects": [a], "message": msg}
+    if step is not None:
+        out["suggest"] = step
+    return out
+
+
 def count_issues(asked: SceneSpec, placements: list[Placement]) -> list[dict[str, Any]]:
     """Objects the spec's own ``count`` (or grid) asks for that the build placed fewer of (the
     repair loop places one fewer when the room is full): the model would believe they exist."""
@@ -1892,6 +1931,10 @@ _NO_BRIEF = ("no brief given, so counts against the request were not checked")
 _NO_BRIEF_NEXT = (" Before replying DONE, check created against every object and count the request asks for "
                   "and add what is missing with edit_scene; pass brief (the request text) to build_scene and it "
                   "checks this itself.")
+
+
+#: the edit_scene ops a verdict names (edits.OPS): never one that does not exist
+_VERDICT_OPS = ("move", "update_object", "add_object", "remove_object", "add_relation")
 
 
 def build_verdict(out: dict[str, Any], brief_given: bool = True) -> tuple[str, str]:
@@ -1929,8 +1972,18 @@ def build_verdict(out: dict[str, Any], brief_given: bool = True) -> tuple[str, s
     verdict = f"one thing to fix: {thing}" + (f" (+{more} more)" if more > 0 else "")
     if not brief_given:
         verdict += f"; {_NO_BRIEF}"
-    return verdict, (f"Fix only that with {edit} (ops: move, update_object, add_object, remove_object, "
-                     f"add_relation), then stop. If it does not matter for the brief, reply DONE.{unsaved}")
+    first = order[0] if order and not failed else {}
+    if first.get("check") == "dropped_relation":
+        # not optional: the model replied DONE over dropped relations (qwen aidb6 cafe)
+        dropped = [i for i in order if i.get("check") == "dropped_relation"]
+        steps = [i["suggest"] for i in dropped if isinstance(i.get("suggest"), dict)]
+        how = (f"edit_scene({{scene_id: '{sid}', steps: {json.dumps(steps)}}})" if sid and steps else edit)
+        return verdict, (f"The scene is not done: {len(dropped)} requested relation(s) are missing. Place them "
+                         f"with {how} (or other moves that fit, or a bigger setting with update_setting); the "
+                         f"stored spec no longer has them, so an edit that leaves them out accepts the layout "
+                         f"as it is.{unsaved}")
+    return verdict, (f"Fix only that with {edit} (ops: {', '.join(_VERDICT_OPS)}), then stop. If it does not "
+                     f"matter for the brief, reply DONE.{unsaved}")
 
 
 #: faces per tagged object (its whole hierarchy, modifiers applied) and, over the budget, a

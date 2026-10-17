@@ -62,6 +62,15 @@ _DEP_RELS = ("on", "under", "above", "centered_in", "around", "in_front_of", "be
 _ORIENT_RELS = ("against_wall", "facing", "in_front_of", "beside", "on", "under", "centered_in", "around", "above")
 _CURVED_WALL_GAP_M = 0.25  # max back-face gap to a curved wall (sagitta of a flat back on a curve)
 _LATERAL_TOL_M = 0.05
+#: shelf surfaces of storage furniture, as fractions of its height (the built-in recipes' deck
+#: and shelf tops): ``A on B`` puts A on one of B's levels, bottom first, side by side along B's
+#: width - pallets on a pallet rack were refused ("cannot support other objects") and repair
+#: dropped the relation (lightning aidb5 warehouse)
+SHELF_LEVELS: dict[str, tuple[float, ...]] = {"pallet_rack": (0.0, 0.381, 0.711),
+                                              "shelving_unit": (0.07, 0.35, 0.64, 0.97)}
+_SHELF_SPACING_M = 0.08  # between neighbours on one level
+#: categories that stack on copies of themselves when their support's top is full (crates on a pallet)
+STACKABLE = ("crate", "pallet", "book_stack", "barrel")
 _RING_YAW_TOL_DEG = 3.0  # a ring member faces the centre of what it stands round
 
 
@@ -349,10 +358,26 @@ class _Problem:
         focus = spec.camera.get("focus")
         self.focus = by_base[focus][0] if focus in by_base else None
         self.under_pairs = {frozenset((r.a, r.b)) for r in self.rels if r.rel == "under"}
+        #: A on a shelf holder: (level height fraction, offset along B's width, turned a quarter) per
+        #: instance; a pallet deeper than the rack turns its long side along the beams
+        self.shelf_slot: dict[str, tuple[float, float, bool]] = {}
+        for bid in dict.fromkeys(r.b for r in self.rels if r.rel == "on" and self.shelf(r.b)):
+            self._shelf_slots(bid)
+        # what stands on a shelf (and what stands on that: crates on a racked pallet) is inside
+        # the holder's box on purpose
+        for rl in self.rels:
+            hold, seen = rl.b, {rl.a}
+            while rl.rel == "on" and hold in self.insts and hold not in seen and not self.shelf(hold):
+                seen.add(hold)
+                hold = next((q.b for q in self.rels if q.a == hold and q.rel == "on"), "")
+            if rl.rel == "on" and self.shelf(hold):
+                self.under_pairs.add(frozenset((rl.a, hold)))
         #: footprints nothing standing below LAYOUT_DOOR_HEIGHT_M may overlap: (label, pose, dims)
         self.blocked: list[tuple[str, _Pose, Dims]] = []
         #: ring members at their even places (a crowded room falls back to any place round B)
         self.strict_rings = True
+        #: a stacked copy needs its copy below among the placed poses (check_layout: a final pass)
+        self.verify_stacks = True
         self._static_checks()
 
     # ---- static (pose-independent) validation -------------------------------------------
@@ -374,7 +399,7 @@ class _Problem:
         for r in self.rels:
             if r.rel == "on":
                 b = self.insts[r.b]
-                if not b.prior.can_support_others:
+                if not b.prior.can_support_others and not self.shelf(r.b):
                     raise LayoutError(f"relation '{r.label}': category '{b.category}' cannot support other objects", [r.label])
                 if self.insts[r.a].prior.support in ("wall", "ceiling"):
                     raise LayoutError(f"relation '{r.label}': '{r.a}' is {self.insts[r.a].prior.support}-mounted and cannot rest on an object", [r.label])
@@ -437,6 +462,64 @@ class _Problem:
                     pose.x += 0.005 * n[0]
                     pose.y += 0.005 * n[1]
 
+    def _shelf_slots(self, bid: str) -> None:
+        """Fill ``shelf_slot`` for what stands on shelf holder ``bid``: level by level from the
+        bottom, side by side along its width, each row centred; what does not fit gets no slot."""
+        b = self.insts[bid]
+        on = [q.a for q in self.rels if q.rel == "on" and q.b == bid]
+        turned = {a: self.insts[a].dims[1] > b.dims[1] >= self.insts[a].dims[0] for a in on}
+        width = {a: self.insts[a].dims[1 if turned[a] else 0] for a in on}
+        shelves: list[list[str]] = [[]]
+        used = 0.0
+        for a in on:
+            if shelves[-1] and used + _SHELF_SPACING_M + width[a] > b.dims[0] + 1e-9:
+                if len(shelves) == len(SHELF_LEVELS[b.category]):
+                    break  # the rack is full
+                shelves.append([])
+                used = 0.0
+            used += (_SHELF_SPACING_M if shelves[-1] else 0.0) + width[a]
+            shelves[-1].append(a)
+        for lvl, row in zip(SHELF_LEVELS[b.category], shelves, strict=False):
+            x = -(sum(width[a] for a in row) + _SHELF_SPACING_M * (len(row) - 1)) / 2
+            for a in row:
+                self.shelf_slot[a] = (lvl, x + width[a] / 2, turned[a])
+                x += width[a] + _SHELF_SPACING_M
+
+    def shelf(self, iid: str) -> bool:
+        """Is ``iid`` storage furniture whose shelf levels carry what is ``on`` it?"""
+        inst = self.insts.get(iid)
+        return inst is not None and inst.category in SHELF_LEVELS
+
+    def shelf_pose(self, iid: str, pb: _Pose) -> _Pose | None:
+        """Where ``iid`` stands on its shelf holder at ``pb`` (None: not on a shelf, or no room left)."""
+        slot = self.shelf_slot.get(iid)
+        hold = next((r.b for r in self.by_a.get(iid, []) if r.rel == "on" and self.shelf(r.b)), None)
+        if slot is None or hold is None:
+            return None
+        x, y = _local(pb, (slot[1], 0.0))
+        return _Pose(x, y, pb.yaw + (_HALF_PI if slot[2] else 0.0), pb.zb + slot[0] * self.insts[hold].dims[2])
+
+    def stack_below(self, inst: _Inst, pose: _Pose, poses: dict[str, _Pose]) -> str | None:
+        """The placed copy (same category, same support) ``inst`` stands on top of, if any."""
+        if inst.category not in STACKABLE:
+            return None
+        sup = next((r.b for r in self.by_a.get(inst.id, []) if r.rel == "on"), None)
+        for oid, op in poses.items():
+            o = self.insts[oid]
+            if oid == inst.id or o.category != inst.category or abs(op.zb + o.dims[2] - pose.zb) > 1e-3:
+                continue
+            if sup is not None and not any(r.rel == "on" and r.b == sup for r in self.by_a.get(oid, [])):
+                continue
+            if _inside(pose, inst.dims, op, o.dims, LAYOUT_EPS_M):
+                return oid
+        return None
+
+    def carries_stack(self, iid: str, poses: dict[str, _Pose]) -> bool:
+        """Does a stacked copy stand on ``iid``? Then it keeps its pose (the copy would float)."""
+        inst = self.insts[iid]
+        return inst.category in STACKABLE and any(
+            self.stack_below(self.insts[o], q, {iid: poses[iid]}) == iid for o, q in poses.items() if o != iid)
+
     def ring_slot(self, r: _Rel, pb: _Pose) -> _Pose:
         """Where ring member ``r.a`` of ``r.b`` sits: slot ``ring_i`` of ``ring_n`` evenly spaced
         round B, counted from B's right axis (two chairs at a table's ends, four at its sides),
@@ -476,7 +559,8 @@ class _Problem:
             return self.H - inst.dims[2]
         for r in self.by_a.get(inst.id, []):
             if r.rel == "on" and r.b in poses:
-                return poses[r.b].zb + self.insts[r.b].dims[2]
+                sp = self.shelf_pose(inst.id, poses[r.b])
+                return sp.zb if sp is not None else poses[r.b].zb + self.insts[r.b].dims[2]
         return 0.0
 
     # ---- axis-aligned yaw (rect rooms) ----------------------------------------------------
@@ -561,7 +645,18 @@ class _Problem:
         else:
             bdims = b.dims
         if r.rel == "on":
-            if abs(pa.zb - (pb.zb + b.dims[2])) > 1e-3 or not _inside(pa, a.dims, pb, bdims, LAYOUT_EPS_M):
+            if self.shelf(r.b):
+                sp = self.shelf_pose(r.a, pb)
+                if sp is None:
+                    return f"'{r.label}': no room left on the shelves of '{r.b}'"
+                if abs(pa.zb - sp.zb) > 1e-3 or math.hypot(pa.x - sp.x, pa.y - sp.y) > tol \
+                        or min(_angdiff(pa.yaw, sp.yaw), _angdiff(pa.yaw, sp.yaw + math.pi)) > 1e-3:
+                    return f"'{r.label}': not at its place on the shelves of '{r.b}'"
+                return None
+            top = pb.zb + b.dims[2]
+            layer = (pa.zb - top) / a.dims[2] if a.category in STACKABLE else 0.0
+            if abs(layer - round(layer)) * a.dims[2] > 1e-3 or not 0 <= round(layer) <= 3 \
+                    or not _inside(pa, a.dims, pb, bdims, LAYOUT_EPS_M):
                 return f"'{r.label}': does not fit on top of '{r.b}'"
             return None
         if r.rel == "under":
@@ -653,6 +748,10 @@ class _Problem:
             v = self.rel_violation(r, poses[r.a], pose)
             if v:
                 return f"relation {v}"
+        if self.verify_stacks and inst.category in STACKABLE and any(
+                r.rel == "on" and r.b in poses and pose.zb > poses[r.b].zb + self.insts[r.b].dims[2] + 1e-3
+                for r in self.by_a.get(inst.id, []) if not self.shelf(r.b)) and self.stack_below(inst, pose, poses) is None:
+            return "stacked on nothing"
         for r in self.by_b.get(inst.id, []):
             # the ring's places must be in the room before the table is put down
             if r.rel == "around" and r.ring_n > 1 and self.strict_rings and r.a not in poses \
@@ -701,6 +800,8 @@ class _Problem:
                 # by the validator rotating it in Blender, qwen aidb6 living room)
                 if not any(q.rel == "facing" for q in self.by_a[inst.id]):
                     cost += 0.3 * _angdiff(pose.yaw, pb.yaw) / math.pi
+                if pose.zb > pb.zb + self.insts[r.b].dims[2] + 1e-3 and not self.shelf(r.b):
+                    cost += 0.3  # a stacked layer: only when the top below is full
                 if sum(1 for q in self.by_b.get(r.b, []) if q.rel == "on") == 1:
                     # the only thing on its support stands in the middle of it
                     tp, td = self.table_of(r.b, pb)
@@ -824,6 +925,9 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
     facing_targets = [poses[r.b] for r in rels if r.rel == "facing" and r.b in poses]
     out: list[_Pose] = []
     dface = pr.default_face(inst, poses)
+    stack = [oid for oid in poses if inst.category in STACKABLE and pr.insts[oid].category == inst.category
+             and prim is not None and prim.rel == "on" and not pr.shelf(prim.b)
+             and any(r.rel == "on" and r.b == prim.b for r in pr.by_a.get(oid, []))]
     ceiling_cells, ceiling_i = ceiling_grid(pr, inst) if prim is None and not rels else ([], 0)
     for k in range(n):
         yaw = rng.choice(yaws[: 4 if k % 2 == 0 else len(yaws)]) if yaws else 0.0
@@ -859,7 +963,10 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
             assert b is not None and pb is not None
             rb, fb = _axes(pb.yaw)
             jit = 0.0 if k == 0 else rng.uniform(-1, 1)
-            if prim.rel == "above":
+            sp = pr.shelf_pose(inst.id, pb) if prim.rel == "on" else None
+            if sp is not None:
+                x, y, yaw = sp.x, sp.y, sp.yaw  # its place on the rack's levels
+            elif prim.rel == "above":
                 x, y = pb.x, pb.y  # snap_walls then moves A onto its wall: same position along it
             elif prim.rel in ("on", "under"):
                 x = pb.x + jit * max(bdims[0] / 2 - inst.dims[0] / 2, 0) * rb[0] + rng.uniform(-1, 1) * (0 if k == 0 else max(bdims[1] / 2 - inst.dims[1] / 2, 0)) * fb[0]
@@ -889,6 +996,9 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
         p = _Pose(x, y, pr.snap_yaw(inst.id, yaw, poses), 0.0)
         pr.snap_walls(inst, p, set_yaw=True)
         p.zb = pr.base_z(inst, poses)
+        if stack and k % 3 == 2:  # on top of a copy already standing on the same support
+            below = poses[stack[(k // 3) % len(stack)]]
+            p = _Pose(below.x, below.y, below.yaw, below.zb + inst.dims[2])
         out.append(p)
     return out
 
@@ -978,6 +1088,8 @@ def _local_search(pr: _Problem, poses: dict[str, _Pose], rng: random.Random) -> 
         p = poses[iid]
         if pr.by_b.get(iid) and not any(r.rel == "facing" for r in pr.by_b[iid]):
             continue  # support/anchor objects keep their position: dependents were placed relative to them
+        if pr.carries_stack(iid, poses) or iid in pr.shelf_slot:  # a racked pallet keeps its bay
+            continue
         new = _Pose(p.x + rng.uniform(-step, step), p.y + rng.uniform(-step, step), p.yaw, p.zb)
         if iid not in yaw_locked:
             new.yaw = p.yaw + rng.uniform(-dyaw, dyaw)
@@ -1303,7 +1415,7 @@ def _snap_axes(pr: _Problem, poses: dict[str, _Pose]) -> None:
     break a hard constraint is not made."""
     for iid in pr.order():
         p = poses.get(iid)
-        if p is None:
+        if p is None or pr.carries_stack(iid, poses):
             continue
         target = pr.snap_yaw(iid, p.yaw, poses)
         facing = [r for r in pr.by_a.get(iid, []) if r.rel == "facing" and r.b in poses]
@@ -1388,6 +1500,7 @@ def check_layout(
     pr = _Problem(spec, priors or load_priors(), {p.id: p.dims for p in placements})
     pr.blocked = list(blocked or [])
     pr.strict_rings = False  # an uneven ring is reported soft, below
+    pr.verify_stacks = False  # a stacked copy is checked once every pose is known, below
     poses: dict[str, _Pose] = {}
     issues: list[str] = []
     placements = _unseat(pr, placements, issues)
@@ -1409,6 +1522,12 @@ def check_layout(
         inst = pr.insts[iid]
         if inst.prior.support in ("floor", "ground") and not any(r.rel == "on" for r in pr.by_a.get(iid, [])) and abs(p.zb) > 1e-3:
             issues.append(f"hard: {iid}: floats at z={p.zb:.3f} m")
+    for iid, p in poses.items():
+        inst = pr.insts[iid]
+        sup = next((r.b for r in pr.by_a.get(iid, []) if r.rel == "on" and r.b in poses and not pr.shelf(r.b)), None)
+        if inst.category in STACKABLE and sup is not None and p.zb > poses[sup].zb + pr.insts[sup].dims[2] + 1e-3 \
+                and pr.stack_below(inst, p, poses) is None:
+            issues.append(f"hard: {iid}: stacked on nothing")
     for r in pr.rels:
         if r.rel == "around" and r.ring_n > 1 and r.a in poses and r.b in poses:
             slot = pr.ring_slot(r, poses[r.b])

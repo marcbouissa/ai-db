@@ -1,0 +1,506 @@
+{
+ "lightning_aidb5_warehouse_provider504": {
+  "setting": {
+   "kind": "indoor",
+   "bounds_m": [
+    50,
+    30,
+    12
+   ],
+   "style": "industrial",
+   "floor_material": "concrete",
+   "wall_material": "plaster:#e8e0d0",
+   "mouldings": []
+  },
+  "objects": [
+   {
+    "id": "rack1",
+    "category": "pallet_rack",
+    "count": 1,
+    "material": "metal:steel"
+   },
+   {
+    "id": "rack2",
+    "category": "pallet_rack",
+    "count": 1,
+    "material": "metal:steel"
+   },
+   {
+    "id": "rack3",
+    "category": "pallet_rack",
+    "count": 1,
+    "material": "metal:steel"
+   },
+   {
+    "id": "rack4",
+    "category": "pallet_rack",
+    "count": 1,
+    "material": "metal:steel"
+   },
+   {
+    "id": "pallet1",
+    "category": "pallet",
+    "count": 2,
+    "material": "wood:pine"
+   },
+   {
+    "id": "pallet2",
+    "category": "pallet",
+    "count": 2,
+    "material": "wood:pine"
+   },
+   {
+    "id": "crate1",
+    "category": "crate",
+    "count": 4,
+    "material": "wood:pine"
+   },
+   {
+    "id": "forklift1",
+    "category": "forklift",
+    "hero": true,
+    "material": "metal:steel"
+   },
+   {
+    "id": "workbench1",
+    "category": "workbench",
+    "material": "wood:oak"
+   },
+   {
+    "id": "barrier1",
+    "category": "safety_barrier",
+    "count": 1,
+    "material": "metal:chrome"
+   },
+   {
+    "id": "barrier2",
+    "category": "safety_barrier",
+    "count": 1,
+    "material": "metal:chrome"
+   },
+   {
+    "id": "barrier3",
+    "category": "safety_barrier",
+    "count": 1,
+    "material": "metal:chrome"
+   },
+   {
+    "id": "barrier4",
+    "category": "safety_barrier",
+    "count": 1,
+    "material": "metal:chrome"
+   },
+   {
+    "id": "light1",
+    "category": "ceiling_light",
+    "count": 1,
+    "material": "glass:clear"
+   },
+   {
+    "id": "light2",
+    "category": "ceiling_light",
+    "count": 1,
+    "material": "glass:clear"
+   },
+   {
+    "id": "light3",
+    "category": "ceiling_light",
+    "count": 1,
+    "material": "glass:clear"
+   },
+   {
+    "id": "light4",
+    "category": "ceiling_light",
+    "count": 1,
+    "material": "glass:clear"
+   }
+  ],
+  "relations": [
+   {
+    "a": "rack1",
+    "rel": "against_wall",
+    "b": "wall_north"
+   },
+   {
+    "a": "rack2",
+    "rel": "beside",
+    "b": "rack1",
+    "gap_m": 1.0
+   },
+   {
+    "a": "rack3",
+    "rel": "beside",
+    "b": "rack2",
+    "gap_m": 1.0
+   },
+   {
+    "a": "rack4",
+    "rel": "beside",
+    "b": "rack3",
+    "gap_m": 1.0
+   },
+   {
+    "a": "pallet1",
+    "rel": "on",
+    "b": "rack1"
+   },
+   {
+    "a": "pallet2",
+    "rel": "on",
+    "b": "rack2"
+   },
+   {
+    "a": "crate1",
+    "rel": "on",
+    "b": "pallet1"
+   },
+   {
+    "a": "forklift1",
+    "rel": "in_front_of",
+    "b": "rack1",
+    "gap_m": 2.0
+   },
+   {
+    "a": "workbench1",
+    "rel": "against_wall",
+    "b": "wall_south"
+   },
+   {
+    "a": "barrier1",
+    "rel": "against_wall",
+    "b": "wall_east"
+   },
+   {
+    "a": "barrier2",
+    "rel": "against_wall",
+    "b": "wall_west"
+   },
+   {
+    "a": "barrier3",
+    "rel": "against_wall",
+    "b": "wall_south"
+   },
+   {
+    "a": "barrier4",
+    "rel": "against_wall",
+    "b": "wall_north"
+   },
+   {
+    "a": "light1",
+    "rel": "centered_in",
+    "b": "room"
+   },
+   {
+    "a": "light2",
+    "rel": "centered_in",
+    "b": "room"
+   },
+   {
+    "a": "light3",
+    "rel": "centered_in",
+    "b": "room"
+   },
+   {
+    "a": "light4",
+    "rel": "centered_in",
+    "b": "room"
+   }
+  ]
+ },
+ "bigpickle_aidb4_warehouse": {
+  "setting": {
+   "kind": "indoor",
+   "bounds_m": [
+    20,
+    14,
+    8
+   ],
+   "style": "industrial",
+   "floor_material": "concrete",
+   "wall_material": "pbr:dusty_plaster"
+  },
+  "objects": [
+   {
+    "id": "rack",
+    "category": "pallet_rack",
+    "count": 4,
+    "grid": {
+     "rows": 2,
+     "cols": 2,
+     "gap_m": [
+      3.5,
+      4.0
+     ]
+    },
+    "material": "metal:steel"
+   },
+   {
+    "id": "pallet",
+    "category": "pallet",
+    "count": 4,
+    "material": "wood:pine"
+   },
+   {
+    "id": "crate",
+    "category": "crate",
+    "count": 8,
+    "material": "wood:oak"
+   },
+   {
+    "id": "forklift",
+    "category": "forklift",
+    "hero": true,
+    "material": "paint:#e8a020"
+   },
+   {
+    "id": "workbench",
+    "category": "workbench",
+    "material": "metal:brushed"
+   },
+   {
+    "id": "barrier",
+    "category": "safety_barrier",
+    "count": 3,
+    "material": "paint:#f0c000"
+   },
+   {
+    "id": "light",
+    "category": "ceiling_light",
+    "count": 6,
+    "material": "plastic"
+   }
+  ],
+  "relations": [
+   {
+    "a": "pallet",
+    "rel": "in_front_of",
+    "b": "rack",
+    "gap_m": 1.2
+   },
+   {
+    "a": "crate",
+    "rel": "on",
+    "b": "pallet"
+   },
+   {
+    "a": "forklift",
+    "rel": "beside",
+    "b": "rack",
+    "gap_m": 1.5
+   },
+   {
+    "a": "workbench",
+    "rel": "against_wall",
+    "b": "wall_north"
+   },
+   {
+    "a": "barrier",
+    "rel": "in_front_of",
+    "b": "rack",
+    "gap_m": 0.4
+   }
+  ]
+ },
+ "qwen_aidb6_cafe": {
+  "setting": {
+   "bounds_m": [
+    5,
+    5,
+    3
+   ],
+   "kind": "indoor",
+   "style": "cafe",
+   "floor_material": "wood",
+   "wall_material": "beige_paint"
+  },
+  "objects": [
+   {
+    "id": "table1",
+    "category": "dining_table",
+    "count": 1,
+    "material": "oak_wood",
+    "hero": true
+   },
+   {
+    "id": "table2",
+    "category": "dining_table",
+    "count": 1,
+    "material": "oak_wood",
+    "hero": true
+   },
+   {
+    "id": "table3",
+    "category": "dining_table",
+    "count": 1,
+    "material": "oak_wood",
+    "hero": true
+   },
+   {
+    "id": "table4",
+    "category": "dining_table",
+    "count": 1,
+    "material": "oak_wood",
+    "hero": true
+   },
+   {
+    "id": "chair1",
+    "category": "dining_chair",
+    "count": 2,
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "chair2",
+    "category": "dining_chair",
+    "count": 2,
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "chair3",
+    "category": "dining_chair",
+    "count": 2,
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "chair4",
+    "category": "dining_chair",
+    "count": 2,
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "counter",
+    "category": "bar_counter",
+    "count": 1,
+    "material": "granite",
+    "hero": true
+   },
+   {
+    "id": "stool1",
+    "category": "bar_stool",
+    "count": 1,
+    "material": "metal",
+    "hero": false
+   },
+   {
+    "id": "stool2",
+    "category": "bar_stool",
+    "count": 1,
+    "material": "metal",
+    "hero": false
+   },
+   {
+    "id": "plant1",
+    "category": "potted_plant",
+    "count": 1,
+    "material": "leaf_green",
+    "hero": false
+   },
+   {
+    "id": "plant2",
+    "category": "potted_plant",
+    "count": 1,
+    "material": "leaf_green",
+    "hero": false
+   },
+   {
+    "id": "plant3",
+    "category": "potted_plant",
+    "count": 1,
+    "material": "leaf_green",
+    "hero": false
+   }
+  ],
+  "relations": [
+   {
+    "a": "table1",
+    "rel": "beside",
+    "b": "table2"
+   },
+   {
+    "a": "table3",
+    "rel": "beside",
+    "b": "table4"
+   },
+   {
+    "a": "table1",
+    "rel": "in_front_of",
+    "b": "counter"
+   },
+   {
+    "a": "table3",
+    "rel": "in_front_of",
+    "b": "counter"
+   },
+   {
+    "a": "chair1",
+    "rel": "around",
+    "b": "table1"
+   },
+   {
+    "a": "chair2",
+    "rel": "around",
+    "b": "table1"
+   },
+   {
+    "a": "chair3",
+    "rel": "around",
+    "b": "table3"
+   },
+   {
+    "a": "chair4",
+    "rel": "around",
+    "b": "table3"
+   },
+   {
+    "a": "stool1",
+    "rel": "beside",
+    "b": "counter"
+   },
+   {
+    "a": "stool2",
+    "rel": "beside",
+    "b": "counter"
+   },
+   {
+    "a": "plant1",
+    "rel": "against_wall",
+    "b": "wall_north"
+   },
+   {
+    "a": "plant2",
+    "rel": "against_wall",
+    "b": "wall_south"
+   },
+   {
+    "a": "plant3",
+    "rel": "beside",
+    "b": "counter"
+   }
+  ],
+  "lighting": {
+   "engine": "cycles",
+   "samples": 128,
+   "sky": true,
+   "resolution": [
+    1920,
+    1080
+   ]
+  },
+  "camera": {
+   "position": [
+    2.5,
+    2.5,
+    1.5
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "fov": 75
+  }
+ }
+}
