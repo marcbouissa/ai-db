@@ -95,9 +95,10 @@ def focus_weights(spec: SceneSpec, placements: list[Placement]) -> dict[str, flo
             w += 2.0  # camera.focus: what the view is about
         if w > 0:
             out[p.id] = w
-    if not out:  # nothing marked: the largest objects
-        solid = sorted(placements, key=lambda p: -(p.dims[0] * p.dims[1] * p.dims[2]))[:3]
-        out = {p.id: 1.0 for p in solid}
+    if len(out) < 3:  # little marked (a warehouse's forklift): the largest objects too
+        solid = sorted((p for p in placements if p.id not in out and p.dims[2] > 0.05),
+                       key=lambda p: -(p.dims[0] * p.dims[1] * p.dims[2]))
+        out.update({p.id: 0.5 for p in solid[:3 - len(out)]})
     return out
 
 
@@ -191,14 +192,43 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
             if t < dist and _footprint_dist(x + vx * t, y + vy * t, p) < 0.05:
                 blocked += 1.0
                 break
-    score = (2.0 * framed + fronts / max(1.0, len(seen)) ** 0.5 + 0.4 * min(dist, 6.0) / 6.0
+    # how much of the picture the subject fills: a few racks in one corner of a 50 m hall seen
+    # from the far wall were specks (lightning aidb5 warehouse)
+    fill = min(1.0, max((ang[k] for k in seen), default=0.0) / half)
+    score = (2.0 * framed + fronts / max(1.0, len(seen)) ** 0.5 + 0.4 * min(dist, 6.0) / 6.0 + 0.8 * fill
              - (3.0 if clearance < _CLEAR_M else 0.0) - 1.0 * blocked)
     return View(x, y, z, aim, hfov_deg, score, seen, fronts)
 
 
+def near_spots(spec: SceneSpec, placements: list[Placement]) -> list[tuple[float, float]]:
+    """Spots round the focus objects, far enough to take them in at a medium lens: in a big room
+    the walls are too far from a small group."""
+    from ai_db_scene.shapes import RoomShape
+
+    by_id = {p.id: p for p in placements}
+    weights = focus_weights(spec, placements)
+    ax, ay, _az = _aim(by_id, weights)
+    reach = max((math.hypot(by_id[k].location[0] - ax, by_id[k].location[1] - ay)
+                 + max(by_id[k].dims[0], by_id[k].dims[1]) / 2 for k in weights), default=1.0)
+    w, d, _h = spec.setting.bounds_m
+    pts = tuple((float(p[0]), float(p[1])) for p in spec.setting.points)
+    shape = RoomShape(spec.setting.shape, w, d, pts) if spec.setting.shape != "polygon" or len(pts) >= 3 else None
+    solid = [p for p in placements if p.dims[2] > 0.05]
+    out = []
+    for r in (reach / math.tan(math.radians(35)) + 1.0, reach / math.tan(math.radians(25)) + 1.0):
+        for t in range(0, 360, 30):
+            x, y = ax + r * math.cos(math.radians(t)), ay + r * math.sin(math.radians(t))
+            inside = shape.contains(x, y, -_INSET_M) if shape is not None and spec.setting.shape != "rect" else (
+                _INSET_M <= x <= w - _INSET_M and _INSET_M <= y <= d - _INSET_M)
+            if inside and all(_footprint_dist(x, y, p) >= _CLEAR_M for p in solid):
+                out.append((x, y))
+    return out
+
+
 def best_views(spec: SceneSpec, placements: list[Placement], eye_m: float) -> list[View]:
-    """Every candidate spot at eye height, best first."""
-    views = [score_view(spec, placements, x, y, eye_m) for x, y in spots(spec, placements)]
+    """Every candidate spot at eye height (by the walls, and round the focus in a big room), best first."""
+    views = [score_view(spec, placements, x, y, eye_m)
+             for x, y in dict.fromkeys(spots(spec, placements) + near_spots(spec, placements))]
     return sorted(views, key=lambda v: -v.score)
 
 
