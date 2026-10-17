@@ -422,7 +422,9 @@ def _desk_rows(d: dict[str, Any], rels: list[Any], setting: dict[str, Any], prio
         if not boards or o.get("category") not in _ROW_DESKS or o.get("grid") is not None or _n(o) < _ROW_MIN:
             continue
         mine = [r for r in out if isinstance(r, dict) and r.get("a") == oid]
-        if any(r.get("rel") not in ("in_front_of", "facing") or r.get("b") not in boards for r in mine):
+        # in_row / beside the board (qwen aidb7: 'student_desk (12) in_row whiteboard', each build a
+        # conflict: twelve copies beside one wall-mounted board) reads as rows facing it too
+        if any(r.get("rel") not in ("in_front_of", "facing", "beside") or r.get("b") not in boards for r in mine):
             continue
         out = _merge_block(d, out, str(oid), [str(oid)], boards, board_wall, setting, prior, notes)
     return out
@@ -452,7 +454,7 @@ def _merge_block(d: dict[str, Any], rels: list[Any], base: str, members: list[st
         if a in keep and b in keep:
             continue  # the chain itself: the grid's rows
         r = {**r, "a": block if a in keep else a, "b": block if b in keep else b}
-        if r["a"] == block and r.get("rel") == "in_front_of" and r["b"] in boards:
+        if r["a"] == block and r.get("rel") in ("in_front_of", "beside") and r["b"] in boards:
             r = {"a": block, "rel": "facing", "b": r["b"]}  # the board's front is the teacher's place
         if r not in out:
             out.append(r)

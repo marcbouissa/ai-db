@@ -73,6 +73,18 @@ def test_desk_copies_in_front_of_the_board_become_rows():
     assert teacher.grid is None
 
 
+def test_desk_copies_in_a_row_by_the_board_become_rows():
+    # qwen3-14b-local-aidb7 classroom: every build a conflict (the room grown to 57 x 43 m)
+    raw = {**AIDB6, "relations": [{"a": "whiteboard", "rel": "on", "b": "front_wall"},
+                                  {"a": "teacher_desk", "rel": "against_wall", "b": "wall_north"},
+                                  {"a": "teacher_chair", "rel": "beside", "b": "teacher_desk", "gap_m": 0.6},
+                                  {"a": "student_desk", "rel": "in_row", "b": "whiteboard", "gap_m": 1.0},
+                                  {"a": "student_chair", "rel": "beside", "b": "student_desk", "gap_m": 0.5}]}
+    spec, block, desks, chairs, board = _rows(raw, "whiteboard")
+    assert block.id == "student_desk" and block.seats == 1 and spec.setting.bounds_m[:2] == (10, 8)
+    _check_rows(desks, chairs, board)
+
+
 def test_per_desk_chairs_beside_a_chain_merge_into_seats():
     # qwen aidb4 classroom: student_chair_i beside student_desk_i
     objs = [{"id": "board", "category": "whiteboard"}]
