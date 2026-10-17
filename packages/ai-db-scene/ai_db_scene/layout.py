@@ -879,8 +879,12 @@ class _Problem:
         def anchored(i: str) -> bool:
             return any(r.rel in ("against_wall", "centered_in") for r in self.by_a.get(i, []))
 
+        def shore_rank(i: str) -> int:  # outdoors: the shore groups before decoration (terrain.rank)
+            return 1 if self.terrain is None else self.terrain.rank(self.insts[i].base)
+
         # wall/center-anchored objects first (they have the fewest legal poses), then hero, then big
-        key = lambda i: (not anchored(i), not self.insts[i].hero, -self.insts[i].dims[0] * self.insts[i].dims[1], i)
+        key = lambda i: (not anchored(i), shore_rank(i), not self.insts[i].hero,
+                         -self.insts[i].dims[0] * self.insts[i].dims[1], i)
         while left:
             ready = sorted((i for i in left if deps[i] <= set(done)), key=key)
             if not ready:

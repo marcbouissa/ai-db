@@ -41,6 +41,10 @@ TERRAIN_RELS = ("at_edge_of", "near", "in", "leads_to", "back_of", "facing")
 FACES_WATER = ("sun_lounger", "parasol", "bench", "chair", "armchair", "picnic_table", "gazebo")
 #: categories that belong on / over the water when asked to lead there
 OVER_WATER = ("boardwalk",)
+#: trees frame the scene: at the sides or the back, not on the beach strip in front of the group
+FRAMING = ("palm_tree", "tree")
+_FRAME_COST = 0.6
+_FRAME_SIDES = 0.65  # beyond this share of the half-length from the shore's middle a tree frames it
 
 #: what models write for a ground -> its kind (category, floor_material or an object's material)
 GROUND_ALIASES: dict[str, str] = {
@@ -731,7 +735,33 @@ class Terrain:
             f = (math.sin(yaw), -math.cos(yaw))
             n = self.to_water(x, y)
             c += 0.8 * (1 - (f[0] * n[0] + f[1] * n[1])) / 2
-        return c
+        return c + self.frame_cost(oid, x, y)
+
+    def rank(self, oid: str) -> int:
+        """Placement order outdoors: 0 the shore groups (a parasol and the loungers under it, what
+        else faces the water, a boardwalk, objects at the water's edge or in it), 1 the rest
+        (trees, bushes: the solver's usual hero / size order). Bench beach_cove (qwen aidb6 demo):
+        five hero palms, placed first as the largest objects, took the beach strip the loungers
+        wanted, and the group stood at the back."""
+        cat = self.cats.get(oid)
+        rels = self.rels.get(oid, [])
+        if self.water is not None and (any(r in rels for r in ("at_edge_of", "in", "leads_to"))
+                                       or cat in FACES_WATER or cat in OVER_WATER):
+            return 0
+        return 1
+
+    def frame_cost(self, oid: str, x: float, y: float) -> float:
+        """A tree with no place of its own stands at the sides or along the back, framing the beach,
+        not in the middle of the strip in front of the water."""
+        if self.water is None or self.water.side is None or self.cats.get(oid) not in FRAMING \
+                or any(r in self.rels.get(oid, []) for r in ("at_edge_of", "in", "leads_to", "near", "back_of")):
+            return 0.0
+        a, _v = self._to_side(x, y)
+        length, _depth = self._side_frame()
+        u = abs(a - length / 2) / (length / 2)
+        back, top, s = self.back_at(x, y), self.dry(), self.signed(x, y)
+        front = min(max((s - back) / max(top - back, 1e-6), 0.0), 1.0)  # 0 at the back edge, 1 at the dry line
+        return _FRAME_COST * max(0.0, 1 - u / _FRAME_SIDES) * front
 
     def dry(self) -> float:
         """Signed distance where the dry land ends (land objects stay on the land side of it)."""
