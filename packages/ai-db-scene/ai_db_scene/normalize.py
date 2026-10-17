@@ -170,6 +170,8 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     shape = setting.get("shape", "rect")
     indoor = setting.get("kind") == "indoor"
     objs = [o for o in d.get("objects") or [] if isinstance(o, dict)] if isinstance(d.get("objects"), list) else []
+    if isinstance(raw_setting, dict) and setting.get("bounds_m") is None and setting.get("kind") in ("indoor", "outdoor"):
+        _content_bounds(setting, objs, notes)
     ids = {o["id"] for o in objs if isinstance(o.get("id"), str)}
     priors = load_priors()
     cat = {o["id"]: o.get("category") for o in objs if isinstance(o.get("id"), str)}
@@ -241,9 +243,15 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     if indoor:
         out = _desk_rows(d, out, setting, prior, notes)
         objs = [o for o in d.get("objects") or [] if isinstance(o, dict)]
-        out = _seating_group(out, objs, setting, notes)
+        out = _seating_group(out, objs, setting, notes, d)
+    if indoor:
+        out = _rack_rows(d, out, notes)
+        out = _counters(d, out, setting, notes)
+        out = _teacher_desk(d, out, notes)
     out = _seats(d, out, objs, notes)
+    out = _pair_seats(d, out, notes)
     objs = [o for o in d.get("objects") or [] if isinstance(o, dict)]
+    _round_ids(objs, notes)
     _spread_centered(out, objs, setting, prior, notes)
     if indoor:
         out = _ceiling_centres(out, objs, prior, notes)
@@ -567,6 +575,270 @@ def _seats(d: dict[str, Any], rels: list[Any], objs: list[dict[str, Any]], notes
     return rels
 
 
+#: relations a chair writes for "the chair at that table"
+_AT_TABLE_RELS = ("beside", "in_front_of", "around", "facing", "behind", "under")
+#: tables the pairing seats chairs at besides layout.SEAT_CATEGORY's (a cafe table written as coffee_table)
+_PAIR_TABLES = ("coffee_table", "side_table")
+#: walkway between two seated tables written ``beside`` each other (m): chairs back to back need it
+_TABLE_WALKWAY_M = 0.9
+#: kitchen pieces: with these a counter is a kitchen counter, not a cafe's
+_KITCHEN = ("stove", "oven", "sink", "refrigerator", "dishwasher", "kitchen_island")
+
+
+def _prefix(oid: str) -> str:
+    return oid.split("_")[0]
+
+
+#: floor area per m2 of furniture footprint: the furniture plus walkways round it
+_CIRCULATION = {"indoor": 3.5, "outdoor": 4.5}
+_MIN_SIDE_M = 3.0
+
+
+def _content_bounds(setting: dict[str, Any], objs: list[dict[str, Any]], notes: list[str]) -> None:
+    """A setting with no ``bounds_m`` is sized to its content plus circulation (4:3, at least
+    3 m a side, the ceiling above the tallest piece) instead of being refused: a room picked
+    "big enough" was mostly empty floor (aidb7 living room, lobby, warehouse)."""
+    priors = load_priors()
+    area, tallest, longest = 0.0, 0.0, 0.0
+    for o in objs:
+        p = priors.get(o.get("category"))  # type: ignore[arg-type]
+        if p is None or p.support == "ceiling" or p.mount_height_m:
+            continue
+        w, dd, h = p.typical_m
+        n = _n(o)
+        seats = o.get("seats")
+        area += n * (w * dd + (seats if isinstance(seats, int) else 0) * 0.5)
+        tallest, longest = max(tallest, h), max(longest, w)
+    if area <= 0:
+        return
+    floor = area * _CIRCULATION[setting["kind"]]
+    aspect = 4 / 3 if setting.get("shape", "rect") == "rect" else 1.0  # a round room: a circle
+    x = max(_MIN_SIDE_M, longest + 1.5, math.sqrt(floor * aspect))
+    y = max(_MIN_SIDE_M, floor / x)
+    z = max(2.7, tallest + 0.5) if setting["kind"] == "indoor" else max(6.0, tallest + 1.0)
+    setting["bounds_m"] = [round(x, 1), round(y, 1), round(z, 1)]
+    notes.append(f"setting.bounds_m: none given; sized to the content: {setting['bounds_m']} "
+                 "(the furniture's footprint plus walkways)")
+
+
+#: forklift aisle between two rack rows (m): a 2.8 m forklift turned into a rack with room behind
+_RACK_AISLE_M = 4.0
+#: rack rows / staging grid spacing (m)
+_RACK_END_GAP_M = 0.1
+_PALLET_GAP_M = 0.3
+
+
+def _rack_rows(d: dict[str, Any], rels: list[Any], notes: list[str]) -> list[Any]:
+    """Pallet racks as two rows facing each other across a forklift aisle, the forklift in the
+    aisle, loose pallets as a staging grid beside the racks (crates ``on`` them stand one per pallet).
+
+    Bench (qwen aidb7 warehouse, "four pallet racks in rows"): ``pallet_rack (4) in_row`` became
+    one back-to-back line of racks, the eight pallets lay scattered over the floor and the forklift
+    stood at the end of the line. Only racks/pallets/forklift the model left loose are rewritten."""
+    objs = [o for o in d.get("objects") or [] if isinstance(o, dict) and isinstance(o.get("id"), str)]
+    racks = [o for o in objs if o.get("category") == "pallet_rack"]
+    if len(racks) != 1 or _n(racks[0]) < 3:
+        return rels
+    rack = racks[0]
+    rid, n = rack["id"], _n(rack)
+    mine = [r for r in rels if isinstance(r, dict) and r.get("a") == rid and r.get("b") != rid]
+    g = rack.get("grid")
+    if mine or (isinstance(g, dict) and g.get("rows", 1) > 1):
+        return rels  # the model placed the racks itself
+    ids = {o["id"] for o in objs}
+    row1, row2 = f"{rid}_row_a", f"{rid}_row_b"
+    if row1 in ids or row2 in ids:
+        return rels
+    n1 = (n + 1) // 2
+    base = {k: v for k, v in rack.items() if k not in ("count", "grid", "id")}
+    rows = [{**base, "id": row1, "grid": {"rows": 1, "cols": n1, "gap_m": [_RACK_END_GAP_M, 0.5]}},
+            {**base, "id": row2, "grid": {"rows": 1, "cols": n - n1, "gap_m": [_RACK_END_GAP_M, 0.5]}}]
+    if n - n1 == 1:
+        rows[1].pop("grid")
+    at = d["objects"].index(rack)
+    d["objects"][at:at + 1] = rows
+    out = [r for r in rels if not (isinstance(r, dict) and r.get("a") == rid)]
+    out = [{**r, "b": row1} if isinstance(r, dict) and r.get("b") == rid else r for r in out]
+    out += [{"a": row1, "rel": "centered_in", "b": "room"},
+            {"a": row2, "rel": "in_front_of", "b": row1, "gap_m": _RACK_AISLE_M}]
+    notes.append(f"'{rid}' ({n}) laid out as two rows '{row1}' / '{row2}' facing each other across a "
+                 f"{_RACK_AISLE_M:g} m forklift aisle")
+    for o in objs:
+        oid, cat = o["id"], o.get("category")
+        loose = [r for r in out if isinstance(r, dict) and r.get("a") == oid]
+        if cat == "forklift" and _n(o) == 1 and all(r.get("rel") in ("beside", "facing") for r in loose):
+            out = [r for r in out if r not in loose] + [{"a": oid, "rel": "in_front_of", "b": row1, "gap_m": 0.6}]
+            notes.append(f"'{oid}' in_front_of {row1}: the forklift works in the aisle")
+        if cat == "pallet" and o.get("grid") is None and _n(o) >= 2 and not loose:
+            k = _n(o)
+            cols = next(c for c in (4, 3, 2, 5, 1) if k % c == 0 and c <= k)
+            o["grid"] = {"rows": k // cols, "cols": cols, "gap_m": [_PALLET_GAP_M, _PALLET_GAP_M]}
+            o.pop("count", None)
+            out.append({"a": oid, "rel": "beside", "b": row1, "gap_m": 1.5})
+            notes.append(f"'{oid}' ({k}) as a {k // cols}x{cols} staging grid beside {row1}")
+    return out
+
+
+def _pair_seats(d: dict[str, Any], rels: list[Any], notes: list[str]) -> list[Any]:
+    """Chairs written one by one at single tables become the tables' ``seats``.
+
+    Bench aidb7: lightning wrote chair1..chair8 each ``beside table<k>`` (cafe) and the chairs
+    stood in a loose ring, the tables pushed together; qwen wrote ``chair1 (count 2) beside
+    table1``; both classrooms had a ``teacher_chair`` with no relation (it stood stranded by the
+    wall). A chair object whose relations all point at one single table (or that has none and
+    shares the table's name, teacher_chair / teacher_desk) becomes a seat of that table; a cafe
+    table written as coffee_table with dining chairs becomes a dining_table (chair height)."""
+    from ai_db_scene.layout import SEAT_CATEGORY
+    from ai_db_scene.spec import MAX_SEATS
+
+    objs = [o for o in d.get("objects") or [] if isinstance(o, dict) and isinstance(o.get("id"), str)]
+    tables = {o["id"]: o for o in objs if (o.get("category") in SEAT_CATEGORY or o.get("category") in _PAIR_TABLES)
+              and o.get("grid") is None and _n(o) == 1 and not o.get("seats")}
+    if not tables:
+        return rels
+    by_prefix: dict[str, list[str]] = {}
+    for t in tables:
+        by_prefix.setdefault(_prefix(t), []).append(t)
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for c in objs:
+        cid = c["id"]
+        if c.get("grid") is not None or c.get("seats") or c["id"] in tables:
+            continue
+        mine = [r for r in rels if isinstance(r, dict) and r.get("a") == cid]
+        if any(isinstance(r, dict) and r.get("b") == cid for r in rels):
+            continue  # something is placed relative to the chair: leave it
+        targets = {r.get("b") for r in mine}
+        named = by_prefix.get(_prefix(cid), [])
+        if c.get("category") in _SEAT_CATS and mine and all(r.get("rel") in _AT_TABLE_RELS for r in mine) \
+                and len(targets) == 1 and next(iter(targets)) in tables:
+            groups.setdefault(str(next(iter(targets))), []).append(c)
+        elif c.get("category") in (*_SEAT_CATS, "armchair") and not mine and len(named) == 1 \
+                and _prefix(cid) != cid and tables[named[0]].get("category") in SEAT_CATEGORY:
+            groups.setdefault(named[0], []).append(c)
+    for tid, chairs in groups.items():
+        t = tables[tid]
+        cats = {c["category"] for c in chairs}
+        n = sum(_n(c) for c in chairs)
+        if len(cats) != 1 or not 1 <= n <= MAX_SEATS:
+            continue
+        cat = cats.pop()
+        if cat == "armchair":  # lightning aidb7: a teacher's armchair at the desk
+            notes.append(f"{sorted(c['id'] for c in chairs)}: armchair at a desk read as office_chair")
+            cat = "office_chair"
+        if t["category"] in _PAIR_TABLES and cat in ("chair", "dining_chair"):
+            notes.append(f"'{tid}': coffee_table with dining chairs read as dining_table (a table you sit at)")
+            t["category"] = "dining_table"
+        t["seats"] = n
+        if cat != SEAT_CATEGORY.get(t["category"]):
+            t["seat_category"] = cat
+        ids = {c["id"] for c in chairs}
+        d["objects"] = [o for o in d["objects"] if not (isinstance(o, dict) and o.get("id") in ids)]
+        rels = [r for r in rels if not (isinstance(r, dict) and r.get("a") in ids)]
+        if isinstance(d.get("camera"), dict) and d["camera"].get("focus") in ids:
+            d["camera"]["focus"] = tid
+        notes.append(f"{sorted(ids)} ({n} {cat}) became seats of '{tid}': the chairs stand at it, facing it")
+    seated = {o.get("id") for o in d.get("objects") or [] if isinstance(o, dict) and o.get("seats")
+              and o.get("grid") is None and _n(o) == 1}
+    for r in rels:  # two seated tables side by side: a walkway between their chairs
+        if isinstance(r, dict) and r.get("rel") == "beside" and r.get("a") in seated and r.get("b") in seated \
+                and r.get("gap_m") is None:
+            r["gap_m"] = _TABLE_WALKWAY_M
+            notes.append(f"'{r['a']} beside {r['b']}': {_TABLE_WALKWAY_M} m apart (a walkway between their chairs)")
+    return rels
+
+
+def _counters(d: dict[str, Any], rels: list[Any], setting: dict[str, Any], notes: list[str]) -> list[Any]:
+    """A cafe counter with bar stools: a bar counter against a wall (lightning aidb7 wrote a
+    kitchen_counter, qwen a free-standing bar_counter that stood mid-room like an island), the
+    stools ``beside`` it become its seats along its front."""
+    objs = [o for o in d.get("objects") or [] if isinstance(o, dict) and isinstance(o.get("id"), str)]
+    cats = {o.get("category") for o in objs}
+    stools = {o["id"] for o in objs if o.get("category") == "bar_stool"}
+    if not stools or cats & set(_KITCHEN):
+        return rels
+    for o in objs:
+        oid = o["id"]
+        linked = any(isinstance(r, dict) and {r.get("a"), r.get("b")} & stools and oid in (r.get("a"), r.get("b"))
+                     for r in rels)
+        if o.get("category") == "kitchen_counter" and linked and _n(o) == 1:
+            o["category"] = "bar_counter"
+            notes.append(f"'{oid}': kitchen_counter with bar stools read as bar_counter (a cafe's service counter)")
+        if o.get("category") != "bar_counter" or _n(o) != 1 or o.get("grid") is not None \
+                or setting.get("shape", "rect") != "rect":
+            continue
+        mine = [r for r in rels if isinstance(r, dict) and r.get("a") == oid]
+        if any(r.get("rel") in ("against_wall", "on", "centered_in", "in_front_of", "beside", "around") for r in mine):
+            continue
+        used = [r.get("b") for r in rels if isinstance(r, dict) and r.get("rel") == "against_wall"]
+        wall = min(_RECT_WALLS, key=lambda w: (used.count(w), _RECT_WALLS.index(w)))
+        rels = [*rels, {"a": oid, "rel": "against_wall", "b": wall}]
+        notes.append(f"'{oid}' against_wall {wall}: a service counter stands at a wall, its stools in front")
+    return rels
+
+
+def _teacher_desk(d: dict[str, Any], rels: list[Any], notes: list[str]) -> list[Any]:
+    """In a classroom the teacher's desk stands at the front, before the board, the teacher behind
+    it facing the class (lightning aidb7 put it against the back wall, behind the students)."""
+    objs = [o for o in d.get("objects") or [] if isinstance(o, dict) and isinstance(o.get("id"), str)]
+    boards = [o["id"] for o in objs if o.get("category") in _BOARDS and _n(o) == 1]
+    rows = [o["id"] for o in objs if o.get("category") in _ROW_DESKS and (o.get("grid") is not None or _n(o) >= _ROW_MIN)]
+    singles = [o["id"] for o in objs if o.get("category") in _ROW_DESKS and o.get("grid") is None and _n(o) == 1]
+    if len(boards) != 1 or not rows or len(singles) != 1:
+        return rels
+    tid, board = singles[0], boards[0]
+    mine = [r for r in rels if isinstance(r, dict) and r.get("a") == tid]
+    if any(r.get("b") == board for r in mine) or any(r.get("rel") not in ("against_wall", "facing", "beside")
+                                                     for r in mine):
+        return rels
+    old = [" ".join(str(r.get(k)) for k in ("a", "rel", "b")) for r in mine]
+    rels = [r for r in rels if r not in mine] + [{"a": tid, "rel": "in_front_of", "b": board, "gap_m": 0.4}]
+    notes.append(f"'{tid}' in_front_of {board}" + (f" instead of {old}" if old else "")
+                 + " (the teacher's desk stands at the front, the teacher behind it facing the class)")
+    return rels
+
+
+def _round_ids(objs: list[dict[str, Any]], notes: list[str]) -> None:
+    """``round_table`` / ``cafe_table_round``: the id says the top is round."""
+    from ai_db_scene.spec import TABLE_CATEGORIES
+
+    for o in objs:
+        if o.get("category") in TABLE_CATEGORIES and "shape" not in o and isinstance(o.get("id"), str) \
+                and re.search(r"(^|_)(round|circular)(_|$)", o["id"]):
+            o["shape"] = "round"
+            notes.append(f"'{o['id']}': shape 'round' (its name says so)")
+
+
+#: "round tables", "circular dining tables" in a brief
+_ROUND_TABLES = re.compile(r"\b(?:round|circular)\s+(?:(coffee|side|dining|cafe|bistro|conference)\s+)?tables?\b",
+                           re.IGNORECASE)
+
+
+def table_shape_from_brief(data: Any, brief: Any) -> tuple[Any, str | None]:
+    """(spec, note): "four round tables" in the brief gives the spec's tables a round top
+    (lightning and qwen aidb7 cafes built rectangular ones). A named kind ("round coffee table")
+    rounds that kind only; otherwise the tables people sit at (dining, conference), or every
+    table when those are all there is. A table with its own ``shape`` keeps it."""
+    from ai_db_scene.spec import TABLE_CATEGORIES
+
+    m = _ROUND_TABLES.search(brief) if isinstance(brief, str) else None
+    objs = data.get("objects") if isinstance(data, dict) else None
+    if m is None or not isinstance(objs, list):
+        return data, None
+    tables = [o for o in objs if isinstance(o, dict) and o.get("category") in TABLE_CATEGORIES]
+    kind = (m.group(1) or "").lower()
+    if kind in ("coffee", "side", "dining", "conference"):
+        pick = [o for o in tables if o.get("category") == f"{kind}_table"]
+    else:
+        pick = [o for o in tables if o.get("category") in ("dining_table", "conference_table")] or tables
+    pick = [o for o in pick if "shape" not in o]
+    if not pick:
+        return data, None
+    ids = {id(o) for o in pick}
+    out = {**data, "objects": [{**o, "shape": "round"} if id(o) in ids else o for o in objs]}
+    names = [str(o.get("id")) for o in pick]
+    return out, f"objects {names}: shape 'round' (the brief asks for {m.group(0).lower()})"
+
+
 def _spread_centered(rels: list[Any], objs: list[dict[str, Any]], setting: dict[str, Any], prior: Any,
                      notes: list[str]) -> None:
     """``ceiling_lights (count 6) centered_in room``: six copies cannot share the centre (bench:
@@ -605,7 +877,8 @@ _CHAIR_TABLE_GAP_M = 0.35
 _LOOSE_CHAIR_RELS = ("beside", "facing", "in_front_of", "centered_in", "around")
 
 
-def _seating_group(rels: list[Any], objs: list[dict[str, Any]], setting: dict[str, Any], notes: list[str]) -> list[Any]:
+def _seating_group(rels: list[Any], objs: list[dict[str, Any]], setting: dict[str, Any], notes: list[str],
+                   d: dict[str, Any] | None = None) -> list[Any]:
     """A living-room seating group: the sofa anchors it against a wall, the coffee table stands
     centred in front of it, the rug lies centred under the table, armchairs sit at the table's
     short ends facing it and the TV stand stands against the opposite wall facing the sofa.
@@ -677,7 +950,13 @@ def _seating_group(rels: list[Any], objs: list[dict[str, Any]], setting: dict[st
                 not any(isinstance(r, dict) and r.get("b") == rid for r in out):
             replace(rid, [{"a": rid, "rel": "centered_in", "b": table}], "the rug lies centred under the coffee table")
             break
-    # 5. armchairs at the coffee table's short ends, facing it
+    # 5. armchairs at the coffee table's short ends, facing it. ``armchair (count 2) beside sofa``
+    # (qwen aidb7) is the same pair: it becomes armchair_1 / armchair_2 (the ids its copies get)
+    pair = by_cat.get("armchair", [])
+    if len(pair) == 1 and pair[0].get("grid") is None and pair[0].get("count") == 2 \
+            and all(r.get("rel") in _LOOSE_CHAIR_RELS and r.get("b") in (sofa, table, stand, "room")
+                    for r in mine(pair[0]["id"])):
+        _split_pair(pair[0], objs, out, by_cat, notes, d)
     chairs = [o["id"] for o in by_cat.get("armchair", []) if _n(o) == 1]
     if len(chairs) in (1, 2) and all(all(r.get("rel") in _LOOSE_CHAIR_RELS and r.get("b") in (sofa, table, stand, "room", *chairs)
                                          for r in mine(c)) for c in chairs):
@@ -687,10 +966,37 @@ def _seating_group(rels: list[Any], objs: list[dict[str, Any]], setting: dict[st
     return out
 
 
+def _split_pair(o: dict[str, Any], objs: list[dict[str, Any]], rels: list[Any], by_cat: dict[str, list[dict[str, Any]]],
+                notes: list[str], d: dict[str, Any] | None) -> None:
+    """One object with count 2 becomes two objects named like its copies (``<id>_1``, ``<id>_2``);
+    its relations (as a) are duplicated, relations to it (as b) go to the first copy."""
+    oid = o["id"]
+    copies = []
+    for k in (1, 2):
+        c = {key: v for key, v in o.items() if key != "count"}
+        c["id"], c["count"] = f"{oid}_{k}", 1
+        copies.append(c)
+    for lst in (objs, d.get("objects") if d is not None else None):
+        if isinstance(lst, list) and o in lst:
+            at = lst.index(o)
+            lst[at:at + 1] = copies
+    by_cat[o["category"]] = [c for c in by_cat[o["category"]] if c is not o] + copies
+    new: list[Any] = []
+    for r in rels:
+        if isinstance(r, dict) and r.get("a") == oid:
+            new += [{**r, "a": c["id"]} for c in copies]
+        elif isinstance(r, dict) and r.get("b") == oid:
+            new.append({**r, "b": copies[0]["id"]})
+        else:
+            new.append(r)
+    rels[:] = new
+    notes.append(f"seating group: '{oid}' (count 2) split into '{oid}_1' and '{oid}_2', one for each end of the coffee table")
+
+
 #: never closer than this from the sofa's front to the TV stand's (m), nor a narrower walkway behind it
 _VIEW_MIN_M = 2.0
 _WALKWAY_M = 0.6
-_FLOAT_MAX_M = 1.5
+_FLOAT_MAX_M = 2.0
 
 
 def _float_sofa(rels: list[Any], sofa: str, stand: str, wall: str, bounds: Any, by_cat: dict[str, list[dict[str, Any]]],

@@ -880,6 +880,23 @@ def _variation(spec: SceneSpec, family: str, base_id: str, key: list[Any] | None
     return out
 
 
+#: recipes with their own finish (painted steel, wood, cardboard loads): a plain material of
+#: these kinds on them means "made of that", not "repaint it all" (qwen aidb7 warehouse: "metal"
+#: racks and forklift came out chrome, loads and all)
+_OWN_FINISH: dict[str, tuple[str, ...]] = {
+    "pallet_rack": ("metal", "steel", "chrome"), "forklift": ("metal", "steel", "chrome"),
+    "safety_barrier": ("metal", "steel", "chrome"), "conveyor": ("metal", "steel", "chrome"),
+    "shelving_unit": ("metal", "steel", "chrome"), "workbench": ("metal", "steel", "chrome", "wood"),
+    "pallet": ("wood",), "crate": ("wood",)}
+
+
+def _plain_finish(category: str, material: str | None) -> bool:
+    """Is ``material`` a plain kind (no tint) that the category's recipe already shows?"""
+    if not material or "#" in material or category not in _OWN_FINISH:
+        return False
+    return material.split(":")[0] in _OWN_FINISH[category]
+
+
 GEOMETRY_MODES = ("generated", "boxes")
 #: recipe categories built with a per-object seed (recipes._VARIANTS): every rock its own shape
 _SEEDED_RECIPES = ("rock",)
@@ -1102,6 +1119,8 @@ def build_layout_commands(
             else:
                 family, params = _GENERATED[pl.category]
                 gen = {"family": family, "params": params(*pl.dims), **_variation(spec, family, base, plain_key)}
+            if gen["family"] == "table" and ospec is not None and ospec.shape:  # "round tables": a round top
+                gen["params"] = {**gen["params"], "top_shape": ospec.shape}
             cmds.append({"type": "generate_asset", "params": {
                 **gen, "name": pl.id,
                 "location": [loc[0], loc[1], loc[2] - pl.dims[2] / 2],  # base centre
@@ -1116,6 +1135,8 @@ def build_layout_commands(
                 pl.category, pl.id, pl.dims, seed=pl.id if pl.category in _SEEDED_RECIPES else None)}})
             if pl.category in _SEEDED_RECIPES and materials.get(base) == "stone":
                 materials[base] = None  # plain stone: keep each rock's own tones
+            if _plain_finish(pl.category, materials.get(base)):
+                materials[base] = None  # "metal" racks: the recipe's painted steel, not chrome all over
             cmds.append({"type": "modify_object", "params": {
                 "name": pl.id, "location": [loc[0], loc[1], loc[2] - pl.dims[2] / 2],
                 "rotation": [0.0, 0.0, pl.rotation_deg_z]}})
@@ -1325,7 +1346,7 @@ def camera_poses(spec: SceneSpec, placements: list[Placement], off: tuple[float,
             shift = dz / max(math.hypot(dx, dy), 0.5) * lens / 36.0
             shift = max(-SCENE_CAMERA_MAX_SHIFT, min(SCENE_CAMERA_MAX_SHIFT, shift))
             poses.append({"location": _shift((v.x, v.y, height), off), "rotation": [90.0, 0.0, round(v.yaw_deg, 2)],
-                          "name": "ai_db_camera", "lens": lens, "shift_y": round(shift, 4)})
+                          "name": "ai_db_camera", "lens": lens, "shift_y": round(shift, 4), "expect": list(v.seen)})
     return poses
 
 
@@ -1357,7 +1378,7 @@ def camera_command(spec: SceneSpec, placements: list[Placement], off: tuple[floa
         direction = [0.8, -1.0, 0.5] if spec.setting.kind == "single_asset" else [0.6, -1.0, 0.7]
         return {"type": "frame_camera", "params": {"direction": direction, "margin": 1.2, "lens": 50}}
     pose = camera_poses(spec, placements, off)[0]
-    return {"type": "set_camera", "params": {k: v for k, v in pose.items() if k != "shift_y"}}
+    return {"type": "set_camera", "params": {k: v for k, v in pose.items() if k not in ("shift_y", "expect")}}
 
 
 def camera_shift_command(spec: SceneSpec, placements: list[Placement], off: tuple[float, float, float]) -> \
@@ -1438,19 +1459,30 @@ def pose(p):
 if cam is None:
     result = {{"skipped": "no scene camera"}}
 else:
+    # the poses come best view first: take the first one in which nothing hides the targets it
+    # frames ("expect": what camera.py has in frame). Asking every pose for every target took
+    # the 6th pose of the aidb7 living room, from behind the sofa: a view of the sofa's front
+    # from the TV side cannot have the TV in it.
+    def good(got, p):
+        exp = [t for t in p.get("expect", list(points)) if t in points] or list(points)
+        miss = sum(1 for t in exp if t not in got[1])
+        return got[0] and miss <= (0 if len(exp) <= 3 else max(1, len(exp) // 8))
+
     best = (*score(), 0)
     tried = 1
-    if not (best[0] and len(best[1]) == len(points)):
+    if not good(best, cfg["poses"][0]):
         for k, p in enumerate(cfg["poses"][1:], 1):
             pose(p)
             got = (*score(), k)
             tried += 1
             if (got[0], len(got[1])) > (best[0], len(best[1])):
                 best = got
-            if got[0] and len(got[1]) == len(points):
+            if good(got, p):
+                best = got
                 break
         pose(cfg["poses"][best[2]])
-    result = {{"inside": best[0], "visible_heroes": best[1], "targets": sorted(points), "tried": tried, "pose": best[2]}}
+    result = {{"inside": best[0], "visible_heroes": best[1], "targets": sorted(points), "tried": tried, "pose": best[2],
+               "expect": [t for t in cfg["poses"][best[2]].get("expect", list(points)) if t in points]}}
 """
 
 
@@ -1479,12 +1511,14 @@ def camera_check(spec: SceneSpec, placements: list[Placement]) -> dict[str, Any]
 def camera_issue(cam: dict[str, Any]) -> dict[str, Any] | None:
     if "inside" not in cam:
         return None
-    missing = sorted(set(cam.get("targets", [])) - set(cam.get("visible_heroes", [])))
+    # targets the chosen view frames ("expect") and does not see: hidden behind something. A TV
+    # behind a camera that looks at the sofa's front is out of frame by choice, not an issue
+    missing = sorted(set(cam.get("expect") or cam.get("targets", [])) - set(cam.get("visible_heroes", [])))
     if cam["inside"] and not missing:
         return None
     where = "" if cam["inside"] else "camera outside the room; "
     return {"check": "camera", "severity": "warning", "objects": missing, "fix": None,
-            "message": f"{where}not visible from any of {cam.get('tried')} camera spots: {', '.join(missing) or '-'}"}
+            "message": f"{where}hidden from the camera ({cam.get('tried')} spots tried): {', '.join(missing) or '-'}"}
 
 
 # --- handlers ------------------------------------------------------------------
@@ -1740,7 +1774,7 @@ def lift_build_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
 
 def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
     from ai_db_scene.constants import BUILD_FIX_ROUNDS, BUILD_MAX_REPAIRS
-    from ai_db_scene.normalize import room_shape_from_brief
+    from ai_db_scene.normalize import room_shape_from_brief, table_shape_from_brief
     from ai_db_scene.repair import solve_with_repairs
     from ai_db_scene.terrain import water_from_brief
 
@@ -1751,7 +1785,8 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
         raw0 = raw
         raw, shape_note = room_shape_from_brief(raw, brief)  # "a round lobby" with no setting.shape: an ellipse
         raw, water_note = water_from_brief(raw, brief)  # "turquoise water" with water left implicit: a lagoon
-        brief_notes = [n for n in (shape_note, water_note) if n]
+        raw, table_note = table_shape_from_brief(raw, brief)  # "four round tables": round tops
+        brief_notes = [n for n in (shape_note, water_note, table_note) if n]
         if raw is not raw0:
             args = {**{k: v for k, v in args.items() if k not in SPEC_KEYS}, "spec": raw}
     spec, errors = _spec_from_args(args, remembered=True)

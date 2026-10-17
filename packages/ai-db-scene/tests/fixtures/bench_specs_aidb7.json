@@ -1,0 +1,2483 @@
+{
+ "source": {
+  "raw/qwen/living_room": "bench/qwen3-14b-local-aidb7/living_room/transcript.jsonl: the first build_scene call that built (its spec and brief)",
+  "raw/qwen/classroom": "bench/qwen3-14b-local-aidb7/classroom/transcript.jsonl: the first build_scene call that built (its spec and brief)",
+  "raw/qwen/cafe": "bench/qwen3-14b-local-aidb7/cafe/transcript.jsonl: the first build_scene call that built (its spec and brief)",
+  "raw/qwen/warehouse": "bench/qwen3-14b-local-aidb7/warehouse/transcript.jsonl: the first build_scene call that built (its spec and brief)",
+  "raw/qwen/round_lobby": "bench/qwen3-14b-local-aidb7/round_lobby/transcript.jsonl: the first build_scene call that built (its spec and brief)",
+  "raw/lightning/living_room": "bench/nemotron-3.5-lightning-free-aidb7/living_room/transcript.jsonl: the first build_scene call that built (its spec and brief)",
+  "raw/lightning/classroom": "bench/nemotron-3.5-lightning-free-aidb7/classroom/transcript.jsonl: the first build_scene call that built (its spec and brief)",
+  "raw/lightning/cafe": "bench/nemotron-3.5-lightning-free-aidb7/cafe/transcript.jsonl: the first build_scene call that built (its spec and brief)",
+  "raw/lightning/round_lobby": "bench/nemotron-3.5-lightning-free-aidb7/round_lobby/transcript.jsonl: the first build_scene call that built (its spec and brief)",
+  "last/qwen/living_room": "bench/qwen3-14b-local-aidb7/living_room/aidb/scene_memory.db: last version (blender-1792200571-a506f1) spec",
+  "last/qwen/classroom": "bench/qwen3-14b-local-aidb7/classroom/aidb/scene_memory.db: last version (blender-1792202890-42a962) spec",
+  "last/qwen/cafe": "bench/qwen3-14b-local-aidb7/cafe/aidb/scene_memory.db: last version (blender-1792201430-710264) spec",
+  "last/qwen/warehouse": "bench/qwen3-14b-local-aidb7/warehouse/aidb/scene_memory.db: last version (blender-1792203136-a17353) spec",
+  "last/qwen/round_lobby": "bench/qwen3-14b-local-aidb7/round_lobby/aidb/scene_memory.db: last version (blender-1792202798-5b19f1) spec",
+  "last/lightning/living_room": "bench/nemotron-3.5-lightning-free-aidb7/living_room/aidb/scene_memory.db: last version (blender-1792201150-95cc97) spec",
+  "last/lightning/classroom": "bench/nemotron-3.5-lightning-free-aidb7/classroom/aidb/scene_memory.db: last version (blender-1792202841-036814) spec",
+  "last/lightning/cafe": "bench/nemotron-3.5-lightning-free-aidb7/cafe/aidb/scene_memory.db: last version (blender-1792202447-60d127) spec",
+  "last/lightning/round_lobby": "bench/nemotron-3.5-lightning-free-aidb7/round_lobby/aidb/scene_memory.db: last version (blender-1792203268-28008f) spec"
+ },
+ "raw/qwen/living_room": {
+  "brief": "A cozy living room: a sofa facing a TV on a TV stand, a coffee table in front of the sofa on a rug, two armchairs and a floor lamp.",
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     6,
+     6,
+     3
+    ],
+    "floor_material": "wood",
+    "wall_material": "drywall"
+   },
+   "objects": [
+    {
+     "id": "sofa",
+     "category": "sofa",
+     "count": 1,
+     "material": "fabric",
+     "hero": true
+    },
+    {
+     "id": "tv",
+     "category": "tv",
+     "count": 1,
+     "material": "plastic",
+     "hero": true
+    },
+    {
+     "id": "tv_stand",
+     "category": "tv_stand",
+     "count": 1,
+     "material": "wood",
+     "hero": true
+    },
+    {
+     "id": "coffee_table",
+     "category": "coffee_table",
+     "count": 1,
+     "material": "glass",
+     "hero": true
+    },
+    {
+     "id": "rug",
+     "category": "rug",
+     "count": 1,
+     "material": "carpet",
+     "hero": true
+    },
+    {
+     "id": "armchair",
+     "category": "armchair",
+     "count": 2,
+     "material": "leather",
+     "hero": true
+    },
+    {
+     "id": "floor_lamp",
+     "category": "floor_lamp",
+     "count": 1,
+     "material": "metal",
+     "hero": true
+    }
+   ],
+   "relations": [
+    {
+     "a": "sofa",
+     "rel": "facing",
+     "b": "tv"
+    },
+    {
+     "a": "tv",
+     "rel": "on",
+     "b": "tv_stand"
+    },
+    {
+     "a": "coffee_table",
+     "rel": "in_front_of",
+     "b": "sofa"
+    },
+    {
+     "a": "coffee_table",
+     "rel": "on",
+     "b": "rug"
+    },
+    {
+     "a": "armchair",
+     "rel": "beside",
+     "b": "sofa"
+    },
+    {
+     "a": "armchair",
+     "rel": "beside",
+     "b": "sofa"
+    },
+    {
+     "a": "floor_lamp",
+     "rel": "next_to",
+     "b": "sofa"
+    }
+   ],
+   "lighting": {
+    "daylight": true,
+    "lamp": "floor_lamp"
+   },
+   "camera": {
+    "position": [
+     2,
+     2,
+     1.5
+    ],
+    "rotation": [
+     0,
+     0,
+     0
+    ]
+   }
+  }
+ },
+ "raw/qwen/classroom": {
+  "brief": "A classroom with a teacher desk and chair, a whiteboard on the front wall, and twelve student desks with chairs in rows facing the whiteboard.",
+  "spec": {
+   "setting": {
+    "bounds_m": [
+     10,
+     8,
+     3
+    ],
+    "kind": "indoor",
+    "style": "indoor",
+    "floor_material": "concrete",
+    "wall_material": "drywall"
+   },
+   "objects": [
+    {
+     "id": "teacher_desk",
+     "category": "desk",
+     "count": 1,
+     "material": "wood",
+     "hero": true
+    },
+    {
+     "id": "teacher_chair",
+     "category": "chair",
+     "count": 1,
+     "material": "fabric",
+     "hero": true
+    },
+    {
+     "id": "whiteboard",
+     "category": "whiteboard",
+     "count": 1,
+     "material": "white",
+     "hero": true
+    },
+    {
+     "id": "student_desk",
+     "category": "desk",
+     "count": 12,
+     "material": "wood"
+    },
+    {
+     "id": "student_chair",
+     "category": "chair",
+     "count": 12,
+     "material": "fabric"
+    }
+   ],
+   "relations": [
+    {
+     "a": "whiteboard",
+     "rel": "on",
+     "b": "front_wall"
+    },
+    {
+     "a": "teacher_desk",
+     "rel": "in_front_of",
+     "b": "whiteboard"
+    },
+    {
+     "a": "student_desk",
+     "rel": "in_row",
+     "b": "whiteboard",
+     "gap_m": 0.5
+    },
+    {
+     "a": "student_chair",
+     "rel": "beside",
+     "b": "student_desk"
+    }
+   ]
+  }
+ },
+ "raw/qwen/cafe": {
+  "brief": null,
+  "spec": {
+   "setting": {
+    "bounds_m": [
+     5,
+     5,
+     3
+    ],
+    "kind": "indoor",
+    "style": "modern"
+   },
+   "objects": [
+    {
+     "id": "table1",
+     "category": "dining_table",
+     "count": 1,
+     "material": "wood",
+     "hero": true
+    },
+    {
+     "id": "table2",
+     "category": "dining_table",
+     "count": 1,
+     "material": "wood",
+     "hero": true
+    },
+    {
+     "id": "table3",
+     "category": "dining_table",
+     "count": 1,
+     "material": "wood",
+     "hero": true
+    },
+    {
+     "id": "table4",
+     "category": "dining_table",
+     "count": 1,
+     "material": "wood",
+     "hero": true
+    },
+    {
+     "id": "counter",
+     "category": "bar_counter",
+     "count": 1,
+     "material": "granite",
+     "hero": true
+    },
+    {
+     "id": "stool1",
+     "category": "bar_stool",
+     "count": 2,
+     "material": "metal",
+     "hero": true
+    },
+    {
+     "id": "plant1",
+     "category": "potted_plant",
+     "count": 1,
+     "material": "leaf",
+     "hero": false
+    },
+    {
+     "id": "plant2",
+     "category": "potted_plant",
+     "count": 1,
+     "material": "leaf",
+     "hero": false
+    },
+    {
+     "id": "plant3",
+     "category": "potted_plant",
+     "count": 1,
+     "material": "leaf",
+     "hero": false
+    }
+   ],
+   "relations": [
+    {
+     "a": "table1",
+     "rel": "beside",
+     "b": "counter"
+    },
+    {
+     "a": "table2",
+     "rel": "beside",
+     "b": "counter"
+    },
+    {
+     "a": "table3",
+     "rel": "beside",
+     "b": "table1"
+    },
+    {
+     "a": "table4",
+     "rel": "beside",
+     "b": "table2"
+    },
+    {
+     "a": "stool1",
+     "rel": "beside",
+     "b": "counter"
+    },
+    {
+     "a": "plant1",
+     "rel": "near",
+     "b": "window"
+    },
+    {
+     "a": "plant2",
+     "rel": "near",
+     "b": "table1"
+    },
+    {
+     "a": "plant3",
+     "rel": "near",
+     "b": "table3"
+    }
+   ],
+   "lighting": {
+    "daylight": true,
+    "lamp": "ceiling"
+   },
+   "camera": {
+    "position": [
+     2,
+     2,
+     1.5
+    ],
+    "rotation": [
+     0,
+     0,
+     0
+    ]
+   }
+  }
+ },
+ "raw/qwen/warehouse": {
+  "brief": "An industrial warehouse: four pallet racks in rows, pallets with crates, a forklift, a workbench, safety barriers and ceiling lights. Requirements: real-world scale in metres with the floor at z=0; every requested object present and recognisable; a material on every object; lighting; an active scene camera that frames the scene.",
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     20,
+     15,
+     5
+    ],
+    "floor_material": "concrete",
+    "wall_material": "metal"
+   },
+   "objects": [
+    {
+     "id": "pallet_rack",
+     "category": "pallet_rack",
+     "count": 4,
+     "material": "metal",
+     "hero": true
+    },
+    {
+     "id": "pallet",
+     "category": "pallet",
+     "count": 8,
+     "material": "wood",
+     "detail": "standard"
+    },
+    {
+     "id": "forklift",
+     "category": "forklift",
+     "count": 1,
+     "material": "metal",
+     "hero": true
+    },
+    {
+     "id": "workbench",
+     "category": "workbench",
+     "count": 1,
+     "material": "metal",
+     "detail": "standard"
+    },
+    {
+     "id": "safety_barrier",
+     "category": "safety_barrier",
+     "count": 2,
+     "material": "metal",
+     "detail": "standard"
+    },
+    {
+     "id": "ceiling_light",
+     "category": "ceiling_light",
+     "count": 6,
+     "material": "metal",
+     "detail": "standard"
+    }
+   ],
+   "relations": [
+    {
+     "a": "pallet_rack",
+     "rel": "in_row",
+     "b": "pallet_rack"
+    },
+    {
+     "a": "forklift",
+     "rel": "near",
+     "b": "pallet_rack"
+    },
+    {
+     "a": "workbench",
+     "rel": "corner",
+     "b": "wall_north"
+    },
+    {
+     "a": "safety_barrier",
+     "rel": "beside",
+     "b": "workbench"
+    },
+    {
+     "a": "ceiling_light",
+     "rel": "evenly_spaced",
+     "b": "ceiling"
+    }
+   ]
+  }
+ },
+ "raw/qwen/round_lobby": {
+  "brief": null,
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     10,
+     10,
+     5
+    ],
+    "floor_material": "marble",
+    "wall_material": "beige_plaster",
+    "style": "modern"
+   },
+   "objects": [
+    {
+     "id": "reception_desk",
+     "category": "reception_desk",
+     "material": "dark_wood",
+     "hero": true
+    },
+    {
+     "id": "armchair1",
+     "category": "armchair",
+     "material": "velvet",
+     "count": 4
+    },
+    {
+     "id": "low_table",
+     "category": "coffee_table",
+     "material": "glass",
+     "hero": true
+    },
+    {
+     "id": "plant1",
+     "category": "potted_plant",
+     "material": "ceramic_pot",
+     "count": 2
+    },
+    {
+     "id": "pendant_lamp",
+     "category": "pendant_lamp",
+     "material": "metal",
+     "hero": true
+    }
+   ],
+   "relations": [
+    {
+     "a": "reception_desk",
+     "rel": "against_wall",
+     "b": "south"
+    },
+    {
+     "a": "armchair1",
+     "rel": "around",
+     "b": "low_table",
+     "gap_m": 0.5
+    },
+    {
+     "a": "pendant_lamp",
+     "rel": "above",
+     "b": "low_table",
+     "gap_m": 2.5
+    }
+   ],
+   "lighting": {
+    "daylight": true,
+    "intensity": 0.8
+   },
+   "camera": {
+    "position": [
+     3,
+     3,
+     2.5
+    ],
+    "target": [
+     0,
+     0,
+     0.5
+    ],
+    "angle_deg": 45
+   },
+   "brief": "A round hotel lobby with a reception desk, four armchairs around a low table, two potted plants and a pendant lamp.",
+   "project": "hotel_lobby",
+   "poly_budget": 50000,
+   "exposure_check": true,
+   "snapshot": true
+  }
+ },
+ "raw/lightning/living_room": {
+  "brief": null,
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     5,
+     4,
+     2.7
+    ],
+    "style": "modern",
+    "floor_material": "wood:oak",
+    "wall_material": "plaster:#e8e0d0"
+   },
+   "objects": [
+    {
+     "id": "sofa",
+     "category": "sofa",
+     "count": 1,
+     "material": "fabric:linen:#8b5a2b"
+    },
+    {
+     "id": "tv_stand",
+     "category": "tv_stand",
+     "count": 1,
+     "material": "wood:walnut"
+    },
+    {
+     "id": "tv",
+     "category": "tv",
+     "count": 1
+    },
+    {
+     "id": "coffee_table",
+     "category": "coffee_table",
+     "count": 1,
+     "material": "wood:oak"
+    },
+    {
+     "id": "rug",
+     "category": "rug",
+     "count": 1
+    },
+    {
+     "id": "armchair1",
+     "category": "armchair",
+     "count": 1,
+     "material": "fabric:linen:#6b7f99"
+    },
+    {
+     "id": "armchair2",
+     "category": "armchair",
+     "count": 1,
+     "material": "fabric:linen:#6b7f99"
+    },
+    {
+     "id": "floor_lamp",
+     "category": "floor_lamp",
+     "count": 1,
+     "material": "metal:brass"
+    }
+   ],
+   "relations": [
+    {
+     "a": "sofa",
+     "rel": "against_wall",
+     "b": "wall_south"
+    },
+    {
+     "a": "tv_stand",
+     "rel": "against_wall",
+     "b": "wall_north"
+    },
+    {
+     "a": "tv",
+     "rel": "on",
+     "b": "tv_stand"
+    },
+    {
+     "a": "sofa",
+     "rel": "facing",
+     "b": "tv"
+    },
+    {
+     "a": "coffee_table",
+     "rel": "in_front_of",
+     "b": "sofa",
+     "gap_m": 0.4
+    },
+    {
+     "a": "armchair1",
+     "rel": "beside",
+     "b": "sofa",
+     "gap_m": 0.3
+    },
+    {
+     "a": "armchair2",
+     "rel": "beside",
+     "b": "sofa",
+     "gap_m": 0.3
+    },
+    {
+     "a": "floor_lamp",
+     "rel": "beside",
+     "b": "sofa",
+     "gap_m": 0.5
+    }
+   ],
+   "brief": "A cozy living room: a sofa facing a TV on a TV stand, a coffee table in front of the sofa on a rug, two armchairs and a floor lamp."
+  }
+ },
+ "raw/lightning/classroom": {
+  "brief": "A classroom with a teacher desk and chair, a whiteboard on the front wall, and twelve student desks with chairs in rows facing the whiteboard. Real-world scale in metres with the floor at z=0; every requested object present and recognisable; a material on every object; lighting; an active scene camera that frames the scene.",
+  "spec": {
+   "setting": {
+    "bounds_m": [
+     10,
+     8,
+     3
+    ],
+    "kind": "indoor",
+    "style": "classroom",
+    "floor_material": "linoleum",
+    "wall_material": "plaster"
+   },
+   "objects": [
+    {
+     "id": "teacher_desk",
+     "category": "desk",
+     "count": 1
+    },
+    {
+     "id": "teacher_chair",
+     "category": "armchair",
+     "count": 1
+    },
+    {
+     "id": "whiteboard",
+     "category": "whiteboard",
+     "count": 1
+    },
+    {
+     "id": "student_desk",
+     "category": "desk",
+     "count": 12
+    },
+    {
+     "id": "student_chair",
+     "category": "dining_chair",
+     "count": 12
+    }
+   ],
+   "relations": [
+    {
+     "a": "teacher_desk",
+     "rel": "against_wall",
+     "b": "south"
+    },
+    {
+     "a": "whiteboard",
+     "rel": "on",
+     "b": "north"
+    },
+    {
+     "a": "student_desk",
+     "rel": "facing",
+     "b": "whiteboard"
+    },
+    {
+     "a": "student_chair",
+     "rel": "in_front_of",
+     "b": "student_desk"
+    }
+   ]
+  }
+ },
+ "raw/lightning/cafe": {
+  "brief": "Build this 3D scene in Blender: A small cafe with four round tables with two chairs each, a counter with two bar stools, and three potted plants. Requirements: real-world scale in metres with the floor at z=0; every requested object present and recognisable; a material on every object; lighting; an active scene camera that frames the scene.",
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "style": "cafe",
+    "bounds_m": [
+     8,
+     6,
+     3
+    ]
+   },
+   "objects": [
+    {
+     "id": "table1",
+     "category": "coffee_table"
+    },
+    {
+     "id": "table2",
+     "category": "coffee_table"
+    },
+    {
+     "id": "table3",
+     "category": "coffee_table"
+    },
+    {
+     "id": "table4",
+     "category": "coffee_table"
+    },
+    {
+     "id": "chair1",
+     "category": "dining_chair"
+    },
+    {
+     "id": "chair2",
+     "category": "dining_chair"
+    },
+    {
+     "id": "chair3",
+     "category": "dining_chair"
+    },
+    {
+     "id": "chair4",
+     "category": "dining_chair"
+    },
+    {
+     "id": "chair5",
+     "category": "dining_chair"
+    },
+    {
+     "id": "chair6",
+     "category": "dining_chair"
+    },
+    {
+     "id": "chair7",
+     "category": "dining_chair"
+    },
+    {
+     "id": "chair8",
+     "category": "dining_chair"
+    },
+    {
+     "id": "counter",
+     "category": "kitchen_counter"
+    },
+    {
+     "id": "bar_stool1",
+     "category": "bar_stool"
+    },
+    {
+     "id": "bar_stool2",
+     "category": "bar_stool"
+    },
+    {
+     "id": "plant1",
+     "category": "potted_plant"
+    },
+    {
+     "id": "plant2",
+     "category": "potted_plant"
+    },
+    {
+     "id": "plant3",
+     "category": "potted_plant"
+    }
+   ],
+   "relations": [
+    {
+     "a": "table1",
+     "rel": "beside",
+     "b": "table2"
+    },
+    {
+     "a": "table2",
+     "rel": "beside",
+     "b": "table3"
+    },
+    {
+     "a": "table3",
+     "rel": "beside",
+     "b": "table4"
+    },
+    {
+     "a": "chair1",
+     "rel": "beside",
+     "b": "table1"
+    },
+    {
+     "a": "chair2",
+     "rel": "beside",
+     "b": "table1"
+    },
+    {
+     "a": "chair3",
+     "rel": "beside",
+     "b": "table2"
+    },
+    {
+     "a": "chair4",
+     "rel": "beside",
+     "b": "table2"
+    },
+    {
+     "a": "chair5",
+     "rel": "beside",
+     "b": "table3"
+    },
+    {
+     "a": "chair6",
+     "rel": "beside",
+     "b": "table3"
+    },
+    {
+     "a": "chair7",
+     "rel": "beside",
+     "b": "table4"
+    },
+    {
+     "a": "chair8",
+     "rel": "beside",
+     "b": "table4"
+    },
+    {
+     "a": "counter",
+     "rel": "against_wall",
+     "b": "wall_south"
+    },
+    {
+     "a": "bar_stool1",
+     "rel": "beside",
+     "b": "counter"
+    },
+    {
+     "a": "bar_stool2",
+     "rel": "beside",
+     "b": "counter"
+    }
+   ]
+  }
+ },
+ "raw/lightning/round_lobby": {
+  "brief": "A round hotel lobby with a reception desk, four armchairs around a low table, two potted plants and a pendant lamp. Real-world scale in metres with the floor at z=0; every requested object present and recognizable; a material on every object; lighting; an active scene camera that frames the scene.",
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     8,
+     8,
+     3
+    ],
+    "shape": "ellipse",
+    "floor_material": "wood:oak",
+    "wall_material": "plaster:#e8e0d0"
+   },
+   "objects": [
+    {
+     "id": "reception_desk",
+     "category": "reception_desk",
+     "count": 1,
+     "material": "wood:walnut"
+    },
+    {
+     "id": "armchair1",
+     "category": "armchair",
+     "count": 1,
+     "material": "fabric:velvet:#3d5a80"
+    },
+    {
+     "id": "armchair2",
+     "category": "armchair",
+     "count": 1,
+     "material": "fabric:velvet:#3d5a80"
+    },
+    {
+     "id": "armchair3",
+     "category": "armchair",
+     "count": 1,
+     "material": "fabric:velvet:#3d5a80"
+    },
+    {
+     "id": "armchair4",
+     "category": "armchair",
+     "count": 1,
+     "material": "fabric:velvet:#3d5a80"
+    },
+    {
+     "id": "coffee_table",
+     "category": "coffee_table",
+     "count": 1,
+     "material": "wood:oak"
+    },
+    {
+     "id": "plant1",
+     "category": "potted_plant",
+     "count": 1,
+     "material": "foliage:green"
+    },
+    {
+     "id": "plant2",
+     "category": "potted_plant",
+     "count": 1,
+     "material": "foliage:green"
+    },
+    {
+     "id": "pendant_lamp",
+     "category": "pendant_lamp",
+     "count": 1,
+     "material": "metal:brushed"
+    }
+   ],
+   "relations": [
+    {
+     "a": "reception_desk",
+     "rel": "against_wall",
+     "b": "wall_south"
+    },
+    {
+     "a": "armchair1",
+     "rel": "beside",
+     "b": "coffee_table",
+     "gap_m": 0.3
+    },
+    {
+     "a": "armchair2",
+     "rel": "beside",
+     "b": "coffee_table",
+     "gap_m": 0.3
+    },
+    {
+     "a": "armchair3",
+     "rel": "beside",
+     "b": "coffee_table",
+     "gap_m": 0.3
+    },
+    {
+     "a": "armchair4",
+     "rel": "beside",
+     "b": "coffee_table",
+     "gap_m": 0.3
+    },
+    {
+     "a": "armchair1",
+     "rel": "facing",
+     "b": "coffee_table"
+    },
+    {
+     "a": "armchair2",
+     "rel": "facing",
+     "b": "coffee_table"
+    },
+    {
+     "a": "armchair3",
+     "rel": "facing",
+     "b": "coffee_table"
+    },
+    {
+     "a": "armchair4",
+     "rel": "facing",
+     "b": "coffee_table"
+    },
+    {
+     "a": "plant1",
+     "rel": "beside",
+     "b": "armchair1",
+     "gap_m": 0.5
+    },
+    {
+     "a": "plant2",
+     "rel": "beside",
+     "b": "armchair3",
+     "gap_m": 0.5
+    },
+    {
+     "a": "pendant_lamp",
+     "rel": "centered_in",
+     "b": "room"
+    },
+    {
+     "a": "coffee_table",
+     "rel": "centered_in",
+     "b": "room"
+    }
+   ]
+  }
+ },
+ "last/qwen/living_room": {
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     6.0,
+     6.0,
+     3.0
+    ],
+    "style": null,
+    "floor_material": "wood",
+    "wall_material": "plaster"
+   },
+   "objects": [
+    {
+     "id": "sofa",
+     "category": "sofa",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "fabric"
+    },
+    {
+     "id": "tv",
+     "category": "tv",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "plastic"
+    },
+    {
+     "id": "tv_stand",
+     "category": "tv_stand",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "coffee_table",
+     "category": "coffee_table",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "glass"
+    },
+    {
+     "id": "rug",
+     "category": "rug",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "fabric:weave"
+    },
+    {
+     "id": "armchair",
+     "category": "armchair",
+     "count": 2,
+     "hero": true,
+     "detail": "standard",
+     "material": "leather"
+    },
+    {
+     "id": "floor_lamp",
+     "category": "floor_lamp",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "metal"
+    }
+   ],
+   "relations": [
+    {
+     "a": "sofa",
+     "rel": "against_wall",
+     "b": "wall_south",
+     "gap_m": 1.5
+    },
+    {
+     "a": "tv",
+     "rel": "on",
+     "b": "tv_stand"
+    },
+    {
+     "a": "coffee_table",
+     "rel": "in_front_of",
+     "b": "sofa"
+    },
+    {
+     "a": "rug",
+     "rel": "centered_in",
+     "b": "coffee_table"
+    },
+    {
+     "a": "armchair",
+     "rel": "beside",
+     "b": "sofa"
+    },
+    {
+     "a": "floor_lamp",
+     "rel": "beside",
+     "b": "sofa"
+    },
+    {
+     "a": "tv_stand",
+     "rel": "against_wall",
+     "b": "wall_north"
+    },
+    {
+     "a": "tv_stand",
+     "rel": "facing",
+     "b": "sofa"
+    }
+   ],
+   "lighting": {
+    "daylight": true,
+    "lamp": "floor_lamp"
+   },
+   "camera": {
+    "position": [
+     2,
+     2,
+     1.5
+    ],
+    "rotation": [
+     0,
+     0,
+     0
+    ]
+   }
+  }
+ },
+ "last/qwen/classroom": {
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     12.0,
+     9.6,
+     3.0
+    ],
+    "style": "indoor",
+    "floor_material": "concrete",
+    "wall_material": "plaster"
+   },
+   "objects": [
+    {
+     "id": "teacher_desk",
+     "category": "desk",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "wood",
+     "turn_deg": 180
+    },
+    {
+     "id": "teacher_chair",
+     "category": "chair",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "fabric"
+    },
+    {
+     "id": "whiteboard",
+     "category": "whiteboard",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "paint:#f2f2f0"
+    },
+    {
+     "id": "student_desk",
+     "category": "desk",
+     "count": 12,
+     "hero": false,
+     "detail": "standard",
+     "grid": {
+      "rows": 3,
+      "cols": 4,
+      "gap_m": [
+       0.5,
+       0.8
+      ]
+     },
+     "material": "wood",
+     "seats": 1
+    }
+   ],
+   "relations": [
+    {
+     "a": "whiteboard",
+     "rel": "against_wall",
+     "b": "wall_north"
+    },
+    {
+     "a": "teacher_desk",
+     "rel": "in_front_of",
+     "b": "whiteboard"
+    },
+    {
+     "a": "student_desk",
+     "rel": "facing",
+     "b": "whiteboard"
+    }
+   ],
+   "lighting": {},
+   "camera": {}
+  }
+ },
+ "last/qwen/cafe": {
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     6.0,
+     6.0,
+     3.0
+    ],
+    "style": "modern",
+    "floor_material": "ceramic",
+    "wall_material": "plaster"
+   },
+   "objects": [
+    {
+     "id": "table1",
+     "category": "dining_table",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "table2",
+     "category": "dining_table",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "table3",
+     "category": "dining_table",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "table4",
+     "category": "dining_table",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "counter",
+     "category": "bar_counter",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "stone:#5f5b57"
+    },
+    {
+     "id": "stool1",
+     "category": "bar_stool",
+     "count": 2,
+     "hero": true,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "plant1",
+     "category": "potted_plant",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "foliage"
+    },
+    {
+     "id": "plant2",
+     "category": "potted_plant",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "foliage",
+     "turn_deg": 180
+    },
+    {
+     "id": "plant3",
+     "category": "potted_plant",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "foliage",
+     "turn_deg": 180
+    },
+    {
+     "id": "chair1",
+     "category": "dining_chair",
+     "count": 2,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "chair2",
+     "category": "dining_chair",
+     "count": 2,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "chair3",
+     "category": "dining_chair",
+     "count": 2,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "chair4",
+     "category": "dining_chair",
+     "count": 2,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "lamp1",
+     "category": "pendant_lamp",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "decor1",
+     "category": "picture_frame",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "lamp2",
+     "category": "floor_lamp",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "decor2",
+     "category": "vase",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "ceramic"
+    }
+   ],
+   "relations": [
+    {
+     "a": "table1",
+     "rel": "beside",
+     "b": "counter"
+    },
+    {
+     "a": "table2",
+     "rel": "beside",
+     "b": "counter"
+    },
+    {
+     "a": "table3",
+     "rel": "beside",
+     "b": "table1"
+    },
+    {
+     "a": "table4",
+     "rel": "beside",
+     "b": "table2"
+    },
+    {
+     "a": "stool1",
+     "rel": "beside",
+     "b": "counter"
+    },
+    {
+     "a": "plant2",
+     "rel": "beside",
+     "b": "table1"
+    },
+    {
+     "a": "chair1",
+     "rel": "beside",
+     "b": "table1"
+    },
+    {
+     "a": "chair2",
+     "rel": "beside",
+     "b": "table2"
+    },
+    {
+     "a": "chair3",
+     "rel": "beside",
+     "b": "table3"
+    },
+    {
+     "a": "chair4",
+     "rel": "beside",
+     "b": "table4"
+    },
+    {
+     "a": "lamp1",
+     "rel": "above",
+     "b": "counter"
+    },
+    {
+     "a": "decor1",
+     "rel": "against_wall",
+     "b": "wall_north"
+    },
+    {
+     "a": "plant1",
+     "rel": "beside",
+     "b": "table1"
+    },
+    {
+     "a": "plant3",
+     "rel": "beside",
+     "b": "table3"
+    },
+    {
+     "a": "lamp2",
+     "rel": "beside",
+     "b": "table2"
+    },
+    {
+     "a": "decor2",
+     "rel": "on",
+     "b": "table3"
+    }
+   ],
+   "lighting": {
+    "daylight": true,
+    "lamp": "ceiling"
+   },
+   "camera": {
+    "position": [
+     2,
+     2,
+     1.5
+    ],
+    "rotation": [
+     0,
+     0,
+     0
+    ]
+   }
+  }
+ },
+ "last/qwen/warehouse": {
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     20.0,
+     15.0,
+     5.0
+    ],
+    "style": null,
+    "floor_material": "concrete",
+    "wall_material": "metal"
+   },
+   "objects": [
+    {
+     "id": "pallet_rack",
+     "category": "pallet_rack",
+     "count": 4,
+     "hero": true,
+     "detail": "standard",
+     "grid": {
+      "rows": 1,
+      "cols": 4,
+      "gap_m": [
+       0.5,
+       0.8
+      ]
+     },
+     "material": "metal"
+    },
+    {
+     "id": "pallet",
+     "category": "pallet",
+     "count": 8,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "forklift",
+     "category": "forklift",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "workbench",
+     "category": "workbench",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "safety_barrier",
+     "category": "safety_barrier",
+     "count": 2,
+     "hero": false,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "ceiling_light",
+     "category": "ceiling_light",
+     "count": 6,
+     "hero": false,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "crate",
+     "category": "crate",
+     "count": 4,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood"
+    }
+   ],
+   "relations": [
+    {
+     "a": "forklift",
+     "rel": "beside",
+     "b": "pallet_rack"
+    },
+    {
+     "a": "workbench",
+     "rel": "against_wall",
+     "b": "wall_north"
+    },
+    {
+     "a": "safety_barrier",
+     "rel": "beside",
+     "b": "workbench"
+    },
+    {
+     "a": "crate",
+     "rel": "on",
+     "b": "pallet"
+    }
+   ],
+   "lighting": {},
+   "camera": {}
+  }
+ },
+ "last/qwen/round_lobby": {
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     10.0,
+     10.0,
+     5.0
+    ],
+    "style": "modern",
+    "shape": "ellipse",
+    "floor_material": "marble",
+    "wall_material": "plaster"
+   },
+   "objects": [
+    {
+     "id": "reception_desk",
+     "category": "reception_desk",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "armchair1",
+     "category": "armchair",
+     "count": 4,
+     "hero": false,
+     "detail": "standard",
+     "material": "velvet"
+    },
+    {
+     "id": "low_table",
+     "category": "coffee_table",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "glass"
+    },
+    {
+     "id": "plant1",
+     "category": "potted_plant",
+     "count": 2,
+     "hero": false,
+     "detail": "standard",
+     "material": "ceramic"
+    },
+    {
+     "id": "pendant_lamp",
+     "category": "pendant_lamp",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "metal"
+    }
+   ],
+   "relations": [
+    {
+     "a": "reception_desk",
+     "rel": "against_wall",
+     "b": "wall",
+     "at_deg": 270.0
+    },
+    {
+     "a": "armchair1",
+     "rel": "around",
+     "b": "low_table",
+     "gap_m": 0.5
+    },
+    {
+     "a": "pendant_lamp",
+     "rel": "above",
+     "b": "low_table",
+     "gap_m": 2.5
+    }
+   ],
+   "lighting": {
+    "daylight": true,
+    "intensity": 0.8
+   },
+   "camera": {
+    "position": [
+     3,
+     3,
+     2.5
+    ],
+    "target": [
+     0,
+     0,
+     0.5
+    ],
+    "angle_deg": 45
+   }
+  }
+ },
+ "last/lightning/living_room": {
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     5.0,
+     4.0,
+     2.7
+    ],
+    "style": "modern",
+    "floor_material": "wood:oak",
+    "wall_material": "plaster:#e8e0d0"
+   },
+   "objects": [
+    {
+     "id": "sofa",
+     "category": "sofa",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "fabric:linen:#8b5a2b"
+    },
+    {
+     "id": "tv_stand",
+     "category": "tv_stand",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood:walnut"
+    },
+    {
+     "id": "tv",
+     "category": "tv",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "coffee_table",
+     "category": "coffee_table",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood:oak"
+    },
+    {
+     "id": "rug",
+     "category": "rug",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "armchair1",
+     "category": "armchair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "fabric:linen:#6b7f99"
+    },
+    {
+     "id": "armchair2",
+     "category": "armchair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "fabric:linen:#6b7f99"
+    },
+    {
+     "id": "floor_lamp",
+     "category": "floor_lamp",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "brass"
+    }
+   ],
+   "relations": [
+    {
+     "a": "sofa",
+     "rel": "against_wall",
+     "b": "wall_south",
+     "gap_m": 0.65
+    },
+    {
+     "a": "tv_stand",
+     "rel": "against_wall",
+     "b": "wall_north"
+    },
+    {
+     "a": "tv_stand",
+     "rel": "facing",
+     "b": "sofa"
+    },
+    {
+     "a": "tv",
+     "rel": "on",
+     "b": "tv_stand"
+    },
+    {
+     "a": "sofa",
+     "rel": "facing",
+     "b": "tv"
+    },
+    {
+     "a": "coffee_table",
+     "rel": "in_front_of",
+     "b": "sofa",
+     "gap_m": 0.4
+    },
+    {
+     "a": "armchair1",
+     "rel": "beside",
+     "b": "coffee_table",
+     "gap_m": 0.35
+    },
+    {
+     "a": "armchair1",
+     "rel": "facing",
+     "b": "coffee_table"
+    },
+    {
+     "a": "armchair2",
+     "rel": "beside",
+     "b": "coffee_table",
+     "gap_m": 0.35
+    },
+    {
+     "a": "armchair2",
+     "rel": "facing",
+     "b": "coffee_table"
+    },
+    {
+     "a": "floor_lamp",
+     "rel": "beside",
+     "b": "sofa",
+     "gap_m": 0.5
+    },
+    {
+     "a": "rug",
+     "rel": "centered_in",
+     "b": "coffee_table"
+    }
+   ],
+   "lighting": {},
+   "camera": {}
+  }
+ },
+ "last/lightning/classroom": {
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     12.0,
+     9.6,
+     3.0
+    ],
+    "style": "classroom",
+    "wall_material": "plaster"
+   },
+   "objects": [
+    {
+     "id": "teacher_desk",
+     "category": "desk",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "teacher_chair",
+     "category": "armchair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "whiteboard",
+     "category": "whiteboard",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "student_desk",
+     "category": "desk",
+     "count": 12,
+     "hero": false,
+     "detail": "standard",
+     "grid": {
+      "rows": 3,
+      "cols": 4,
+      "gap_m": [
+       0.5,
+       0.8
+      ]
+     },
+     "seats": 1,
+     "seat_category": "dining_chair"
+    },
+    {
+     "id": "student_chair_1",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "student_chair_2",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "student_chair_3",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "student_chair_4",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "student_chair_5",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "student_chair_6",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "student_chair_7",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "student_chair_8",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "student_chair_9",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "student_chair_10",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "student_chair_11",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "student_chair_12",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "floor_lamp",
+     "category": "floor_lamp",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    }
+   ],
+   "relations": [
+    {
+     "a": "teacher_desk",
+     "rel": "against_wall",
+     "b": "wall_south"
+    },
+    {
+     "a": "whiteboard",
+     "rel": "against_wall",
+     "b": "wall_north"
+    },
+    {
+     "a": "student_desk",
+     "rel": "facing",
+     "b": "whiteboard"
+    },
+    {
+     "a": "student_chair_1",
+     "rel": "in_front_of",
+     "b": "student_desk"
+    },
+    {
+     "a": "student_chair_2",
+     "rel": "in_front_of",
+     "b": "student_desk"
+    },
+    {
+     "a": "student_chair_3",
+     "rel": "in_front_of",
+     "b": "student_desk"
+    },
+    {
+     "a": "student_chair_4",
+     "rel": "in_front_of",
+     "b": "student_desk"
+    },
+    {
+     "a": "student_chair_5",
+     "rel": "in_front_of",
+     "b": "student_desk"
+    },
+    {
+     "a": "student_chair_6",
+     "rel": "in_front_of",
+     "b": "student_desk"
+    },
+    {
+     "a": "student_chair_7",
+     "rel": "in_front_of",
+     "b": "student_desk"
+    },
+    {
+     "a": "student_chair_8",
+     "rel": "in_front_of",
+     "b": "student_desk"
+    },
+    {
+     "a": "student_chair_10",
+     "rel": "in_front_of",
+     "b": "student_desk"
+    },
+    {
+     "a": "student_chair_11",
+     "rel": "in_front_of",
+     "b": "student_desk"
+    },
+    {
+     "a": "student_chair_12",
+     "rel": "in_front_of",
+     "b": "student_desk"
+    },
+    {
+     "a": "student_chair_9",
+     "rel": "beside",
+     "b": "student_chair_1",
+     "gap_m": 0.6
+    },
+    {
+     "a": "floor_lamp",
+     "rel": "beside",
+     "b": "teacher_desk",
+     "gap_m": 1.5
+    }
+   ],
+   "lighting": {},
+   "camera": {}
+  }
+ },
+ "last/lightning/cafe": {
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     8.0,
+     6.0,
+     3.0
+    ],
+    "style": "cafe"
+   },
+   "objects": [
+    {
+     "id": "table1",
+     "category": "coffee_table",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "seats": 2,
+     "turn_deg": 180
+    },
+    {
+     "id": "table2",
+     "category": "coffee_table",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "seats": 2,
+     "turn_deg": 180
+    },
+    {
+     "id": "table3",
+     "category": "coffee_table",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "seats": 2
+    },
+    {
+     "id": "table4",
+     "category": "coffee_table",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "seats": 2
+    },
+    {
+     "id": "chair1",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "turn_deg": 180
+    },
+    {
+     "id": "chair2",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "turn_deg": 180
+    },
+    {
+     "id": "chair3",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "turn_deg": 180
+    },
+    {
+     "id": "chair4",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "chair5",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "chair6",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "chair7",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "chair8",
+     "category": "dining_chair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "counter",
+     "category": "kitchen_counter",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "bar_stool1",
+     "category": "bar_stool",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "bar_stool2",
+     "category": "bar_stool",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "plant1",
+     "category": "potted_plant",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "plant2",
+     "category": "potted_plant",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "plant3",
+     "category": "potted_plant",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "lamp1",
+     "category": "floor_lamp",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "lamp2",
+     "category": "floor_lamp",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    },
+    {
+     "id": "picture1",
+     "category": "picture_frame",
+     "count": 1,
+     "hero": false,
+     "detail": "standard"
+    }
+   ],
+   "relations": [
+    {
+     "a": "table1",
+     "rel": "beside",
+     "b": "table2"
+    },
+    {
+     "a": "table2",
+     "rel": "beside",
+     "b": "table3"
+    },
+    {
+     "a": "table3",
+     "rel": "beside",
+     "b": "table4"
+    },
+    {
+     "a": "counter",
+     "rel": "against_wall",
+     "b": "wall_south"
+    },
+    {
+     "a": "bar_stool1",
+     "rel": "beside",
+     "b": "counter"
+    },
+    {
+     "a": "bar_stool2",
+     "rel": "beside",
+     "b": "counter"
+    },
+    {
+     "a": "lamp1",
+     "rel": "beside",
+     "b": "table1"
+    },
+    {
+     "a": "lamp2",
+     "rel": "beside",
+     "b": "table3"
+    },
+    {
+     "a": "picture1",
+     "rel": "against_wall",
+     "b": "wall_south"
+    },
+    {
+     "a": "chair1",
+     "rel": "beside",
+     "b": "table1"
+    },
+    {
+     "a": "chair2",
+     "rel": "beside",
+     "b": "table1"
+    },
+    {
+     "a": "chair3",
+     "rel": "beside",
+     "b": "table2"
+    },
+    {
+     "a": "chair4",
+     "rel": "beside",
+     "b": "table2"
+    },
+    {
+     "a": "chair5",
+     "rel": "beside",
+     "b": "table3"
+    },
+    {
+     "a": "chair6",
+     "rel": "beside",
+     "b": "table3"
+    },
+    {
+     "a": "chair7",
+     "rel": "beside",
+     "b": "table4"
+    },
+    {
+     "a": "chair8",
+     "rel": "beside",
+     "b": "table4"
+    }
+   ],
+   "lighting": {},
+   "camera": {}
+  }
+ },
+ "last/lightning/round_lobby": {
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     8.0,
+     8.0,
+     3.0
+    ],
+    "style": null,
+    "shape": "ellipse",
+    "floor_material": "wood:oak",
+    "wall_material": "plaster:#e8e0d0"
+   },
+   "objects": [
+    {
+     "id": "reception_desk",
+     "category": "reception_desk",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood:walnut"
+    },
+    {
+     "id": "armchair1",
+     "category": "armchair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "fabric:velvet:#3d5a80"
+    },
+    {
+     "id": "armchair2",
+     "category": "armchair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "fabric:velvet:#3d5a80"
+    },
+    {
+     "id": "armchair3",
+     "category": "armchair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "fabric:velvet:#3d5a80"
+    },
+    {
+     "id": "armchair4",
+     "category": "armchair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "fabric:velvet:#3d5a80"
+    },
+    {
+     "id": "coffee_table",
+     "category": "coffee_table",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "wood:oak"
+    },
+    {
+     "id": "plant1",
+     "category": "potted_plant",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "foliage:#4a7a3a"
+    },
+    {
+     "id": "plant2",
+     "category": "potted_plant",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "foliage:#4a7a3a"
+    },
+    {
+     "id": "pendant_lamp",
+     "category": "pendant_lamp",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "metal:brushed"
+    }
+   ],
+   "relations": [
+    {
+     "a": "reception_desk",
+     "rel": "against_wall",
+     "b": "wall",
+     "at_deg": 270.0
+    },
+    {
+     "a": "armchair1",
+     "rel": "beside",
+     "b": "coffee_table",
+     "gap_m": 0.3
+    },
+    {
+     "a": "armchair2",
+     "rel": "beside",
+     "b": "coffee_table",
+     "gap_m": 0.3
+    },
+    {
+     "a": "armchair3",
+     "rel": "beside",
+     "b": "coffee_table",
+     "gap_m": 0.3
+    },
+    {
+     "a": "armchair4",
+     "rel": "beside",
+     "b": "coffee_table",
+     "gap_m": 0.3
+    },
+    {
+     "a": "armchair1",
+     "rel": "facing",
+     "b": "coffee_table"
+    },
+    {
+     "a": "armchair2",
+     "rel": "facing",
+     "b": "coffee_table"
+    },
+    {
+     "a": "armchair3",
+     "rel": "facing",
+     "b": "coffee_table"
+    },
+    {
+     "a": "armchair4",
+     "rel": "facing",
+     "b": "coffee_table"
+    },
+    {
+     "a": "plant1",
+     "rel": "beside",
+     "b": "armchair1",
+     "gap_m": 0.5
+    },
+    {
+     "a": "plant2",
+     "rel": "beside",
+     "b": "armchair3",
+     "gap_m": 0.5
+    },
+    {
+     "a": "pendant_lamp",
+     "rel": "centered_in",
+     "b": "room"
+    },
+    {
+     "a": "coffee_table",
+     "rel": "centered_in",
+     "b": "room"
+    }
+   ],
+   "lighting": {},
+   "camera": {}
+  }
+ },
+ "briefs": {
+  "living_room": "A cozy living room: a sofa facing a TV on a TV stand, a coffee table in front of the sofa on a rug, two armchairs and a floor lamp.",
+  "classroom": "A classroom with a teacher desk and chair, a whiteboard on the front wall, and twelve student desks with chairs in rows facing the whiteboard. Real-world scale in metres with the floor at z=0; every requested object present and recognisable; a material on every object; lighting; an active scene camera that frames the scene.",
+  "warehouse": "An industrial warehouse: four pallet racks in rows, pallets with crates, a forklift, a workbench, safety barriers and ceiling lights.",
+  "cafe": "A small cafe with four round tables with two chairs each, a counter with two bar stools, and three potted plants.",
+  "round_lobby": "A round hotel lobby with a reception desk, four armchairs around a low table, two potted plants and a pendant lamp. Real-world scale in metres with the floor at z=0; every requested object present and recognizable; a material on every object; lighting; an active scene camera that frames the scene."
+ }
+}

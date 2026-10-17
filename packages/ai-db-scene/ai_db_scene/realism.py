@@ -122,8 +122,11 @@ def brief_counts(brief: str, categories: set[str]) -> dict[str, int | None]:
 
 
 #: a brief's word for a category also counts its more specific kinds (bushes on a tropical beach
-#: are built as tropical_bush, its trees as palm_tree)
-_KIN = {"bush": ("tropical_bush",), "tree": ("palm_tree",), "chair": ("sun_lounger",)}
+#: are built as tropical_bush, its trees as palm_tree; the chairs at desks and tables are built as
+#: their seats, dining_chair / office_chair: lightning aidb7 added 11-12 loose chairs to a classroom
+#: and a cafe that already had a chair at every desk because the check said there were none)
+_KIN = {"bush": ("tropical_bush",), "tree": ("palm_tree",),
+        "chair": ("sun_lounger", "dining_chair", "office_chair", "armchair"), "stool": ("bar_stool",)}
 
 
 def check_brief(brief: str, placements: list[Any]) -> list[dict[str, Any]]:

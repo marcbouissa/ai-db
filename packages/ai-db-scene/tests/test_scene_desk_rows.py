@@ -58,7 +58,9 @@ def _check_rows(desks, chairs, board):
 def test_a_chain_of_desks_becomes_rows_facing_the_board():
     spec, block, desks, chairs, board = _rows(AIDB5, "whiteboard_001")
     assert block.id == "student_desk" and block.grid[:2] == (3, 4) and block.seats == 1
-    assert [o.id for o in spec.objects] == ["teacher_desk_001", "teacher_chair_001", "whiteboard_001", "student_desk"]
+    # the teacher's chair is a seat of the teacher's desk (aidb7: it stood stranded by a wall)
+    assert [o.id for o in spec.objects] == ["teacher_desk_001", "whiteboard_001", "student_desk"]
+    assert next(o for o in spec.objects if o.id == "teacher_desk_001").seats == 1
     assert any("12 desks chained by beside laid out as 'student_desk'" in n for n in spec.notes)
     _check_rows(desks, chairs, board)
 

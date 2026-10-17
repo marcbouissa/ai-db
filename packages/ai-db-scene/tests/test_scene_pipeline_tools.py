@@ -517,7 +517,7 @@ def test_camera_spots_stay_inside_curved_and_polygon_rooms():
     poses = sp.camera_poses(spec, pls, sp.frame_offset(spec))
     assert len(poses) >= 2 * len(spots(spec, pls)) and len({p["location"][2] for p in poses}) == 2
     assert sp.camera_command(spec, pls, sp.frame_offset(spec))["params"] == {k: v for k, v in poses[0].items()
-                                                                             if k != "shift_y"}
+                                                                             if k not in ("shift_y", "expect")}
     assert all(p["rotation"][0] == 90.0 and abs(p["shift_y"]) <= 0.35 for p in poses)
     fp = sp.footprint(spec, sp.frame_offset(spec))
     assert all(math.isclose((x / 5) ** 2 + (y / 3.5) ** 2, 1) for x, y in fp)

@@ -102,6 +102,34 @@ class ObjectSpec:
     #: quarter turns (0/90/180/270, counter-clockwise) on top of the yaw the relations give: what
     #: edit_scene's rotate op sets when the validator says "rotate it 180 deg"
     turn_deg: int = 0
+    #: table top outline (TABLE_SHAPES): "round" builds a round top on a square footprint
+    shape: str | None = None
+
+
+#: ObjectSpec.shape values (tables only) and the words models use for them
+TABLE_SHAPES = ("round", "oval", "rect")
+_SHAPE_WORDS = {"round": "round", "circular": "round", "circle": "round", "oval": "oval", "elliptical": "oval",
+                "ellipse": "oval", "rect": "rect", "rectangular": "rect", "rectangle": "rect", "square": "rect"}
+#: categories whose top outline ``shape`` sets
+TABLE_CATEGORIES = ("dining_table", "coffee_table", "side_table", "conference_table")
+
+
+#: plain metal walls -> painted steel cladding
+_BARE_METAL = ("metal", "chrome", "metal:steel", "metal:brushed", "metal:chrome")
+_CLADDING = "paint:#b8bdc2"
+
+
+def coerce_table_shape(v: Any, category: Any) -> tuple[str | None, str | None]:
+    """(shape, note) of an object's ``shape``: words read as round/oval/rect; on a category that is
+    no table, or a word that names no outline, it is ignored with a note (never refused)."""
+    if v is None:
+        return None, None
+    got = _SHAPE_WORDS.get(str(v).strip().lower())
+    if got is None:
+        return None, f"{v!r} names no table top outline ({list(TABLE_SHAPES)}); ignored"
+    if category not in TABLE_CATEGORIES:
+        return None, f"ignored: only tables ({', '.join(TABLE_CATEGORIES)}) take a shape"
+    return got, None if got == v else f"{v!r} read as {got!r}"
 
 
 @dataclass(frozen=True)
@@ -157,7 +185,8 @@ class SceneSpec:
                  **({"seats": o.seats} if o.seats else {}),
                  **({"seat_category": o.seat_category} if o.seat_category else {}),
                  **({"variant": o.variant} if o.variant else {}),
-                 **({"turn_deg": o.turn_deg} if o.turn_deg else {})}
+                 **({"turn_deg": o.turn_deg} if o.turn_deg else {}),
+                 **({"shape": o.shape} if o.shape else {})}
                 for o in self.objects
             ],
             "relations": [
@@ -183,7 +212,7 @@ def spec_schema() -> dict[str, Any]:
         "properties": {
             "setting": {
                 "type": "object",
-                "required": ["kind", "bounds_m"],
+                "required": ["kind"],
                 "additionalProperties": False,
                 "properties": {
                     "kind": {"enum": list(SETTING_KINDS)},
@@ -192,7 +221,8 @@ def spec_schema() -> dict[str, Any]:
                         "items": {"type": "number", "exclusiveMinimum": 0, "maximum": LAYOUT_MAX_BOUND_M},
                         "minItems": 3,
                         "maxItems": 3,
-                        "description": "[x width, y depth, z height] in meters",
+                        "description": ("[x width, y depth, z height] in meters; leave it out to have the "
+                                        "room sized to its content plus walkways"),
                     },
                     "style": {"type": "string",
                               "description": f"material palette when it names one of {sorted(STYLE_PALETTES)} "
@@ -254,6 +284,8 @@ def spec_schema() -> dict[str, Any]:
                         "turn_deg": {"enum": [0, 90, 180, 270],
                                      "description": ("turn the object this much (counter-clockwise) from the way its "
                                                      "relations face it, e.g. 180 when it faces a wall; default 0")},
+                        "shape": {"enum": list(TABLE_SHAPES),
+                                  "description": "tables only: the top's outline, e.g. round for a cafe table"},
                         "variant": {"type": "string",
                                     "description": ("sofa/armchair/table/chair design (also as 'style'): one of "
                                                     f"{families()}; default: one the setting.style suits, the "
@@ -346,6 +378,11 @@ def _parse_setting(raw: Any, errors: list[str], notes: list[str] | None = None) 
             mat, note = coerce_material(raw[key])
             if note and notes is not None:
                 notes.append(f"setting.{key}: {note}")
+            if key == "wall_material" and mat in _BARE_METAL:
+                # qwen aidb7 warehouse: "metal" walls rendered as a polished chrome box
+                if notes is not None:
+                    notes.append(f"setting.wall_material: {mat!r} read as {_CLADDING!r} (painted steel cladding)")
+                mat = _CLADDING
             if mat:
                 mats[key] = mat
     kind = raw.get("kind")
@@ -469,7 +506,7 @@ def _parse_objects(raw: Any, errors: list[str], notes: list[str] | None = None) 
             errors.append(f"{p}: expected object, got {_typename(o)}")
             continue
         _unknown_keys(p, o, ("id", "category", "count", "hero", "detail", "grid", "material", "dynamic", "room",
-                             "seats", "seat_category", "variant", "style", "turn_deg"), errors)
+                             "seats", "seat_category", "variant", "style", "turn_deg", "shape"), errors)
         variant, vnote = coerce_variant(o.get("variant", o.get("style")))
         if vnote and notes is not None:
             notes.append(f"{p}.variant: {vnote}")
@@ -526,11 +563,14 @@ def _parse_objects(raw: Any, errors: list[str], notes: list[str] | None = None) 
             ok = False
         elif tnote and notes is not None:
             notes.append(f"{p}.turn_deg: {tnote}")
+        shape, snote = coerce_table_shape(o.get("shape"), cat)
+        if snote and notes is not None:
+            notes.append(f"{p}.shape: {snote}")
         if isinstance(oid, str):
             seen.add(oid)
         if ok and grid_ok and mat_ok:
             out.append(ObjectSpec(str(oid), str(cat), count, hero, str(detail), grid, material, dynamic, room,
-                                  seats, seat_cat, variant, turn or 0))
+                                  seats, seat_cat, variant, turn or 0, shape))
     return out
 
 

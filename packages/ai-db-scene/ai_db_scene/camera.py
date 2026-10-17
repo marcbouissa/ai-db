@@ -32,6 +32,15 @@ SEATING = {"sofa": 1.5, "armchair": 1.0, "bench": 0.8, "chair": 0.4, "dining_cha
 FEATURES = {"fireplace": 1.2, "reception_desk": 1.2, "bar_counter": 0.8, "whiteboard": 0.8, "tv": 0.6,
             "tv_stand": 0.5, "kitchen_counter": 0.5, "kitchen_island": 0.5, "bookshelf": 0.4, "desk": 0.4,
             "stove": 0.3, "dresser": 0.3, "wardrobe": 0.3, "fountain": 0.8}
+#: what an audience faces: desks and chairs turned to one are seen from behind it (a classroom
+#: photo looks over the class at the board, not from the board at the class)
+BOARDS = ("whiteboard", "blackboard", "chalkboard", "projector_screen")
+_AUDIENCE = ("desk", "chair", "dining_chair", "office_chair")
+#: foreground occluders: anything nearer than this along the view and covering more of the
+#: frame than _COVER_MAX (aidb7: a plant, an armchair, a palm trunk filling a corner of the picture)
+NEAR_M = 1.5
+COVER_MAX = 0.08
+OCCLUDER_MIN_TOP_M = 0.85  # plants, armchairs, chair backs, trunks: tall enough to block the view
 MIN_HFOV_DEG = 55.0  # never narrower: a room photo, not a close-up
 MAX_HFOV_DEG = 96.0  # ~16 mm on a 36 mm sensor: wider distorts the corners
 SENSOR_MM = 36.0
@@ -143,6 +152,59 @@ def _aim(placements: dict[str, Placement], weights: dict[str, float]) -> tuple[f
     return x, y, max(0.6, min(z, 1.0))
 
 
+def foreground_cover(placements: list[Placement], x: float, y: float, z: float, aim: tuple[float, float, float],
+                     hfov_deg: float, aspect: float = 16 / 9) -> list[tuple[str, float]]:
+    """(id, fraction of the frame) of the objects within NEAR_M of the camera in its view. In the
+    image plane (tangent space): an object's box seen at the depth of its nearest face, clipped to
+    the frame; the frame shifted down/up as the build's level camera does with its lens shift."""
+    from ai_db_scene.constants import SCENE_CAMERA_MAX_SHIFT
+
+    vx, vy = aim[0] - x, aim[1] - y
+    n = math.hypot(vx, vy) or 1e-6
+    vx, vy = vx / n, vy / n
+    th = math.tan(math.radians(hfov_deg) / 2)
+    tv = th / aspect
+    # lens shift (scene_pipeline.camera_poses): the frame centre at tan = dz / dist, clamped
+    t0 = max(-2 * SCENE_CAMERA_MAX_SHIFT * th, min(2 * SCENE_CAMERA_MAX_SHIFT * th, (aim[2] - z) / max(n, 0.5)))
+    out = []
+    for p in placements:
+        near = _footprint_dist(x, y, p)
+        if p.location[2] + p.dims[2] / 2 < OCCLUDER_MIN_TOP_M or near > NEAR_M:
+            continue  # low pieces (a desk or coffee-table top at the bottom edge) frame a room photo
+        ox, oy = p.location[0] - x, p.location[1] - y
+        ahead = ox * vx + oy * vy
+        if ahead <= 0:
+            continue  # behind the lens
+        side = ox * -vy + oy * vx
+        span = max(p.dims[0], p.dims[1]) / 2
+        depth = max(ahead - span, near, 0.25)  # its nearest face (a desk seen corner-on: the corner)
+        h0, h1 = max((side - span) / depth, -th), min((side + span) / depth, th)
+        bottom, top = p.location[2] - p.dims[2] / 2, p.location[2] + p.dims[2] / 2
+        far = max(ahead + span, depth)  # a top below the eye shows its far edge highest (a desk top)
+        v0, v1 = max((bottom - z) / depth, t0 - tv), min((top - z) / (far if top < z else depth), t0 + tv)
+        if h1 <= h0 or v1 <= v0:
+            continue
+        out.append((p.id, (h1 - h0) / (2 * th) * (v1 - v0) / (2 * tv)))
+    return out
+
+
+def _audience(placements: list[Placement]) -> set[str]:
+    """Desks and chairs that face a board (within 45 deg)."""
+    boards = [p for p in placements if p.category in BOARDS]
+    out = set()
+    for p in placements:
+        if p.category not in _AUDIENCE:
+            continue
+        f = _front(p)
+        for b in boards:
+            ox, oy = b.location[0] - p.location[0], b.location[1] - p.location[1]
+            r = math.hypot(ox, oy) or 1e-6
+            if (ox * f[0] + oy * f[1]) / r > 0.7:
+                out.add(p.id)
+                break
+    return out
+
+
 def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float, z: float,
                aim: tuple[float, float, float] | None = None, hfov_deg: float | None = None) -> View:
     """Score a camera at (x, y, z) looking at ``aim`` (default: the focus centroid). With no
@@ -166,20 +228,28 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
     half = math.radians(hfov_deg) / 2
     seen = tuple(k for k, a in ang.items() if a <= half)
     fronts = 0.0
+    facing_board = 0.0
+    audience = _audience(placements)
     for k in seen:
         p = by_id[k]
         wf = SEATING.get(p.category, 0.0) + FEATURES.get(p.category, 0.0)
+        if audience and p.category in BOARDS:
+            wf *= 3.0  # the board is what a classroom view is about
         if wf <= 0:
             continue
         ox, oy = p.location[0] - x, p.location[1] - y
         r = math.hypot(ox, oy) or 1e-6
         f = _front(p)
         c = -(ox * f[0] + oy * f[1]) / r
+        if k in audience:
+            c = -c  # seen from behind the class, looking where it looks: right; from the board: wrong
+        if audience and p.category in BOARDS:
+            facing_board += 1.5 * c  # the board face-on from the back, not edge-on from a corner
         # the back of a sofa or armchair in frame is what reads as "facing the wall": it counts
         # double, and more the nearer it stands to the middle of the picture (a chair's back
         # dead centre in the foreground, lightning aidb5's lobby ring seen along its axis)
         centre = max(0.0, 1.0 - ang[k] / half)
-        fronts += wf * c * ((2.0 + 2.0 * centre) if c < 0 and p.category in SEATING else 1.0)
+        fronts += wf * c * ((2.0 + 2.0 * centre) if c < 0 and p.category in SEATING and k not in audience else 1.0)
     tot = sum(weights.values())
     framed = sum(weights[k] for k in seen) / tot
     solid = [p for p in placements if p.dims[2] > 0.05]
@@ -195,8 +265,9 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
     # how much of the picture the subject fills: a few racks in one corner of a 50 m hall seen
     # from the far wall were specks (lightning aidb5 warehouse)
     fill = min(1.0, max((ang[k] for k in seen), default=0.0) / half)
+    cover = sum(f for _k, f in foreground_cover(placements, x, y, z, aim, hfov_deg) if f > COVER_MAX)
     score = (2.0 * framed + fronts / max(1.0, len(seen)) ** 0.5 + 0.4 * min(dist, 6.0) / 6.0 + 0.8 * fill
-             - (3.0 if clearance < _CLEAR_M else 0.0) - 1.0 * blocked)
+             - (3.0 if clearance < _CLEAR_M else 0.0) - 1.0 * blocked - 6.0 * cover + facing_board)
     return View(x, y, z, aim, hfov_deg, score, seen, fronts)
 
 

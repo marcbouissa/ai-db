@@ -98,10 +98,11 @@ def test_spec_variant_field_round_trips_and_coerces():
     data["objects"][2]["variant"] = "spaceship"
     spec, errors = sp._parse_spec(data)
     assert spec is not None, errors
-    assert [o.variant for o in spec.objects] == ["chesterfield", "mid_century", None]
+    # the armchair pair (count 2) is split into chair_1 / chair_2 by the seating group: both keep it
+    assert [o.variant for o in spec.objects] == ["chesterfield", "mid_century", "mid_century", None]
     assert any("spaceship" in n for n in spec.notes)
     out = spec.to_dict()["objects"]
-    assert out[0]["variant"] == "chesterfield" and "variant" not in out[2]
+    assert out[0]["variant"] == "chesterfield" and "variant" not in out[3]
 
 
 def _gen(cmds):

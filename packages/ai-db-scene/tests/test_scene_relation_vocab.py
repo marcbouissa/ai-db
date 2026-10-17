@@ -54,8 +54,10 @@ def test_wall_names_near_and_self_relations():
     assert ("plant1", "against_wall", "wall_north", None) in rels
     spec, rels = _rels("qwen3-14b-local-aidb6/warehouse#1")
     assert not any(a == b for a, _r, b, _d in rels)
-    rack = next(o for o in spec.objects if o.id == "pallet_rack")
-    assert rack.grid is not None and rack.grid[:2] == (1, 4)  # "four pallet racks in_row": one row
+    # "four pallet racks in_row": rows of racks (two, facing across a forklift aisle since aidb7)
+    rows = [o for o in spec.objects if o.category == "pallet_rack"]
+    assert [o.id for o in rows] == ["pallet_rack_row_a", "pallet_rack_row_b"]
+    assert all(o.grid is not None and o.grid[:2] == (1, 2) for o in rows)
     assert any("evenly_spaced" in n and "dropped" in n for n in spec.notes)
     spec, rels = _rels("qwen3-14b-local-aidb6/warehouse#2")
     assert not any(b == "ceiling" for _a, _r, b, _d in rels)

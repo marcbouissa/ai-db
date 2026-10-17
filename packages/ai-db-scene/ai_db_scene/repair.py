@@ -148,6 +148,29 @@ def explain(err: LayoutError, grown: bool) -> str:
             "(edit_scene / resubmit), e.g. give a wall-mounted object its own wall")
 
 
+#: in-between room sizes tried before a full growth step (fractions of the step)
+_TIGHT_STEPS = (0.25, 0.5, 0.75)
+
+
+def _tighter(before: dict[str, Any], grown: dict[str, Any], seed: int) -> tuple[dict[str, Any], str] | None:
+    """The smallest room between ``before`` and ``grown`` that solves (a whole growth step left
+    a classroom or a lobby with a band of empty floor round the content); None if none does."""
+    b0, b1 = before["setting"]["bounds_m"], grown["setting"]["bounds_m"]
+    for f in _TIGHT_STEPS:
+        data = copy.deepcopy(grown)
+        st = data["setting"]
+        st["bounds_m"] = [round(b0[0] + (b1[0] - b0[0]) * f, 2), round(b0[1] + (b1[1] - b0[1]) * f, 2), b1[2]]
+        spec, _errors = validate_spec(data)
+        if spec is None:
+            continue
+        try:
+            solve_layout(spec, seed=seed)
+        except LayoutError:
+            continue
+        return data, f"enlarged the setting to {st['bounds_m'][0]} x {st['bounds_m'][1]} m"
+    return None
+
+
 @dataclass
 class Repaired:
     """The outcome of ``solve_with_repairs``."""
@@ -182,6 +205,16 @@ def solve_with_repairs(data: dict[str, Any], seed: int = 0, max_repairs: int = 6
         except LayoutError as e:
             err = e
         fix = relax(data, err, original) if len(out.repairs) < max_repairs else None
+        if fix is not None and fix[1].startswith("enlarged") and not tried_second_seed:
+            # a bigger room is the last thing to try: the sampler may just have been unlucky
+            # (qwen aidb7 classroom: 10 x 8 m grew to 12 x 9.6 m on seed 0, seed 1 fits it)
+            tried_second_seed = True
+            try:
+                out.placements = solve_layout(spec, seed=seed + _SECOND_SEED)
+                out.repairs.append("solved with a second seed (kept the room size)")
+                return out
+            except LayoutError:
+                pass
         label = re.match(r"dropped relation '(\S+ (\w+) \S+)'", fix[1]) if fix else None
         if label and label.group(2) in _KEEP_HARDER and not tried_second_seed:
             tried_second_seed = True  # judges notice a sofa that does not face the TV: try once more first
@@ -195,6 +228,10 @@ def solve_with_repairs(data: dict[str, Any], seed: int = 0, max_repairs: int = 6
             out.error = err
             out.hint = explain(err, any(r.startswith("enlarged") for r in out.repairs))
             return out
+        if fix[1].startswith("enlarged"):
+            tight = _tighter(data, fix[0], seed)
+            if tight is not None:  # a step between the two sizes is enough: no emptier room than needed
+                fix = tight
         data, note = fix
         out.data = data
         out.repairs.append(note)

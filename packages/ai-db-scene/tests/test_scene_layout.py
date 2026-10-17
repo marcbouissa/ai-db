@@ -132,7 +132,7 @@ def synthetic_specs() -> list[dict]:
 def test_synthetic_specs_satisfy_all_constraints(idx):
     spec = _spec(synthetic_specs()[idx])
     placements = solve_layout(spec, seed=idx)
-    assert len(placements) == sum(o.count for o in spec.objects)
+    assert len(placements) == sum(o.count * (1 + o.seats) for o in spec.objects)  # chairs at tables are seats
     issues = check_layout(spec, placements)
     assert issues == [], issues  # overlaps, bounds, support, every hard relation, facing
 

@@ -120,10 +120,29 @@ class _SeatPlan:
     box: Dims
 
 
-def _seat_plan(table: Dims, n: int, chair: Dims, category: str, back_first: bool = False) -> _SeatPlan:
+#: what rows of desks face, and the walkway kept behind their last row (m)
+_BOARDS = ("whiteboard", "blackboard", "chalkboard", "projector_screen")
+_BACK_AISLE_M = 0.6
+#: round table diameter (m) by the chairs round it: a cafe two-top, a four-top, a family table
+_ROUND_DIAMETER_M = ((2, 0.8), (4, 1.0), (6, 1.2))
+
+
+def round_table_dims(category: str, typical: Dims, seats: int) -> Dims:
+    """A round table's footprint: a square of its diameter (dining by its seats, else the
+    category's typical depth: a round coffee table as deep as a rect one)."""
+    if category in ("dining_table", "conference_table"):
+        dia = next((d for n, d in _ROUND_DIAMETER_M if seats <= n), 1.4)
+    else:
+        dia = min(typical[0], max(typical[1], 0.5) * 1.3)
+    return (dia, dia, typical[2])
+
+
+def _seat_plan(table: Dims, n: int, chair: Dims, category: str, back_first: bool = False,
+               front_only: bool = False) -> _SeatPlan:
     """``back_first``: a table that *faces* something (desks facing the board) seats its first
     chair behind it, so the person looks the same way; otherwise the front (a desk against a
-    wall faces into the room, its chair in front of it)."""
+    wall faces into the room, its chair in front of it). ``front_only``: every seat along the
+    front (a counter against a wall: stools never between it and the wall)."""
     w, d, h = table
     first, second = ("back", "front") if back_first else ("front", "back")
     cw, cd = chair[0], chair[1]
@@ -132,6 +151,9 @@ def _seat_plan(table: Dims, n: int, chair: Dims, category: str, back_first: bool
     cap_end = max(1, int((d + _SEAT_SPACING_M) // pitch))
     sides = {"front": 0, "back": 0, "left": 0, "right": 0}
     for _ in range(n):  # front/back alternately, then the ends, then overflow on the long sides
+        if front_only:
+            sides[first if not back_first else "front"] += 1
+            continue
         side = next((sd for sd, cap in ((first, cap_long), (second, cap_long)) if sides[sd] < cap
                      and sides[sd] <= min(sides["front"], sides["back"])), None) \
             or next((sd for sd, cap in (("left", cap_end), ("right", cap_end)) if sides[sd] < cap
@@ -139,6 +161,8 @@ def _seat_plan(table: Dims, n: int, chair: Dims, category: str, back_first: bool
             or (first if sides[first] <= sides[second] else second)
         sides[side] += 1
     reach = _SEAT_GAP_M + cd / 2
+    if front_only:  # spread along the whole front (two stools at a 2.4 m counter, not huddled mid-way)
+        pitch = max(pitch, w / max(n, 1))
     pts: list[tuple[float, float]] = []
     for side in ("front", "back", "left", "right"):
         k = sides[side]
@@ -285,17 +309,22 @@ class _Problem:
         #: objects with seats: their instances (grid cells) are solved as table + chairs boxes
         self.seated: dict[str, _SeatPlan] = {}
         by_base: dict[str, list[str]] = {}
+        cats = {o.id: o.category for o in spec.objects}
         for o in spec.objects:
             prior = priors.get(o.category)
             if prior is None:
                 raise LayoutError(f"object '{o.id}': category '{o.category}' has no prior", [o.id])
+            if o.shape == "round" and not (dims_override.get(o.id + "_1") or dims_override.get(o.id)):
+                dims_override = {**dims_override, o.id: round_table_dims(o.category, prior.typical_m, o.seats)}
             if o.seats:
                 sc = o.seat_category or SEAT_CATEGORY.get(o.category, "chair")
                 if sc not in priors:
                     raise LayoutError(f"object '{o.id}': seat category '{sc}' has no prior", [o.id])
                 table = (dims_override.get(o.id + "_1") or dims_override.get(o.id) or prior.typical_m)
                 faces = any(r.a == o.id and r.rel == "facing" for r in spec.relations)
-                plan = _seat_plan(table, o.seats, priors[sc].typical_m, sc, back_first=faces)
+                # against a wall (a bar counter, a desk): every seat on the room side, none behind
+                walled = any(r.a == o.id and r.rel == "against_wall" for r in spec.relations)
+                plan = _seat_plan(table, o.seats, priors[sc].typical_m, sc, back_first=faces, front_only=walled)
                 self.seated[o.id] = plan
                 dims_override = {**dims_override, o.id: plan.box, o.id + "_1": plan.box,
                                  **{f"{o.id}_{i}": plan.box for i in range(2, o.count + 1)}}
@@ -304,6 +333,12 @@ class _Problem:
                 cell = dims_override.get(o.id + "_1") or dims_override.get(o.id) or prior.typical_m
                 self.grids[o.id] = (rows, cols, gx, gy, cell)
                 block = (cols * cell[0] + (cols - 1) * gx, rows * cell[1] + (rows - 1) * gy, cell[2])
+                if o.seats and any(r.a == o.id and r.rel == "facing" and r.b in cats and cats[r.b] in _BOARDS
+                                   for r in spec.relations):
+                    # rows of seated desks facing a board keep a walkway behind the last row (aidb7
+                    # classrooms: the back row's chairs stood against the wall, every camera spot
+                    # at the back had a desk in its face); the rows stay at the block's front
+                    block = (block[0], block[1] + _BACK_AISLE_M, block[2])
                 self.insts[o.id] = _Inst(o.id, o.id, o.category, prior, block, o.hero, 0, 1)
                 by_base[o.id] = [o.id]
                 continue
@@ -963,7 +998,12 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
             # at an angle): the facing yaw is then square to the room
             ft = facing_targets[(k // 3) % len(facing_targets)]
             f = _axes(ft.yaw)[1]
-            dist = rng.uniform(0.5, max(pr.W, pr.D))
+            # only distances that keep A inside the room (a 7 x 5 m block of desks drew 2000
+            # out-of-bounds candidates in a 10 x 8 m classroom and the repair grew the room)
+            room = [t for t in ((pr.W - ft.x) / f[0] if f[0] > 1e-6 else (-ft.x / f[0] if f[0] < -1e-6 else math.inf),
+                                (pr.D - ft.y) / f[1] if f[1] > 1e-6 else (-ft.y / f[1] if f[1] < -1e-6 else math.inf))]
+            far = min(room) - _ext(inst.dims, ft.yaw, f) if pr.shape.kind == "rect" else max(pr.W, pr.D)
+            dist = rng.uniform(0.5, far) if far > 0.5 else rng.uniform(0.5, max(pr.W, pr.D))
             x, y = ft.x + f[0] * dist, ft.y + f[1] * dist
         elif prim is None and ceiling_cells and k < 2 * len(ceiling_cells):
             # a free ceiling light: its own cell of an even grid first, then the other cells
@@ -987,6 +1027,15 @@ def _candidates(pr: _Problem, inst: _Inst, poses: dict[str, _Pose], rng: random.
                 x, y, yaw = sp.x, sp.y, sp.yaw  # its place on the rack's levels
             elif prim.rel == "above":
                 x, y = pb.x, pb.y  # snap_walls then moves A onto its wall: same position along it
+            elif prim.rel == "on" and prim.b in pr.grids:
+                # on a grid block (crates on a staging grid of pallets): one cell each, not the gaps
+                cells = _grid_cells(pr, prim.b, pb)
+                _, x, y = cells[inst.idx % len(cells)]
+                if k:
+                    cw, cd = pr.grids[prim.b][4][:2]
+                    x += rng.uniform(-1, 1) * max(cw / 2 - inst.dims[0] / 2, 0) * rb[0]
+                    y += rng.uniform(-1, 1) * max(cd / 2 - inst.dims[1] / 2, 0) * fb[1]
+                    x += rng.uniform(-1, 1) * max(cd / 2 - inst.dims[1] / 2, 0) * fb[0]
             elif prim.rel in ("on", "under"):
                 x = pb.x + jit * max(bdims[0] / 2 - inst.dims[0] / 2, 0) * rb[0] + rng.uniform(-1, 1) * (0 if k == 0 else max(bdims[1] / 2 - inst.dims[1] / 2, 0)) * fb[0]
                 y = pb.y + jit * max(bdims[0] / 2 - inst.dims[0] / 2, 0) * rb[1] + rng.uniform(-1, 1) * (0 if k == 0 else max(bdims[1] / 2 - inst.dims[1] / 2, 0)) * fb[1]
@@ -1489,7 +1538,7 @@ def _collapse_grids(pr: _Problem, placements: list[Placement], issues: list[str]
         return placements
     out = [pl for pl in placements if not any(pl.id.startswith(g + "_") and pl.id[len(g) + 1:].isdigit()
                                                for g in pr.grids)]
-    for gid, (rows, cols, _gx, _gy, cell) in pr.grids.items():
+    for gid, (rows, cols, _gx, gy, cell) in pr.grids.items():
         cells = {pl.id: pl for pl in placements if pl.id.startswith(gid + "_") and pl.id[len(gid) + 1:].isdigit()}
         if len(cells) != rows * cols:
             issues.append(f"hard: grid '{gid}': {len(cells)} of {rows * cols} cells placed")
@@ -1497,7 +1546,10 @@ def _collapse_grids(pr: _Problem, placements: list[Placement], issues: list[str]
         xs = [c.location[0] for c in cells.values()]
         ys = [c.location[1] for c in cells.values()]
         first = cells[f"{gid}_1"]
-        block = _Pose(sum(xs) / len(xs), sum(ys) / len(ys), math.radians(first.rotation_deg_z),
+        yaw = math.radians(first.rotation_deg_z)
+        back = (pr.insts[gid].dims[1] - (rows * cell[1] + (rows - 1) * gy)) / 2  # a walkway behind the rows
+        f = _axes(yaw)[1]
+        block = _Pose(sum(xs) / len(xs) - f[0] * back, sum(ys) / len(ys) - f[1] * back, yaw,
                       first.location[2] - cell[2] / 2)
         for cid, x, y in _grid_cells(pr, gid, block):
             c = cells[cid]
