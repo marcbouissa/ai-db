@@ -211,18 +211,27 @@ if VIEW == "interior":
     cam.location = max(corners, key=clearance)  # the corner farthest from any furniture
     target = Vector((center.x, center.y, floor + 0.8))
 else:
-    # plan: straight down, everything above 2.5 m cut away (ceilings, wall tops, roofs)
+    # plan: straight down. Under a ceiling or roof (a flat slab above 2 m over a good part of the
+    # scene) everything above 2.5 m is cut away; in the open nothing is: the clip hid every tree
+    # and palm canopy (only trunks showed, aidb7 park and beach)
+    def slab(o):
+        cs = [o.matrix_world @ Vector(c) for c in o.bound_box]
+        x0, x1 = min(c.x for c in cs), max(c.x for c in cs)
+        y0, y1 = min(c.y for c in cs), max(c.y for c in cs)
+        z0, z1 = min(c.z for c in cs), max(c.z for c in cs)
+        return z0 >= floor + 2.0 and z1 - z0 < 1.0 and (x1 - x0) * (y1 - y0) >= 0.4 * (hi.x - lo.x) * (hi.y - lo.y)
+    covered = any(slab(o) for o in scene.objects if o.type == "MESH" and o.visible_get())
     cam_data.type = "ORTHO"
     # ortho_scale spans the image's longer side: fit both extents at the render's aspect
     aspect = scene.render.resolution_x / scene.render.resolution_y
     dx, dy = hi.x - lo.x, hi.y - lo.y
     cam_data.ortho_scale = (max(dx, dy * aspect) if aspect >= 1 else max(dx / aspect, dy)) * 1.1
     cam.location = Vector((center.x, center.y, floor + 30.0))
-    cam_data.clip_start, cam_data.clip_end = 30.0 - 2.5, 30.0 + 1.0
+    cam_data.clip_start, cam_data.clip_end = (30.0 - 2.5, 30.0 + 1.0) if covered else (0.1, 30.0 + 1.0)
     target = Vector((center.x, center.y, floor))
 cam.rotation_euler = (target - cam.location).to_track_quat("-Z", "Y").to_euler()
 scene.camera = cam
-result = {"camera": cam.name}
+result = {"camera": cam.name, "clipped": VIEW == "plan" and covered}
 """
 
 
