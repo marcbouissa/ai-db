@@ -498,6 +498,10 @@ def _seating_group(rels: list[Any], objs: list[dict[str, Any]], setting: dict[st
                                                       for r in mine(stand)):
         replace(stand, [{"a": stand, "rel": "against_wall", "b": wall_of(stand) or _OPPOSITE[sw]},
                         {"a": stand, "rel": "facing", "b": sofa}], "on the sofa's axis, facing it")
+    # 2b. the group centred between the sofa's wall and the TV: a sofa flush with the wall of a
+    # deep room left half the room empty behind the coffee table (qwen aidb6 living room)
+    if stand and rect and sw in _OPPOSITE and wall_of(stand) == _OPPOSITE[sw]:
+        _float_sofa(out, sofa, stand, sw, bounds, by_cat, notes)
     # 3. the coffee table centred in front of the sofa
     trels = mine(table)
     if not any(r.get("rel") == "in_front_of" for r in trels) and \
@@ -520,6 +524,43 @@ def _seating_group(rels: list[Any], objs: list[dict[str, Any]], setting: dict[st
             replace(c, [{"a": c, "rel": "beside", "b": table, "gap_m": _CHAIR_TABLE_GAP_M},
                         {"a": c, "rel": "facing", "b": table}], "at the coffee table's short end, facing it")
     return out
+
+
+#: never closer than this from the sofa's front to the TV stand's (m), nor a narrower walkway behind it
+_VIEW_MIN_M = 2.0
+_WALKWAY_M = 0.6
+_FLOAT_MAX_M = 1.5
+
+
+def _float_sofa(rels: list[Any], sofa: str, stand: str, wall: str, bounds: Any, by_cat: dict[str, list[dict[str, Any]]],
+                notes: list[str]) -> None:
+    """The sofa's ``against_wall`` gets a ``gap_m`` that centres the seating group (sofa, coffee
+    table, armchairs at its ends) between the sofa's wall and the TV stand: half the free depth
+    left over on each side, none when that would leave less than a walkway behind the sofa or put
+    the sofa closer than _VIEW_MIN_M to the TV. A gap the model wrote is kept."""
+    if not (isinstance(bounds, list) and len(bounds) >= 2 and all(_num(v) for v in bounds[:2])):
+        return
+    rel = next((r for r in rels if isinstance(r, dict) and r.get("a") == sofa and r.get("rel") == "against_wall"), None)
+    if rel is None or rel.get("gap_m") is not None:
+        return
+    priors = load_priors()
+
+    def depth(cat: str, axis: int = 1) -> float:
+        p = priors.get(cat)
+        return float(p.typical_m[axis]) if p is not None else 0.0
+
+    room = float(bounds[1] if wall in ("wall_north", "wall_south") else bounds[0])
+    stand_cat = next(o["category"] for k in ("tv_stand", "media_console") for o in by_cat.get(k, []) if o["id"] == stand)
+    free = room - depth(stand_cat)
+    table = depth("coffee_table")
+    reach = table / 2 + (max(table / 2, depth("armchair", 0) / 2) if by_cat.get("armchair") else table / 2)
+    group = depth("sofa") + _SOFA_TABLE_GAP_M + reach
+    gap = min((free - group) / 2, _FLOAT_MAX_M, free - depth("sofa") - _VIEW_MIN_M)
+    if gap < _WALKWAY_M:
+        return
+    rel["gap_m"] = round(gap, 2)
+    notes.append(f"seating group: '{sofa}' stands {gap:.2f} m off {wall} so the group is centred between that wall "
+                 f"and '{stand}' (gap_m on its against_wall)")
 
 
 def _ceiling_centres(rels: list[Any], objs: list[dict[str, Any]], prior: Any, notes: list[str]) -> list[Any]:

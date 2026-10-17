@@ -1,0 +1,118 @@
+{
+ "qwen_aidb6_living_room": {
+  "setting": {
+   "bounds_m": [
+    6,
+    5,
+    3
+   ],
+   "style": "cozy",
+   "floor_material": "wood",
+   "wall_material": "beige_paint",
+   "kind": "indoor"
+  },
+  "objects": [
+   {
+    "id": "sofa",
+    "category": "sofa",
+    "material": "fabric",
+    "hero": true
+   },
+   {
+    "id": "tv_stand",
+    "category": "tv_stand",
+    "material": "glass",
+    "hero": true
+   },
+   {
+    "id": "coffee_table",
+    "category": "coffee_table",
+    "material": "wood",
+    "hero": true
+   },
+   {
+    "id": "rug",
+    "category": "rug",
+    "material": "wool",
+    "hero": true
+   },
+   {
+    "id": "armchair1",
+    "category": "armchair",
+    "material": "leather",
+    "hero": true
+   },
+   {
+    "id": "armchair2",
+    "category": "armchair",
+    "material": "leather",
+    "hero": true
+   },
+   {
+    "id": "floor_lamp",
+    "category": "floor_lamp",
+    "material": "metal",
+    "hero": true
+   },
+   {
+    "id": "tv",
+    "category": "tv",
+    "material": "plastic",
+    "hero": true
+   }
+  ],
+  "relations": [
+   {
+    "a": "sofa",
+    "rel": "facing",
+    "b": "tv_stand"
+   },
+   {
+    "a": "coffee_table",
+    "rel": "in_front_of",
+    "b": "sofa"
+   },
+   {
+    "a": "coffee_table",
+    "rel": "on",
+    "b": "rug"
+   },
+   {
+    "a": "armchair1",
+    "rel": "beside",
+    "b": "sofa"
+   },
+   {
+    "a": "armchair2",
+    "rel": "beside",
+    "b": "sofa"
+   },
+   {
+    "a": "floor_lamp",
+    "rel": "beside",
+    "b": "sofa"
+   },
+   {
+    "a": "tv",
+    "rel": "on",
+    "b": "tv_stand"
+   }
+  ],
+  "lighting": {
+   "daylight": true,
+   "lamp": "floor_lamp"
+  },
+  "camera": {
+   "position": [
+    2,
+    2,
+    1.5
+   ],
+   "target": [
+    0,
+    0,
+    0.5
+   ]
+  }
+ }
+}

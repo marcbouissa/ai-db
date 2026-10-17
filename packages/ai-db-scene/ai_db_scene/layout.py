@@ -11,6 +11,8 @@ Conventions
   are the four named walls; ellipse has ``wall`` (+ ``at_deg`` = ellipse parameter angle; copies
   of one object at one at_deg stand side by side along the wall);
   polygons have ``wall_<n>`` (edge n, 1-based) and ``wall`` with ``at_deg`` (ray from the center). ``location`` is the center of the bounding box (z included).
+* ``A against_wall W`` with ``gap_m``: A's back stands that far off the wall (a sofa floated
+  into a deep living room); wall-mounted objects always hang flush.
 * ``A above B``: A is wall-mounted (support ``wall``, with its against_wall relation) straight
   above B: the same position along the wall, A's base ``gap_m`` (default 0.25 m) over B's top.
   A ceiling-hung A (pendant lamp) hangs from the ceiling straight over B's centre.
@@ -310,7 +312,10 @@ class _Problem:
                 default = {"in_front_of": LAYOUT_DEFAULT_IN_FRONT_GAP_M, "beside": LAYOUT_DEFAULT_BESIDE_GAP_M,
                            "around": LAYOUT_DEFAULT_AROUND_GAP_M, "above": LAYOUT_DEFAULT_ABOVE_GAP_M}.get(r.rel, 0.0)
                 gap = default if r.gap_m is None else r.gap_m
-                label = f"{ai} {r.rel} {bi}" + (f" (gap {gap:g} m)" if r.rel in (*_GAP_RELS, "above") else "")
+                if r.rel == "against_wall" and a.prior.support in ("wall", "ceiling"):
+                    gap = 0.0  # a picture or window hangs on the wall itself
+                label = f"{ai} {r.rel} {bi}" + (f" (gap {gap:g} m)" if r.rel in (*_GAP_RELS, "above")
+                                                or (r.rel == "against_wall" and gap) else "")
                 at = self._spread_at(a, r.b, r.at_deg) if r.rel == "against_wall" else r.at_deg
                 self.rels.append(_Rel(ai, r.rel, bi, gap, a.idx, a.n, label, at))
         # every object `around` one target shares one ring, evenly spaced: four armchairs written
@@ -422,7 +427,7 @@ class _Problem:
             if r.at_deg is not None and self.shape.kind != "rect":
                 pose.x, pose.y = p
             s = (pose.x - p[0]) * n[0] + (pose.y - p[1]) * n[1]
-            delta = _ext(inst.dims, pose.yaw, n) - s
+            delta = _ext(inst.dims, pose.yaw, n) + r.gap - s  # gap_m: stands that far off the wall
             pose.x += delta * n[0]
             pose.y += delta * n[1]
             if k == 0 and self.shape.curved:  # a flat back on a curve: slide in until the corners fit
@@ -519,7 +524,7 @@ class _Problem:
         tol = LAYOUT_REL_TOL_M
         if r.rel == "against_wall":
             n, p, _ = self.wall(r.b, r.at_deg, pa.x, pa.y)
-            gap = (pa.x - p[0]) * n[0] + (pa.y - p[1]) * n[1] - _ext(a.dims, pa.yaw, n)
+            gap = (pa.x - p[0]) * n[0] + (pa.y - p[1]) * n[1] - _ext(a.dims, pa.yaw, n) - r.gap
             f = _axes(pa.yaw)[1]
             lo, hi = (-1e-3, _CURVED_WALL_GAP_M) if self.shape.curved else (-1e-3, 1e-3)
             # the first wall turns the object to face the room; a second one (a corner) only
@@ -528,7 +533,8 @@ class _Problem:
             if not lo <= gap <= hi or (first and f[0] * n[0] + f[1] * n[1] < 0.99):
                 return f"'{r.label}': not flush against the wall (gap {gap:.3f} m)"
             if r.at_deg is not None and self.shape.kind != "rect":
-                lat = math.hypot(pa.x - p[0] - (gap + _ext(a.dims, pa.yaw, n)) * n[0], pa.y - p[1] - (gap + _ext(a.dims, pa.yaw, n)) * n[1])
+                off = gap + r.gap + _ext(a.dims, pa.yaw, n)
+                lat = math.hypot(pa.x - p[0] - off * n[0], pa.y - p[1] - off * n[1])
                 if lat > _LATERAL_TOL_M:
                     return f"'{r.label}': {lat:.2f} m away from the requested at_deg position"
             return None
@@ -690,6 +696,15 @@ class _Problem:
                     cost += (0.0 if side else 0.5) + 0.3 * min(abs(across) / max(b.dims[1] / 2, 0.1), 1.0)
                     if not any(q.rel == "facing" for q in self.by_a[inst.id]):
                         cost += 0.3 * _angdiff(pose.yaw, pb.yaw) / math.pi
+            elif r.rel == "on":
+                # faces the way its support does (a TV on its stand turned to the wall was "fixed"
+                # by the validator rotating it in Blender, qwen aidb6 living room)
+                if not any(q.rel == "facing" for q in self.by_a[inst.id]):
+                    cost += 0.3 * _angdiff(pose.yaw, pb.yaw) / math.pi
+                if sum(1 for q in self.by_b.get(r.b, []) if q.rel == "on") == 1:
+                    # the only thing on its support stands in the middle of it
+                    tp, td = self.table_of(r.b, pb)
+                    cost += 0.2 * math.hypot(pose.x - tp.x, pose.y - tp.y) / max(td[0] / 2, 0.1)
             elif r.rel == "centered_in" and self.insts[r.a].flat:
                 # a rug under a table lies parallel to it
                 cost += 0.3 * min(_angdiff(pose.yaw, pb.yaw), _angdiff(pose.yaw, pb.yaw + math.pi)) / _HALF_PI
