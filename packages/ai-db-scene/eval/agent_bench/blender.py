@@ -177,6 +177,15 @@ import bpy
 from mathutils import Vector
 scene = bpy.context.scene
 meshes = [o for o in scene.objects if o.type == "MESH" and o.visible_get()]
+
+def ground_like(o):
+    # terrain, water, the ground to the horizon: framing those showed an empty plane (outdoor scenes)
+    ext = [max((o.matrix_world @ Vector(c))[i] for c in o.bound_box) - min((o.matrix_world @ Vector(c))[i] for c in o.bound_box)
+           for i in range(2)]
+    return (o.get("ai_db_terrain") or str(o.get("category") or "") in ("ground", "water")
+            or o.name.startswith(("ground_beyond", "Ground", "ground", "Plane")) and max(ext) > 30.0 or max(ext) > 60.0)
+
+meshes = [o for o in meshes if not ground_like(o)] or meshes
 lo = Vector((min(min((o.matrix_world @ Vector(c))[i] for c in o.bound_box) for o in meshes) for i in range(3)))
 hi = Vector((max(max((o.matrix_world @ Vector(c))[i] for c in o.bound_box) for o in meshes) for i in range(3)))
 center = (lo + hi) / 2
