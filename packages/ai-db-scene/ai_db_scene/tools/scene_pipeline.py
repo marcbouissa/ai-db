@@ -1742,18 +1742,23 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
     from ai_db_scene.constants import BUILD_FIX_ROUNDS, BUILD_MAX_REPAIRS
     from ai_db_scene.normalize import room_shape_from_brief
     from ai_db_scene.repair import solve_with_repairs
+    from ai_db_scene.terrain import water_from_brief
 
     raw, raw_err = spec_arg(args)
-    shape_note = None
-    if raw_err is None and isinstance(raw, dict):  # "a round lobby" with no setting.shape: an ellipse
-        raw, shape_note = room_shape_from_brief(raw, args.get("brief") or args.get("prompt"))
-        if shape_note:
+    brief_notes: list[str] = []
+    if raw_err is None and isinstance(raw, dict):
+        brief = args.get("brief") or args.get("prompt")
+        raw0 = raw
+        raw, shape_note = room_shape_from_brief(raw, brief)  # "a round lobby" with no setting.shape: an ellipse
+        raw, water_note = water_from_brief(raw, brief)  # "turquoise water" with water left implicit: a lagoon
+        brief_notes = [n for n in (shape_note, water_note) if n]
+        if raw is not raw0:
             args = {**{k: v for k, v in args.items() if k not in SPEC_KEYS}, "spec": raw}
     spec, errors = _spec_from_args(args, remembered=True)
     if spec is None:
         return {"status": "invalid", "errors": errors, "hint": _INVALID_HINT}
-    if shape_note:
-        spec = replace(spec, notes=(shape_note, *spec.notes))
+    if brief_notes:
+        spec = replace(spec, notes=(*brief_notes, *spec.notes))
     spec_id = remember_spec(spec)
     asked = spec  # before repairs: what the model asked for
     # furniture variants follow the first build's spec; edit_scene passes the stored key back

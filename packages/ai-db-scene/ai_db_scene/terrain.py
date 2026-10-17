@@ -415,12 +415,15 @@ def water_relation(rel: Any, category: str | None = None) -> str | None:
 #: brief words -> (ground, water dict or None); the first match wins
 _BRIEF = (
     (("oasis",), "sand", {"kind": "pond"}),
-    (("lagoon", "atoll", "tropical beach", "tropical island", "turquoise water"), "sand",
-     {"kind": "lagoon", "side": "north"}),
-    (("beach", "cove", "seaside", "sea shore", "seashore", "coast", "shore", "bay", "ocean", "sea"), "sand",
-     {"kind": "sea", "side": "north"}),
-    (("lake", "lakeside", "lakeshore", "loch"), "grass", {"kind": "lake", "side": "north"}),
+    (("lagoon", "atoll"), "sand", {"kind": "lagoon", "side": "north"}),
     (("pond", "koi"), "grass", {"kind": "pond"}),
+    (("lake", "lakeside", "lakeshore", "loch"), "grass", {"kind": "lake", "side": "north"}),
+    # calm, shallow, turquoise: a cove, a tropical beach (beach_cove: "a tropical beach cove ... calm
+    # turquoise water" was built as the open sea)
+    (("turquoise", "cove", "tropical beach", "tropical island", "tropical sea", "tropical water", "tropical shore"),
+     "sand", {"kind": "lagoon", "side": "north"}),
+    (("beach", "seaside", "sea shore", "seashore", "coast", "shore", "bay", "ocean", "sea"), "sand",
+     {"kind": "sea", "side": "north"}),
     (("desert", "dune", "dunes"), "sand", None),
     (("tropical", "jungle", "rainforest", "garden", "park", "lawn", "meadow", "backyard", "playground"), "grass", None),
     (("quarry", "canyon", "rocky", "mountain"), "rock", None),
@@ -435,6 +438,43 @@ def brief_terrain(brief: str) -> tuple[str | None, dict[str, Any] | None]:
         if any(f" {w} " in low for w in words):
             return ground, (dict(water) if water else None)
     return None, None
+
+
+#: water words that name the sea itself (not just "water"): the model chose it, the brief does not overrule
+_SEA_WORDS = ("sea", "ocean", "seawater", "bay", "coast", "seaside")
+
+
+def _generic_water(word: Any) -> bool:
+    """True when a word names water but no kind of its own (water, turquoise_water, calm_water)."""
+    return water_kind(word) == "sea" and not set(_word(word).split("_")) & set(_SEA_WORDS)
+
+
+def water_from_brief(data: Any, brief: Any) -> tuple[Any, str | None]:
+    """(spec, note): an outdoor spec whose water the model left implicit (no setting.water, or one
+    without a kind; a water object or a relation to the water's edge with only a generic word)
+    gets the kind of water its brief names: turquoise / cove / tropical beach -> lagoon, pond,
+    lake, sea. Done before validation, so a relation to the water's edge or a wall word
+    (``ferns along back_wall``) finds the water. A water kind the model wrote stays."""
+    if not isinstance(data, dict) or not isinstance(brief, str):
+        return data, None
+    st = data.get("setting")
+    if not isinstance(st, dict) or st.get("kind") != "outdoor":
+        return data, None
+    _ground, water = brief_terrain(brief)
+    if water is None:
+        return data, None
+    have = st.get("water")
+    if have not in (None, True) and not (isinstance(have, dict) and "kind" not in have):
+        return data, None
+    raw_objs = data.get("objects")
+    objs: list[Any] = raw_objs if isinstance(raw_objs, list) else []
+    for o in objs:  # a water object with a kind of its own (pond, lake, ocean) decides
+        cat = o.get("category") if isinstance(o, dict) else None
+        if isinstance(cat, str) and water_kind(cat) is not None and ground_kind(cat) is None and not _generic_water(cat):
+            return data, None
+    new = {**water, **(have if isinstance(have, dict) else {})}
+    return ({**data, "setting": {**st, "water": new}},
+            f"setting.water: {{kind: {new['kind']}}} from the brief (the spec named no kind of water)")
 
 
 def apply_brief_defaults(spec: SceneSpec, brief: str | None) -> tuple[SceneSpec, list[str]]:
