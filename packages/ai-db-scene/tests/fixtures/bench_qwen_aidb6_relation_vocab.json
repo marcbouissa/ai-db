@@ -1,0 +1,1345 @@
+{
+ "qwen3-14b-local-aidb6/beach_cove#4": {
+  "setting": {
+   "kind": "outdoor",
+   "bounds_m": [
+    20,
+    15,
+    5
+   ],
+   "floor_material": "sand",
+   "style": "tropical"
+  },
+  "objects": [
+   {
+    "id": "palm_trees",
+    "category": "tree",
+    "material": "palm_leaf",
+    "count": 5
+   },
+   {
+    "id": "bushes",
+    "category": "bush",
+    "material": "leaf",
+    "count": 3
+   },
+   {
+    "id": "boardwalk",
+    "category": "bench",
+    "material": "wood",
+    "count": 1
+   },
+   {
+    "id": "loungers",
+    "category": "bench",
+    "material": "fabric",
+    "count": 2
+   },
+   {
+    "id": "parasol",
+    "category": "fence_section",
+    "material": "canvas",
+    "count": 1
+   },
+   {
+    "id": "rocks",
+    "category": "rock",
+    "material": "stone",
+    "count": 4
+   }
+  ],
+  "relations": [
+   {
+    "a": "boardwalk",
+    "rel": "connects",
+    "b": "bushes"
+   },
+   {
+    "a": "loungers",
+    "rel": "under",
+    "b": "parasol"
+   },
+   {
+    "a": "rocks",
+    "rel": "at_edge_of",
+    "b": "floor"
+   }
+  ]
+ },
+ "qwen3-14b-local-aidb6/cafe#1": {
+  "setting": {
+   "bounds_m": [
+    5,
+    5,
+    3
+   ],
+   "kind": "indoor",
+   "style": "cafe",
+   "floor_material": "wood",
+   "wall_material": "beige_paint"
+  },
+  "objects": [
+   {
+    "id": "table1",
+    "category": "dining_table",
+    "count": 1,
+    "material": "oak_wood",
+    "hero": true
+   },
+   {
+    "id": "table2",
+    "category": "dining_table",
+    "count": 1,
+    "material": "oak_wood",
+    "hero": true
+   },
+   {
+    "id": "table3",
+    "category": "dining_table",
+    "count": 1,
+    "material": "oak_wood",
+    "hero": true
+   },
+   {
+    "id": "table4",
+    "category": "dining_table",
+    "count": 1,
+    "material": "oak_wood",
+    "hero": true
+   },
+   {
+    "id": "chair1",
+    "category": "dining_chair",
+    "count": 2,
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "chair2",
+    "category": "dining_chair",
+    "count": 2,
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "chair3",
+    "category": "dining_chair",
+    "count": 2,
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "chair4",
+    "category": "dining_chair",
+    "count": 2,
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "counter",
+    "category": "bar_counter",
+    "count": 1,
+    "material": "granite",
+    "hero": true
+   },
+   {
+    "id": "stool1",
+    "category": "bar_stool",
+    "count": 1,
+    "material": "metal",
+    "hero": false
+   },
+   {
+    "id": "stool2",
+    "category": "bar_stool",
+    "count": 1,
+    "material": "metal",
+    "hero": false
+   },
+   {
+    "id": "plant1",
+    "category": "potted_plant",
+    "count": 1,
+    "material": "leaf_green",
+    "hero": false
+   },
+   {
+    "id": "plant2",
+    "category": "potted_plant",
+    "count": 1,
+    "material": "leaf_green",
+    "hero": false
+   },
+   {
+    "id": "plant3",
+    "category": "potted_plant",
+    "count": 1,
+    "material": "leaf_green",
+    "hero": false
+   }
+  ],
+  "relations": [
+   {
+    "a": "table1",
+    "rel": "beside",
+    "b": "table2"
+   },
+   {
+    "a": "table3",
+    "rel": "beside",
+    "b": "table4"
+   },
+   {
+    "a": "table1",
+    "rel": "in_front_of",
+    "b": "counter"
+   },
+   {
+    "a": "table3",
+    "rel": "in_front_of",
+    "b": "counter"
+   },
+   {
+    "a": "chair1",
+    "rel": "around",
+    "b": "table1"
+   },
+   {
+    "a": "chair2",
+    "rel": "around",
+    "b": "table1"
+   },
+   {
+    "a": "chair3",
+    "rel": "around",
+    "b": "table3"
+   },
+   {
+    "a": "chair4",
+    "rel": "around",
+    "b": "table3"
+   },
+   {
+    "a": "stool1",
+    "rel": "beside",
+    "b": "counter"
+   },
+   {
+    "a": "stool2",
+    "rel": "beside",
+    "b": "counter"
+   },
+   {
+    "a": "plant1",
+    "rel": "corner",
+    "b": "north_west"
+   },
+   {
+    "a": "plant2",
+    "rel": "corner",
+    "b": "south_east"
+   },
+   {
+    "a": "plant3",
+    "rel": "beside",
+    "b": "counter"
+   }
+  ],
+  "lighting": {
+   "engine": "cycles",
+   "samples": 128,
+   "sky": true,
+   "resolution": [
+    1920,
+    1080
+   ]
+  },
+  "camera": {
+   "position": [
+    2.5,
+    2.5,
+    1.5
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "fov": 75
+  }
+ },
+ "qwen3-14b-local-aidb6/cafe#2": {
+  "setting": {
+   "bounds_m": [
+    5,
+    5,
+    3
+   ],
+   "kind": "indoor",
+   "style": "cafe",
+   "floor_material": "wood",
+   "wall_material": "beige_paint"
+  },
+  "objects": [
+   {
+    "id": "table1",
+    "category": "dining_table",
+    "count": 1,
+    "material": "oak_wood",
+    "hero": true
+   },
+   {
+    "id": "table2",
+    "category": "dining_table",
+    "count": 1,
+    "material": "oak_wood",
+    "hero": true
+   },
+   {
+    "id": "table3",
+    "category": "dining_table",
+    "count": 1,
+    "material": "oak_wood",
+    "hero": true
+   },
+   {
+    "id": "table4",
+    "category": "dining_table",
+    "count": 1,
+    "material": "oak_wood",
+    "hero": true
+   },
+   {
+    "id": "chair1",
+    "category": "dining_chair",
+    "count": 2,
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "chair2",
+    "category": "dining_chair",
+    "count": 2,
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "chair3",
+    "category": "dining_chair",
+    "count": 2,
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "chair4",
+    "category": "dining_chair",
+    "count": 2,
+    "material": "fabric",
+    "hero": false
+   },
+   {
+    "id": "counter",
+    "category": "bar_counter",
+    "count": 1,
+    "material": "granite",
+    "hero": true
+   },
+   {
+    "id": "stool1",
+    "category": "bar_stool",
+    "count": 1,
+    "material": "metal",
+    "hero": false
+   },
+   {
+    "id": "stool2",
+    "category": "bar_stool",
+    "count": 1,
+    "material": "metal",
+    "hero": false
+   },
+   {
+    "id": "plant1",
+    "category": "potted_plant",
+    "count": 1,
+    "material": "leaf_green",
+    "hero": false
+   },
+   {
+    "id": "plant2",
+    "category": "potted_plant",
+    "count": 1,
+    "material": "leaf_green",
+    "hero": false
+   },
+   {
+    "id": "plant3",
+    "category": "potted_plant",
+    "count": 1,
+    "material": "leaf_green",
+    "hero": false
+   }
+  ],
+  "relations": [
+   {
+    "a": "table1",
+    "rel": "beside",
+    "b": "table2"
+   },
+   {
+    "a": "table3",
+    "rel": "beside",
+    "b": "table4"
+   },
+   {
+    "a": "table1",
+    "rel": "in_front_of",
+    "b": "counter"
+   },
+   {
+    "a": "table3",
+    "rel": "in_front_of",
+    "b": "counter"
+   },
+   {
+    "a": "chair1",
+    "rel": "around",
+    "b": "table1"
+   },
+   {
+    "a": "chair2",
+    "rel": "around",
+    "b": "table1"
+   },
+   {
+    "a": "chair3",
+    "rel": "around",
+    "b": "table3"
+   },
+   {
+    "a": "chair4",
+    "rel": "around",
+    "b": "table3"
+   },
+   {
+    "a": "stool1",
+    "rel": "beside",
+    "b": "counter"
+   },
+   {
+    "a": "stool2",
+    "rel": "beside",
+    "b": "counter"
+   },
+   {
+    "a": "plant1",
+    "rel": "against_wall",
+    "b": "north_wall"
+   },
+   {
+    "a": "plant2",
+    "rel": "against_wall",
+    "b": "south_wall"
+   },
+   {
+    "a": "plant3",
+    "rel": "beside",
+    "b": "counter"
+   }
+  ],
+  "lighting": {
+   "engine": "cycles",
+   "samples": 128,
+   "sky": true,
+   "resolution": [
+    1920,
+    1080
+   ]
+  },
+  "camera": {
+   "position": [
+    2.5,
+    2.5,
+    1.5
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "fov": 75
+  }
+ },
+ "qwen3-14b-local-aidb6/classroom#1": {
+  "setting": {
+   "bounds_m": [
+    10,
+    8,
+    3
+   ],
+   "style": "modern",
+   "floor_material": "carpet",
+   "kind": "indoor"
+  },
+  "objects": [
+   {
+    "id": "teacher_desk",
+    "category": "desk",
+    "material": "wood",
+    "hero": true
+   },
+   {
+    "id": "teacher_chair",
+    "category": "chair",
+    "material": "fabric",
+    "hero": true
+   },
+   {
+    "id": "whiteboard",
+    "category": "whiteboard",
+    "material": "white",
+    "hero": true
+   },
+   {
+    "id": "student_desk",
+    "category": "desk",
+    "material": "wood",
+    "count": 12
+   },
+   {
+    "id": "student_chair",
+    "category": "chair",
+    "material": "fabric",
+    "count": 12
+   }
+  ],
+  "relations": [
+   {
+    "a": "whiteboard",
+    "rel": "on",
+    "b": "front_wall"
+   },
+   {
+    "a": "teacher_desk",
+    "rel": "in_front_of",
+    "b": "whiteboard"
+   },
+   {
+    "a": "teacher_chair",
+    "rel": "beside",
+    "b": "teacher_desk"
+   },
+   {
+    "a": "student_desk",
+    "rel": "opposite",
+    "b": "whiteboard",
+    "count": 12
+   },
+   {
+    "a": "student_chair",
+    "rel": "beside",
+    "b": "student_desk",
+    "count": 12
+   }
+  ],
+  "lighting": {
+   "engine": "cycles",
+   "samples": 128,
+   "sky": true
+  },
+  "camera": {
+   "position": [
+    5,
+    -4,
+    1.5
+   ],
+   "rotation": [
+    1.5,
+    0,
+    0
+   ]
+  }
+ },
+ "qwen3-14b-local-aidb6/classroom#2": {
+  "setting": {
+   "bounds_m": [
+    10,
+    8,
+    3
+   ],
+   "style": "modern",
+   "floor_material": "carpet",
+   "kind": "indoor"
+  },
+  "objects": [
+   {
+    "id": "teacher_desk",
+    "category": "desk",
+    "material": "wood",
+    "hero": true
+   },
+   {
+    "id": "teacher_chair",
+    "category": "chair",
+    "material": "fabric",
+    "hero": true
+   },
+   {
+    "id": "whiteboard",
+    "category": "whiteboard",
+    "material": "white",
+    "hero": true
+   },
+   {
+    "id": "student_desk",
+    "category": "desk",
+    "material": "wood",
+    "count": 12
+   },
+   {
+    "id": "student_chair",
+    "category": "chair",
+    "material": "fabric",
+    "count": 12
+   }
+  ],
+  "relations": [
+   {
+    "a": "whiteboard",
+    "rel": "against_wall",
+    "b": "south"
+   },
+   {
+    "a": "teacher_desk",
+    "rel": "in_front_of",
+    "b": "whiteboard"
+   },
+   {
+    "a": "teacher_chair",
+    "rel": "beside",
+    "b": "teacher_desk"
+   },
+   {
+    "a": "student_desk",
+    "rel": "in_front_of",
+    "b": "whiteboard"
+   },
+   {
+    "a": "student_chair",
+    "rel": "beside",
+    "b": "student_desk"
+   }
+  ],
+  "lighting": {
+   "engine": "cycles",
+   "samples": 128,
+   "sky": true
+  },
+  "camera": {
+   "position": [
+    5,
+    -4,
+    1.5
+   ],
+   "rotation": [
+    1.5,
+    0,
+    0
+   ]
+  }
+ },
+ "qwen3-14b-local-aidb6/park_corner#1": {
+  "setting": {
+   "kind": "outdoor",
+   "bounds_m": [
+    20,
+    20,
+    5
+   ],
+   "floor_material": "grass"
+  },
+  "objects": [
+   {
+    "id": "bench1",
+    "category": "bench",
+    "material": "wood",
+    "hero": true
+   },
+   {
+    "id": "bench2",
+    "category": "bench",
+    "material": "metal",
+    "hero": true
+   },
+   {
+    "id": "bench3",
+    "category": "bench",
+    "material": "plastic",
+    "hero": true
+   },
+   {
+    "id": "fountain",
+    "category": "fountain",
+    "material": "stone",
+    "hero": true
+   },
+   {
+    "id": "tree1",
+    "category": "tree",
+    "material": "leafy",
+    "hero": true
+   },
+   {
+    "id": "tree2",
+    "category": "tree",
+    "material": "leafy",
+    "hero": true
+   },
+   {
+    "id": "trash_can",
+    "category": "trash_can",
+    "material": "metal",
+    "hero": false
+   },
+   {
+    "id": "lamp1",
+    "category": "street_lamp",
+    "material": "metal",
+    "hero": true
+   },
+   {
+    "id": "lamp2",
+    "category": "street_lamp",
+    "material": "metal",
+    "hero": true
+   }
+  ],
+  "relations": [
+   {
+    "a": "bench1",
+    "rel": "facing",
+    "b": "fountain"
+   },
+   {
+    "a": "bench2",
+    "rel": "facing",
+    "b": "fountain"
+   },
+   {
+    "a": "bench3",
+    "rel": "facing",
+    "b": "fountain"
+   },
+   {
+    "a": "tree1",
+    "rel": "beside",
+    "b": "fountain"
+   },
+   {
+    "a": "tree2",
+    "rel": "beside",
+    "b": "fountain"
+   },
+   {
+    "a": "trash_can",
+    "rel": "near",
+    "b": "bench1"
+   },
+   {
+    "a": "lamp1",
+    "rel": "at_corner",
+    "b": "north"
+   },
+   {
+    "a": "lamp2",
+    "rel": "at_corner",
+    "b": "south"
+   }
+  ],
+  "lighting": {
+   "daylight": true,
+   "intensity": 1.2
+  },
+  "camera": {
+   "position": [
+    0,
+    0,
+    3
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "type": "perspective"
+  }
+ },
+ "qwen3-14b-local-aidb6/park_corner#2": {
+  "setting": {
+   "kind": "outdoor",
+   "bounds_m": [
+    20,
+    20,
+    5
+   ],
+   "floor_material": "grass"
+  },
+  "objects": [
+   {
+    "id": "bench1",
+    "category": "bench",
+    "material": "wood",
+    "hero": true
+   },
+   {
+    "id": "bench2",
+    "category": "bench",
+    "material": "metal",
+    "hero": true
+   },
+   {
+    "id": "bench3",
+    "category": "bench",
+    "material": "plastic",
+    "hero": true
+   },
+   {
+    "id": "fountain",
+    "category": "fountain",
+    "material": "stone",
+    "hero": true
+   },
+   {
+    "id": "tree1",
+    "category": "tree",
+    "material": "leafy",
+    "hero": true
+   },
+   {
+    "id": "tree2",
+    "category": "tree",
+    "material": "leafy",
+    "hero": true
+   },
+   {
+    "id": "trash_can",
+    "category": "trash_can",
+    "material": "metal",
+    "hero": false
+   },
+   {
+    "id": "lamp1",
+    "category": "street_lamp",
+    "material": "metal",
+    "hero": true
+   },
+   {
+    "id": "lamp2",
+    "category": "street_lamp",
+    "material": "metal",
+    "hero": true
+   }
+  ],
+  "relations": [
+   {
+    "a": "bench1",
+    "rel": "facing",
+    "b": "fountain"
+   },
+   {
+    "a": "bench2",
+    "rel": "facing",
+    "b": "fountain"
+   },
+   {
+    "a": "bench3",
+    "rel": "facing",
+    "b": "fountain"
+   },
+   {
+    "a": "tree1",
+    "rel": "beside",
+    "b": "fountain"
+   },
+   {
+    "a": "tree2",
+    "rel": "beside",
+    "b": "fountain"
+   },
+   {
+    "a": "trash_can",
+    "rel": "beside",
+    "b": "bench1"
+   },
+   {
+    "a": "lamp1",
+    "rel": "against_wall",
+    "b": "north"
+   },
+   {
+    "a": "lamp2",
+    "rel": "against_wall",
+    "b": "south"
+   }
+  ],
+  "lighting": {
+   "daylight": true,
+   "intensity": 1.2
+  },
+  "camera": {
+   "position": [
+    0,
+    0,
+    3
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "type": "perspective"
+  }
+ },
+ "qwen3-14b-local-aidb6/round_lobby#1": {
+  "setting": {
+   "kind": "indoor",
+   "shape": "ellipse",
+   "floor_material": "marble",
+   "bounds_m": [
+    10,
+    10,
+    3
+   ]
+  },
+  "objects": [
+   {
+    "id": "reception_desk",
+    "category": "reception_desk",
+    "material": "wood",
+    "hero": true
+   },
+   {
+    "id": "armchair_1",
+    "category": "armchair",
+    "material": "leather"
+   },
+   {
+    "id": "armchair_2",
+    "category": "armchair",
+    "material": "leather"
+   },
+   {
+    "id": "armchair_3",
+    "category": "armchair",
+    "material": "leather"
+   },
+   {
+    "id": "armchair_4",
+    "category": "armchair",
+    "material": "leather"
+   },
+   {
+    "id": "low_table",
+    "category": "coffee_table",
+    "material": "glass",
+    "hero": true
+   },
+   {
+    "id": "plant_1",
+    "category": "potted_plant",
+    "material": "leaf"
+   },
+   {
+    "id": "plant_2",
+    "category": "potted_plant",
+    "material": "leaf"
+   },
+   {
+    "id": "pendant_lamp",
+    "category": "pendant_lamp",
+    "material": "metal",
+    "hero": true
+   }
+  ],
+  "relations": [
+   {
+    "a": "armchair_1",
+    "rel": "around",
+    "b": "low_table"
+   },
+   {
+    "a": "armchair_2",
+    "rel": "around",
+    "b": "low_table"
+   },
+   {
+    "a": "armchair_3",
+    "rel": "around",
+    "b": "low_table"
+   },
+   {
+    "a": "armchair_4",
+    "rel": "around",
+    "b": "low_table"
+   },
+   {
+    "a": "pendant_lamp",
+    "rel": "above",
+    "b": "low_table"
+   },
+   {
+    "a": "reception_desk",
+    "rel": "near",
+    "b": "entrance"
+   }
+  ],
+  "lighting": {
+   "daylight": true,
+   "lamp": "pendant_lamp"
+  },
+  "camera": {
+   "position": [
+    0,
+    0,
+    2.5
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "type": "perspective"
+  }
+ },
+ "qwen3-14b-local-aidb6/warehouse#1": {
+  "setting": {
+   "kind": "indoor",
+   "bounds_m": [
+    10,
+    10,
+    5
+   ],
+   "floor_material": "concrete",
+   "wall_material": "metal"
+  },
+  "objects": [
+   {
+    "id": "pallet_rack",
+    "category": "pallet_rack",
+    "count": 4,
+    "material": "metal",
+    "hero": true
+   },
+   {
+    "id": "pallet",
+    "category": "pallet",
+    "count": 8,
+    "material": "wood"
+   },
+   {
+    "id": "forklift",
+    "category": "forklift",
+    "count": 1,
+    "material": "metal"
+   },
+   {
+    "id": "workbench",
+    "category": "workbench",
+    "count": 1,
+    "material": "metal"
+   },
+   {
+    "id": "safety_barrier",
+    "category": "safety_barrier",
+    "count": 2,
+    "material": "metal"
+   },
+   {
+    "id": "ceiling_light",
+    "category": "ceiling_light",
+    "count": 6,
+    "material": "metal"
+   }
+  ],
+  "relations": [
+   {
+    "a": "pallet_rack",
+    "rel": "in_row",
+    "b": "pallet_rack"
+   },
+   {
+    "a": "forklift",
+    "rel": "beside",
+    "b": "pallet_rack"
+   },
+   {
+    "a": "workbench",
+    "rel": "in_front_of",
+    "b": "pallet_rack"
+   },
+   {
+    "a": "safety_barrier",
+    "rel": "around",
+    "b": "workbench"
+   },
+   {
+    "a": "ceiling_light",
+    "rel": "evenly_spaced",
+    "b": "ceiling_light"
+   }
+  ],
+  "lighting": {
+   "engine": "cycles",
+   "samples": 128,
+   "sky": true
+  },
+  "camera": {
+   "position": [
+    5,
+    5,
+    3
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "type": "perspective"
+  }
+ },
+ "qwen3-14b-local-aidb6/warehouse#2": {
+  "setting": {
+   "kind": "indoor",
+   "bounds_m": [
+    10,
+    10,
+    5
+   ],
+   "floor_material": "concrete",
+   "wall_material": "metal"
+  },
+  "objects": [
+   {
+    "id": "pallet_rack_1",
+    "category": "pallet_rack",
+    "count": 1,
+    "material": "metal",
+    "hero": true
+   },
+   {
+    "id": "pallet_rack_2",
+    "category": "pallet_rack",
+    "count": 1,
+    "material": "metal",
+    "hero": true
+   },
+   {
+    "id": "pallet_rack_3",
+    "category": "pallet_rack",
+    "count": 1,
+    "material": "metal",
+    "hero": true
+   },
+   {
+    "id": "pallet_rack_4",
+    "category": "pallet_rack",
+    "count": 1,
+    "material": "metal",
+    "hero": true
+   },
+   {
+    "id": "pallet_1",
+    "category": "pallet",
+    "count": 1,
+    "material": "wood"
+   },
+   {
+    "id": "pallet_2",
+    "category": "pallet",
+    "count": 1,
+    "material": "wood"
+   },
+   {
+    "id": "pallet_3",
+    "category": "pallet",
+    "count": 1,
+    "material": "wood"
+   },
+   {
+    "id": "pallet_4",
+    "category": "pallet",
+    "count": 1,
+    "material": "wood"
+   },
+   {
+    "id": "pallet_5",
+    "category": "pallet",
+    "count": 1,
+    "material": "wood"
+   },
+   {
+    "id": "pallet_6",
+    "category": "pallet",
+    "count": 1,
+    "material": "wood"
+   },
+   {
+    "id": "pallet_7",
+    "category": "pallet",
+    "count": 1,
+    "material": "wood"
+   },
+   {
+    "id": "pallet_8",
+    "category": "pallet",
+    "count": 1,
+    "material": "wood"
+   },
+   {
+    "id": "forklift_1",
+    "category": "forklift",
+    "count": 1,
+    "material": "metal"
+   },
+   {
+    "id": "workbench_1",
+    "category": "workbench",
+    "count": 1,
+    "material": "metal"
+   },
+   {
+    "id": "safety_barrier_1",
+    "category": "safety_barrier",
+    "count": 1,
+    "material": "metal"
+   },
+   {
+    "id": "safety_barrier_2",
+    "category": "safety_barrier",
+    "count": 1,
+    "material": "metal"
+   },
+   {
+    "id": "ceiling_light_1",
+    "category": "ceiling_light",
+    "count": 1,
+    "material": "metal"
+   },
+   {
+    "id": "ceiling_light_2",
+    "category": "ceiling_light",
+    "count": 1,
+    "material": "metal"
+   },
+   {
+    "id": "ceiling_light_3",
+    "category": "ceiling_light",
+    "count": 1,
+    "material": "metal"
+   },
+   {
+    "id": "ceiling_light_4",
+    "category": "ceiling_light",
+    "count": 1,
+    "material": "metal"
+   },
+   {
+    "id": "ceiling_light_5",
+    "category": "ceiling_light",
+    "count": 1,
+    "material": "metal"
+   },
+   {
+    "id": "ceiling_light_6",
+    "category": "ceiling_light",
+    "count": 1,
+    "material": "metal"
+   }
+  ],
+  "relations": [
+   {
+    "a": "pallet_rack_1",
+    "rel": "beside",
+    "b": "pallet_rack_2"
+   },
+   {
+    "a": "pallet_rack_2",
+    "rel": "beside",
+    "b": "pallet_rack_3"
+   },
+   {
+    "a": "pallet_rack_3",
+    "rel": "beside",
+    "b": "pallet_rack_4"
+   },
+   {
+    "a": "forklift_1",
+    "rel": "beside",
+    "b": "pallet_rack_1"
+   },
+   {
+    "a": "workbench_1",
+    "rel": "in_front_of",
+    "b": "pallet_rack_2"
+   },
+   {
+    "a": "safety_barrier_1",
+    "rel": "around",
+    "b": "workbench_1"
+   },
+   {
+    "a": "safety_barrier_2",
+    "rel": "around",
+    "b": "workbench_1"
+   },
+   {
+    "a": "ceiling_light_1",
+    "rel": "on",
+    "b": "ceiling"
+   },
+   {
+    "a": "ceiling_light_2",
+    "rel": "on",
+    "b": "ceiling"
+   },
+   {
+    "a": "ceiling_light_3",
+    "rel": "on",
+    "b": "ceiling"
+   },
+   {
+    "a": "ceiling_light_4",
+    "rel": "on",
+    "b": "ceiling"
+   },
+   {
+    "a": "ceiling_light_5",
+    "rel": "on",
+    "b": "ceiling"
+   },
+   {
+    "a": "ceiling_light_6",
+    "rel": "on",
+    "b": "ceiling"
+   }
+  ],
+  "lighting": {
+   "engine": "cycles",
+   "samples": 128,
+   "sky": true
+  },
+  "camera": {
+   "position": [
+    5,
+    5,
+    3
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "type": "perspective"
+  }
+ }
+}

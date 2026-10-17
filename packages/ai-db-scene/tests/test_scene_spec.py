@@ -68,9 +68,9 @@ def test_unknown_category_suggests():
 
 
 def test_bad_relation_name():
-    errors = _bad(lambda d: d["relations"][1].update(rel="near"))
+    errors = _bad(lambda d: d["relations"][1].update(rel="levitating_over"))
     assert errors[0] == (
-        "relations[1].rel: 'near' is not allowed; allowed values: "
+        "relations[1].rel: 'levitating_over' is not allowed; allowed values: "
         "['on', 'against_wall', 'in_front_of', 'beside', 'facing', 'centered_in', 'under', 'around', 'above']"
     )
 
@@ -89,8 +89,11 @@ def test_unknown_object_reference():
 def test_against_wall_needs_wall_and_indoor():
     errors = _bad(lambda d: d["relations"][0].update(b="sofa2"))
     assert errors[0].startswith("relations[0].b: 'sofa2' is not a wall; allowed values: ['wall_north'")
-    errors = _bad(lambda d: d["setting"].update(kind="outdoor"))
-    assert errors == ["relations[0]: against_wall needs setting.kind 'indoor' (walls exist only indoors), got 'outdoor'"]
+    d = copy.deepcopy(VALID)  # outdoors there is no wall: the relation is dropped with a note, not refused
+    d["setting"]["kind"] = "outdoor"
+    spec, errors = validate_spec(d)
+    assert spec is not None and not any(r.rel == "against_wall" for r in spec.relations), errors
+    assert any("no walls outdoors" in n for n in spec.notes)
 
 
 def test_duplicate_reserved_ids_and_self_relation():

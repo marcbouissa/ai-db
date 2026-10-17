@@ -40,6 +40,88 @@ CATEGORY_ALIASES = {
 }
 
 
+#: relation names weak models wrote (aidb5/aidb6 invalid results) -> the relation that means it
+REL_ALIASES = {
+    "near": "beside", "next_to": "beside", "nearby": "beside", "near_to": "beside", "close_to": "beside",
+    "adjacent": "beside", "adjacent_to": "beside", "by": "beside", "alongside": "beside",
+    "in_row": "beside", "in_a_row": "beside", "row": "beside", "aligned_with": "beside", "in_line_with": "beside",
+    "aligned": "beside", "connects": "beside", "connected_to": "beside", "at_edge_of": "beside",
+    "at_the_edge_of": "beside", "edge_of": "beside", "along": "beside",
+    "opposite": "facing", "opposite_to": "facing", "faces": "facing", "facing_towards": "facing",
+    "facing_toward": "facing", "looks_at": "facing", "towards": "facing",
+    "in_front": "in_front_of", "front_of": "in_front_of", "before": "in_front_of",
+    "on_top_of": "on", "atop": "on", "on_top": "on", "resting_on": "on", "stacked_on": "on", "placed_on": "on",
+    "inside": "on", "in": "on", "onto": "on",
+    "against": "against_wall", "along_wall": "against_wall", "on_wall": "against_wall", "wall": "against_wall",
+    "mounted_on": "against_wall", "hung_on": "against_wall",
+    "centered": "centered_in", "center": "centered_in", "centre": "centered_in", "in_center_of": "centered_in",
+    "in_centre_of": "centered_in", "middle_of": "centered_in", "in_middle_of": "centered_in",
+    "centered_on": "centered_in",
+    "below": "under", "beneath": "under", "underneath": "under",
+    "over": "above", "hanging_above": "above", "hangs_above": "above",
+    "surrounding": "around", "surround": "around", "surrounds": "around", "circle": "around", "encircle": "around",
+}
+#: corner relations: against both walls of the corner (b names it: north_west, ne, corner_se, ...)
+_CORNER_RELS = ("corner", "at_corner", "in_corner", "in_the_corner", "corner_of")
+#: relations that say only "spread the copies" or "somewhere": nothing for the solver to do
+_EMPTY_RELS = ("evenly_spaced", "spaced", "distributed", "spread", "scattered", "position", "positioned",
+               "placed", "located", "random", "anywhere")
+#: compass words and room sides -> the rect wall (front: the wall a room is entered toward)
+_SIDE = {"north": "wall_north", "n": "wall_north", "front": "wall_north", "top": "wall_north",
+         "south": "wall_south", "s": "wall_south", "back": "wall_south", "rear": "wall_south", "bottom": "wall_south",
+         "east": "wall_east", "e": "wall_east", "right": "wall_east",
+         "west": "wall_west", "w": "wall_west", "left": "wall_west"}
+_WALL_WORDS = ("wall", "side", "the", "corner", "of", "room", "ern")
+#: shape words -> setting.shape
+SHAPE_ALIASES = {"round": "ellipse", "circle": "ellipse", "circular": "ellipse", "oval": "ellipse",
+                 "elliptical": "ellipse", "ellipse": "ellipse", "rotunda": "ellipse", "square": "rect",
+                 "rectangle": "rect", "rectangular": "rect", "box": "rect", "rect": "rect"}
+#: a brief that asks for a round room (the model left setting.shape out: qwen aidb5 round_lobby)
+_ROUND_BRIEF = re.compile(r"\b(round|circular|oval|elliptical|rotunda)\b(?!\s+(?:table|tables|rug|rugs|mirror|"
+                          r"mirrors|window|windows|pot|pots|lamp|lamps|light|lights|stool|stools|ottoman|ottomans|"
+                          r"plate|plates|coffee|side|dining|planter|planters|fountain|bed|beds))", re.IGNORECASE)
+
+
+def _key(v: Any) -> str:
+    return re.sub(r"[\s\-]+", "_", v.strip().lower()) if isinstance(v, str) else ""
+
+
+def wall_side(b: Any) -> str | None:
+    """``north_wall`` / ``north`` / ``the north side`` / ``front_wall`` -> ``wall_north``; else None."""
+    k = _key(b)
+    if k in _RECT_WALLS:
+        return k
+    words = [w for w in re.split(r"_+", k) if w and w not in _WALL_WORDS]
+    words = [w.removesuffix("ern") if w.endswith("ern") else w for w in words]
+    sides = {_SIDE[w] for w in words if w in _SIDE}
+    return next(iter(sides)) if len(sides) == 1 and len(words) == 1 else None
+
+
+def corner_walls(b: Any) -> list[str] | None:
+    """``north_west`` / ``nw`` / ``corner_se`` / ``northeast`` -> its two walls; one side -> that wall."""
+    k = _key(b)
+    for a, c in (("north", "n"), ("south", "s")):
+        for e, f in (("east", "e"), ("west", "w")):
+            for form in (f"{a}_{e}", f"{a}{e}", f"{c}{f}", f"{e}_{a}", f"{f}{c}"):
+                if re.search(rf"(^|_){form}($|_)", k):
+                    return [_SIDE[a], _SIDE[e]]
+    side = wall_side(b)
+    return [side] if side else None
+
+
+def room_shape_from_brief(data: Any, brief: Any) -> tuple[Any, str | None]:
+    """(spec, note): a brief asking for a round room gives an indoor spec with no ``setting.shape``
+    an ellipse. qwen3-14b-local-aidb5 round_lobby left shape out and built a rectangular lobby."""
+    if not isinstance(data, dict) or not isinstance(brief, str) or not _ROUND_BRIEF.search(brief):
+        return data, None
+    st = data.get("setting")
+    if not isinstance(st, dict) or st.get("kind", "indoor") != "indoor" or "shape" in st or st.get("rooms"):
+        return data, None
+    out = {**data, "setting": {**st, "shape": "ellipse"}}
+    word = _ROUND_BRIEF.search(brief).group(1)  # type: ignore[union-attr]
+    return out, f"setting.shape: the brief asks for a {word.lower()} room: shape 'ellipse' (one curved wall)"
+
+
 def _num(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
@@ -81,6 +163,10 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     notes: list[str] = []
     raw_setting = d.get("setting")
     setting: dict[str, Any] = raw_setting if isinstance(raw_setting, dict) else {}
+    alias = SHAPE_ALIASES.get(_key(setting.get("shape")))
+    if "shape" in setting and alias and alias != setting["shape"]:
+        notes.append(f"setting.shape: {setting['shape']!r} read as '{alias}'")
+        setting["shape"] = alias
     shape = setting.get("shape", "rect")
     indoor = setting.get("kind") == "indoor"
     objs = [o for o in d.get("objects") or [] if isinstance(o, dict)] if isinstance(d.get("objects"), list) else []
@@ -112,8 +198,13 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         if not isinstance(raw, dict):
             out.append(raw)
             continue
-        r = dict(raw)
         p = f"relations[{i}]"
+        got = _vocab(dict(raw), p, ids, shape, setting.get("kind"), notes, objs)
+        if not got:
+            continue
+        if len(got) > 1:
+            out += got[:-1]
+        r = got[-1]
         for k in ("a", "b") if r.get("rel") != "against_wall" else ("a",):
             base = _base_id(r.get(k), ids)
             if base:
@@ -139,6 +230,13 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             notes.append(f"{p}.at_deg: ignored ({'rect rooms use wall_north..' if shape == 'rect' else 'only on against_wall'})")
             r.pop("at_deg")
         out.append(r)
+    seen: set[str] = set()
+    for r in list(out):  # 'next_to' read as 'beside' next to its own 'beside'
+        k = repr(sorted(r.items())) if isinstance(r, dict) else ""
+        if k and k in seen:
+            out.remove(r)
+            notes.append(f"dropped a repeated relation '{r.get('a')} {r.get('rel')} {r.get('b')}'")
+        seen.add(k)
     out = _rugs(out, ids, prior, notes)
     if indoor:
         out = _seating_group(out, objs, setting, notes)
@@ -151,6 +249,80 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         out = _wall_mounts(out, objs, shape, prior, notes)
     d["relations"] = out
     return d, notes
+
+
+#: "the copies of A in a row": A's count becomes a one-row grid
+_ROW_RELS = ("in_row", "in_a_row", "row", "aligned", "aligned_with", "in_line_with")
+
+
+def _vocab(r: dict[str, Any], p: str, ids: set[str], shape: Any, kind: Any, notes: list[str],
+           objs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The relation(s) a relation written with another word means, or [] when it says nothing the
+    solver can use (each rewrite noted). qwen aidb6 wrote near, in_row, opposite, corner,
+    at_corner, aligned_with, connects, at_edge_of, evenly_spaced and walls as north_wall / south /
+    front_wall; each was refused and cost a retry."""
+    rel, a, b = r.get("rel"), r.get("a"), r.get("b")
+    if not isinstance(rel, str):
+        return [r]
+    k = _key(rel)
+    if k != rel and k in (*_REL_NAMES, *REL_ALIASES, *_CORNER_RELS, *_EMPTY_RELS):
+        r["rel"] = rel = k
+    label = f"'{a} {k} {b}'"
+    obj = next((o for o in objs if o.get("id") == a), None)
+    if a == b and k in _ROW_RELS and obj is not None and obj.get("grid") is None and _n(obj) > 1:
+        obj["grid"] = {"rows": 1, "cols": _n(obj)}
+        obj.pop("count", None)
+        notes.append(f"{p}: {label} read as a one-row grid of the {_n(obj)} copies")
+        return []
+    if k in _EMPTY_RELS or (k not in _REL_NAMES and a == b):
+        notes.append(f"{p}: dropped {label} (copies of an object are spread by the solver; use count or a grid "
+                     "for a row)")
+        return []
+    on_obj = isinstance(b, str) and b in ids
+    if k in _CORNER_RELS or (k not in _REL_NAMES and not on_obj and corner_walls(b) and len(corner_walls(b) or []) == 2):
+        if on_obj:
+            r["rel"] = "beside"
+            notes.append(f"{p}: {label} read as beside '{b}'")
+            return [r]
+        walls = corner_walls(b) if kind == "indoor" else None
+        if not walls:
+            notes.append(f"{p}: dropped {label} ({'no walls outdoors' if kind != 'indoor' else 'name the corner, e.g. north_west'})")
+            return []
+        if shape in ("ellipse", "polygon"):
+            ang = [_WALL_DEG[w] for w in walls]
+            deg = ang[0] if len(ang) == 1 else (sum(ang) / 2 if abs(ang[0] - ang[1]) <= 180 else (sum(ang) / 2 + 180) % 360)
+            notes.append(f"{p}: {label} read as against_wall wall at_deg {deg:g}")
+            return [{"a": a, "rel": "against_wall", "b": "wall", "at_deg": deg}]
+        notes.append(f"{p}: {label} read as against_wall " + " + ".join(walls) + " (in the corner)")
+        return [{"a": a, "rel": "against_wall", "b": w} for w in walls]
+    if k in REL_ALIASES:
+        r["rel"] = REL_ALIASES[k]
+        if on_obj or r["rel"] == "against_wall" or b == "room" or wall_side(b):
+            notes.append(f"{p}: rel '{k}' read as '{r['rel']}'")
+    rel = r["rel"]
+    side = None if on_obj else wall_side(b)
+    if rel == "on" and _key(b) in ("ceiling", "the_ceiling", "roof"):
+        notes.append(f"{p}: dropped '{a} on {b}' (ceiling objects hang from the ceiling already)")
+        return []
+    if side is not None and rel in ("against_wall", "on", "beside", "in_front_of", "centered_in"):
+        if kind != "indoor":
+            notes.append(f"{p}: dropped '{a} {rel} {b}' (no walls outdoors)")
+            return []
+        if rel != "against_wall" or b != side:
+            notes.append(f"{p}: '{rel} {b}' read as against_wall {side}")
+        r["rel"], r["b"] = "against_wall", side
+        return [r]
+    if rel == "against_wall" and kind not in (None, "indoor"):
+        notes.append(f"{p}: dropped '{a} against_wall {b}' (no walls outdoors)")
+        return []
+    if k in REL_ALIASES and rel != "against_wall" and not on_obj and isinstance(b, str) and b not in ("room",):
+        notes.append(f"{p}: dropped '{a} {k} {b}' ('{b}' is not an object of the spec)")
+        return []
+    return [r]
+
+
+#: spec.RELATIONS (kept local: spec imports this module)
+_REL_NAMES = ("on", "against_wall", "in_front_of", "beside", "facing", "centered_in", "under", "around", "above")
 
 
 def _positional(rels: list[Any], oid: str, skip: Any = None) -> bool:

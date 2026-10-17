@@ -491,7 +491,10 @@ class _Problem:
             gap = (pa.x - p[0]) * n[0] + (pa.y - p[1]) * n[1] - _ext(a.dims, pa.yaw, n)
             f = _axes(pa.yaw)[1]
             lo, hi = (-1e-3, _CURVED_WALL_GAP_M) if self.shape.curved else (-1e-3, 1e-3)
-            if not lo <= gap <= hi or f[0] * n[0] + f[1] * n[1] < 0.99:
+            # the first wall turns the object to face the room; a second one (a corner) only
+            # has it flush with its side or back
+            first = next(x for x in self.by_a[r.a] if x.rel == "against_wall") is r
+            if not lo <= gap <= hi or (first and f[0] * n[0] + f[1] * n[1] < 0.99):
                 return f"'{r.label}': not flush against the wall (gap {gap:.3f} m)"
             if r.at_deg is not None and self.shape.kind != "rect":
                 lat = math.hypot(pa.x - p[0] - (gap + _ext(a.dims, pa.yaw, n)) * n[0], pa.y - p[1] - (gap + _ext(a.dims, pa.yaw, n)) * n[1])
