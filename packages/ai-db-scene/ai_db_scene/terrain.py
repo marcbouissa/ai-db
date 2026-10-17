@@ -84,14 +84,14 @@ CATEGORY_ALIASES: dict[str, str] = {
 }
 #: relation names models use toward the water -> a terrain relation
 REL_ALIASES: dict[str, str] = {
-    **{w: "at_edge_of" for w in ("at_edge_of", "at_edge", "edge_of", "at_the_edge_of", "along", "along_edge_of",
+    **{w: "at_edge_of" for w in ("at_edge_of", "at_edge", "edge_of", "at", "at_the", "at_the_edge_of", "along", "along_edge_of",
                                  "on_shore", "at_shore", "shore", "on_edge_of", "bordering", "by_edge_of",
                                  "at_waters_edge", "at_water_edge", "on_the_edge_of", "lining", "against_wall",
                                  "against")},
     **{w: "near" for w in ("near", "close_to", "next_to", "beside", "by", "nearby", "near_to", "in_front_of",
                            "around", "overlooking", "around_edge", "adjacent_to", "close")},
     **{w: "in" for w in ("in", "inside", "within", "in_the", "partly_in", "in_water", "on", "on_top_of", "floating_on",
-                         "centered_in", "under", "below")},
+                         "centered_in")},
     **{w: "leads_to" for w in ("leads_to", "to", "towards", "toward", "into", "connects", "connects_to", "runs_to",
                                "reaches", "extends_to", "extends_into", "goes_to", "over", "across", "from",
                                "leading_to", "ending_at", "ends_at", "joins")},
@@ -335,6 +335,15 @@ def _lift(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         setting.pop("floor_material")
     if isinstance(setting.get("water"), str) and ground_kind(setting["water"]) is None:
         pass  # parse_water reads a kind / side word
+    shore_words = (*WATER_ALIASES, "shore", "shoreline", "waterline", "water_edge", "waters_edge", "sea_shore",
+                   "water_line", "edge_of_water", "beach_edge", "surf_line")
+    rels_raw: list[Any] = d["relations"] if isinstance(d.get("relations"), list) else []
+    if setting.get("water") in (None, False) and any(
+            isinstance(r, dict) and _word(r.get("b")) in shore_words for r in rels_raw):
+        # a relation to the water edge names the water the spec forgot (qwen beach_cove: 'rocks at
+        # water_edge' with only floor_material sand): add it rather than refuse the relation
+        setting["water"] = {"kind": "sea"}
+        notes.append("setting.water: {kind: sea} added (relations name the water's edge)")
     has_water = setting.get("water") not in (None, False)
     cats = {o.get("id"): o.get("category") for o in d.get("objects", []) if isinstance(o, dict)}
     rels = d.get("relations")
@@ -348,8 +357,7 @@ def _lift(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             if a in ground_ids or a in water_ids:
                 notes.append(f"relations[{i}]: dropped (its subject '{a}' is the ground / water itself)")
                 continue
-            to_water = b in water_ids or (has_water and _word(b) in (*WATER_ALIASES, "shore", "shoreline", "waterline",
-                                                                     "water_edge", "waters_edge", "sea_shore"))
+            to_water = b in water_ids or (has_water and _word(b) in shore_words)
             to_ground = b in ground_ids or (_word(b) in GROUND_ALIASES or _word(b) in _GROUND_WORDS) and not to_water
             if to_ground and has_water and (REL_ALIASES.get(rel) == "back_of" or cats.get(a) in OVER_WATER):
                 to_water = True  # behind the beach = away from the water; a boardwalk across it leads to it
@@ -491,7 +499,10 @@ class Terrain:
         cats = {o.id: o.category for o in spec.objects}
         oriented = {r.a for r in spec.relations if r.b != WATER and r.rel in ("facing", "against_wall", "in_front_of",
                                                                               "around")}
+        placed = {r.a for r in spec.relations if r.b != WATER and r.rel != "facing"}
         for oid, cat in cats.items():
+            if cat in OVER_WATER and self.water is not None and oid not in placed and not self.rels.get(oid):
+                self.rels[oid] = ["leads_to"]  # a boardwalk on a beach runs out to the water
             if cat in FACES_WATER and self.water is not None and oid not in oriented \
                     and "facing" not in self.rels.get(oid, []):
                 self.rels.setdefault(oid, []).append("facing")
@@ -1101,6 +1112,9 @@ if w:
         bm.faces.new(hi)
         for k in range(n):
             bm.faces.new((lo[k], lo[(k + 1) % n], hi[(k + 1) % n], hi[k]))
+    bm.normal_update()
+    top_faces = [f for f in bm.faces if f.normal.z > 0.9 and all(abs(v.co.z - top) < 1e-6 for v in f.verts)]
+    bmesh.ops.subdivide_edges(bm, edges=list({e for f in top_faces for e in f.edges}), cuts=15, use_grid_fill=True)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     wm = bpy.data.meshes.new(w["name"])
     bm.to_mesh(wm)

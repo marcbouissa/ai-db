@@ -117,6 +117,9 @@ def frond(bm_leaf, bm_stalk, start, az, elev, length, steps, droop_step, leaf_le
         d = Vector((math.cos(e) * math.cos(az), math.cos(e) * math.sin(az), math.sin(e)))
         dirs.append(d)
         p = p + d * (length / steps)
+        if p.z < 0.015 * H:  # an arching frond that reaches the ground runs along it
+            p.z = 0.015 * H
+            e = max(e, 0.0)
         pts.append(p.copy())
         e -= droop_step * (0.6 + 0.8 * i / steps)
     ribbon(bm_stalk, pts, [stalk_w * (1 - 0.7 * i / steps) for i in range(len(pts))], side_vec)
@@ -254,14 +257,15 @@ def closed(ob, thickness):
     me.name = old.name
     bpy.data.meshes.remove(old)
 
+floor = 0.004 * H
+for ob in parts:  # drooping tips rest on the ground instead of reaching into it (squeezed, not
+    for v in ob.data.vertices:  # flattened: a flattened strip has zero-area faces)
+        if v.co.z < floor:
+            v.co.z = floor / (1.0 + (floor - v.co.z) / floor)
+    ob.data.update()
 for ob in parts:
     if ob.name.endswith(("_leaves", "_stems")):
         closed(ob, max(0.003, 0.0012 * H))
-for ob in parts:  # drooping tips rest on the ground instead of reaching into it
-    for v in ob.data.vertices:
-        if v.co.z < 0.004 * H:
-            v.co.z = 0.004 * H
-    ob.data.update()
 root = bpy.data.objects.new(name, None)
 bpy.context.scene.collection.objects.link(root)
 root["asset"] = name  # one asset: the validator checks its parts together

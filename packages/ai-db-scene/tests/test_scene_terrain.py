@@ -96,6 +96,26 @@ def test_guessed_category_names_validate():
     assert {o.category for o in spec.objects} == {"palm_tree", "tropical_bush", "sun_lounger", "parasol"}
 
 
+def test_a_relation_to_the_water_edge_adds_the_water_the_spec_forgot():
+    # qwen aidb6 beach_cove (terrain build): floor_material sand, no water, 'rock1 at water_edge'
+    spec = _spec({"setting": {"kind": "outdoor", "floor_material": "sand", "bounds_m": [20, 20, 5], "style": "tropical"},
+                  "objects": [{"id": "boardwalk1", "category": "wooden_boardwalk"}, {"id": "rock1", "category": "rock", "count": 4}],
+                  "relations": [{"a": "boardwalk1", "rel": "connects_to", "b": "water_edge"},
+                                {"a": "rock1", "rel": "at", "b": "water_edge"}]})
+    assert spec.setting.water is not None and spec.setting.ground == "sand"
+    assert {(r.a, r.rel, r.b) for r in spec.relations} == {("boardwalk1", "leads_to", "water"),
+                                                           ("rock1", "at_edge_of", "water")}
+
+
+def test_a_boardwalk_with_no_relation_leads_to_the_water():
+    raw = _beach()
+    raw["relations"] = [r for r in raw["relations"] if r["a"] != "boardwalk"]
+    spec = _spec(raw)
+    assert terrain.Terrain(spec).rels["boardwalk"] == ["leads_to"]
+    raw["relations"].append({"a": "boardwalk", "rel": "beside", "b": "bushes"})
+    assert "boardwalk" not in terrain.Terrain(_spec(raw)).rels  # its own relation places it
+
+
 def test_floor_material_sand_is_sand_ground_not_paint():
     spec = _spec({"setting": {"kind": "outdoor", "bounds_m": [10, 10, 4], "floor_material": "sand"},
                   "objects": [{"id": "r", "category": "rock"}]})
@@ -118,10 +138,10 @@ def test_water_forms_and_refusals():
     _s, errs = validate_spec({"setting": {"kind": "indoor", "bounds_m": [5, 4, 3], "water": "pond"},
                               "objects": [{"id": "r", "category": "rock"}]})
     assert any("only for setting.kind 'outdoor'" in e for e in errs)
-    _s, errs = validate_spec({"setting": {"kind": "outdoor", "bounds_m": [9, 9, 4]},
+    _s, errs = validate_spec({"setting": {"kind": "indoor", "bounds_m": [9, 9, 4]},
                               "objects": [{"id": "r", "category": "rock"}],
                               "relations": [{"a": "r", "rel": "at_edge_of", "b": "water"}]})
-    assert any("needs setting.water" in e for e in errs)
+    assert any("needs setting.water" in e for e in errs)  # outdoors the water would be added
     _s, errs = validate_spec({"setting": {"kind": "outdoor", "bounds_m": [9, 9, 4]},
                               "objects": [{"id": "r", "category": "rock"}, {"id": "b", "category": "bench"}],
                               "relations": [{"a": "r", "rel": "back_of", "b": "b"}]})
@@ -372,6 +392,13 @@ def test_live_beach_assets_build_at_the_exact_bbox(private_blender):
     for cmd in terrain.boardwalk_commands(flat, bw, (0.0, 0.0, 0.0), 4):
         c.request(cmd["type"], cmd["params"])
     checks.append(("t_boardwalk", [x, 0.0], (1.6, 8.0, 0.45), 0.01))
+    sanity = c.run_code(
+        "import bpy, bmesh\nout = {}\nfor o in bpy.context.scene.objects:\n    if o.type != 'MESH': continue\n"
+        "    bm = bmesh.new(); bm.from_mesh(o.data)\n"
+        "    bad = (sum(1 for e in bm.edges if len(e.link_faces) != 2), sum(1 for f in bm.faces if f.calc_area() < 1e-10))\n"
+        "    bm.free()\n    if any(bad): out[o.name] = bad\nresult = out\n")
+    plants = {k: v for k, v in sanity.items() if k.startswith(("t_palm", "t_fern", "t_tropical", "t_boardwalk"))}
+    assert not plants, plants  # closed meshes: validate_scene's hole fill never runs on them
     for name, at, dims, slack in checks:
         got = c.run_code(_BBOX.format(name=name))
         if name.startswith(("t_palm", "t_fern", "t_tropical")):
