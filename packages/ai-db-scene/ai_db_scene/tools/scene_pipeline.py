@@ -2072,8 +2072,38 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
                 tags=["build_scene"], parent_scene_id=args.get("parent_scene_id"))
         except Exception as e:  # noqa: BLE001 - the scene is built; say why it was not saved
             out["snapshot_error"] = str(e)
+    hint = sparse_hint(spec, placements)
+    if hint:
+        out["sparse"] = hint
     out["verdict"], out["next"] = build_verdict(out, brief_given=bool(args.get("brief")))
     return out
+
+
+#: a room whose furniture covers less than this share of its floor reads as empty (bench
+#: layout_sanity's fill band starts at 0.10): the verdict suggests a smaller room or more content
+SPARSE_ROOM_FILL = 0.08
+
+
+def sparse_hint(spec: SceneSpec, placements: list[Placement]) -> str | None:
+    """A hint for a room far too big for its content (qwen aidb7 round lobby: 6 % of a 10 m room),
+    with the bounds that would hold it at ~20 %, else None."""
+    import math
+
+    if spec.setting.kind != "indoor" or not placements:
+        return None
+    priors = load_priors()
+    foot = sum(p.dims[0] * p.dims[1] for p in placements
+               if p.category != "rug" and getattr(priors.get(p.category), "support", "floor") == "floor")
+    area = floor_area_m2(spec)
+    if area <= 0 or foot / area >= SPARSE_ROOM_FILL:
+        return None
+    w, d, _h = spec.setting.bounds_m
+    k = math.sqrt(foot / 0.2 / area)
+    sw, sd = max(3.0, round(w * k * 2) / 2), max(3.0, round(d * k * 2) / 2)
+    return (f"the room is mostly empty: the furniture covers {foot / area:.0%} of its floor. A smaller room "
+            f"(edit_scene step {{op: 'update_setting', set: {{bounds_m: [{sw:g}, {sd:g}, {spec.setting.bounds_m[2]:g}]}}}}) "
+            f"or more of what the "
+            f"brief implies would read better")
 
 
 _TURN_MSG = re.compile(r"rotate it (-?\d+) deg")
@@ -2171,11 +2201,12 @@ def build_verdict(out: dict[str, Any], brief_given: bool = True) -> tuple[str, s
         rest = f"; {len(left)} advisory warning(s) you may ignore" if left else ""
         verdict = f"done: {out.get('objects')} objects built, nothing blocking{rest}"
         where = f" and saved as {sid}" if sid else ""
+        sparse = f" Optional, once: {out['sparse']}; otherwise stop." if out.get("sparse") else ""
         if not brief_given:
             return f"{verdict}; {_NO_BRIEF}", (f"The scene is built{where}; do not rebuild, re-render or "
-                                               f"re-validate it.{_NO_BRIEF_NEXT}{unsaved}")
+                                               f"re-validate it.{_NO_BRIEF_NEXT}{sparse}{unsaved}")
         return verdict, (f"The scene is finished{where}. Stop here and reply DONE: do not rebuild, "
-                         f"re-render or re-validate it.{unsaved}")
+                         f"re-render or re-validate it.{sparse}{unsaved}")
     more = len(order) + len(failed) - 1
     verdict = f"one thing to fix: {thing}" + (f" (+{more} more)" if more > 0 else "")
     if not brief_given:

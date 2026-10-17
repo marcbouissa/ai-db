@@ -252,6 +252,8 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     out = _pair_seats(d, out, notes)
     objs = [o for o in d.get("objects") or [] if isinstance(o, dict)]
     out = _focal_rings(out, objs, prior, notes)
+    if indoor:
+        out = _sparse_room(out, objs, setting, prior, notes)
     _round_ids(objs, notes)
     _spread_centered(out, objs, setting, prior, notes)
     if indoor:
@@ -807,6 +809,82 @@ _FOCAL_RING_TARGET_M = 3.0
 _FOCAL_RING_WALK_M = 0.9
 #: relations that place a seat by something else: it keeps them
 _PLACING_RELS = ("on", "against_wall", "in_front_of", "beside", "centered_in", "under", "around")
+
+
+#: a room whose furniture would cover less than this share of the floor is sparse: its groups are
+#: composed (below) and the build's verdict suggests a smaller room or more content
+SPARSE_FILL = 0.12
+#: what the lounge group of a sparse room faces across the room
+_ACROSS = ("reception_desk", "bar_counter", "fireplace", "tv_stand", "desk")
+_LOUNGE_TABLES = ("coffee_table", "side_table", "table")
+_FRAMING_PLANTS = ("potted_plant", "plant", "floor_plant")
+#: the group's table stands this share of the room's depth from the feature's wall (past the middle)
+_ACROSS_AT = 0.6
+
+
+def estimated_fill(objs: list[dict[str, Any]], setting: dict[str, Any], prior: Any) -> float | None:
+    """Floor share the objects' typical footprints would cover (rugs, wall and ceiling pieces aside)."""
+    b = setting.get("bounds_m")
+    if not isinstance(b, list) or len(b) < 2 or not all(_num(v) for v in b[:2]):
+        return None
+    area = float(b[0]) * float(b[1]) * (math.pi / 4 if setting.get("shape") == "ellipse" else 1.0)
+    foot = 0.0
+    for o in objs:
+        p = prior(o.get("id"))
+        if p is None or p.support != "floor" or o.get("category") == "rug":
+            continue
+        n = o.get("count") if isinstance(o.get("count"), int) else 1
+        g = o.get("grid")
+        if isinstance(g, dict) and isinstance(g.get("rows"), int) and isinstance(g.get("cols"), int):
+            n = g["rows"] * g["cols"]
+        foot += p.typical_m[0] * p.typical_m[1] * max(n, 1)
+    return foot / area if area > 0 else None
+
+
+def _sparse_room(rels: list[Any], objs: list[dict[str, Any]], setting: dict[str, Any], prior: Any,
+                 notes: list[str]) -> list[Any]:
+    """A room the model sized much bigger than its content (qwen aidb7: a 10 m round lobby for a
+    desk, four armchairs, a table and two plants, the group a speck in the middle): composed, not
+    filled. The lounge table (with its seats round it) stands across the room from the reception
+    desk (bar, fireplace), past the middle; free plants frame the desk. Nothing is added."""
+    fill = estimated_fill(objs, setting, prior)
+    if fill is None or fill >= SPARSE_FILL:
+        return rels
+    by_id = {o.get("id"): o for o in objs}
+    placed = {r.get("a") for r in rels if isinstance(r, dict) and r.get("rel") in _PLACING_RELS}
+    walled = [r for r in rels if isinstance(r, dict) and r.get("rel") == "against_wall"
+              and (by_id.get(r.get("a")) or {}).get("category") in _ACROSS]
+    if not walled:
+        return rels
+    feat = by_id[walled[0]["a"]]
+    if (feat.get("count") or 1) != 1:
+        return rels
+    if setting.get("shape") in ("ellipse", "polygon") and not _num(walled[0].get("at_deg")):
+        walled[0]["at_deg"] = 270.0  # anywhere on a curved wall: the far side, so the group across is square
+        notes.append(f"'{feat['id']}' stands at the curved wall's at_deg 270 (the group faces it across the room)")
+    hubs = {r.get("b") for r in rels if isinstance(r, dict) and r.get("rel") in ("around", "facing", "in_front_of")
+            and (by_id.get(r.get("b")) or {}).get("category") in _LOUNGE_TABLES}
+    out = list(rels)
+    b = setting["bounds_m"]
+    depth = min(float(b[0]), float(b[1]))
+    for t in sorted(h for h in hubs if isinstance(h, str)):
+        if t in placed or (by_id[t].get("count") or 1) != 1:
+            continue
+        pf, pt = prior(feat["id"]), prior(t)
+        if pf is None or pt is None:
+            continue
+        gap = round(max(1.5, _ACROSS_AT * depth - pf.typical_m[1] - pt.typical_m[1] / 2 - 0.3), 2)
+        out.append({"a": t, "rel": "in_front_of", "b": feat["id"], "gap_m": gap})
+        notes.append(f"the room is sparse (its furniture would cover {fill:.0%} of the floor): '{t}' and the seats "
+                     f"round it stand across the room from '{feat['id']}' ({t} in_front_of {feat['id']}, gap "
+                     f"{gap:g} m); a smaller setting.bounds_m reads better")
+        break
+    for o in objs:
+        if o.get("category") in _FRAMING_PLANTS and o.get("id") not in placed:
+            out.append({"a": o["id"], "rel": "beside", "b": feat["id"], "gap_m": 0.4})
+            notes.append(f"'{o['id']}' frames '{feat['id']}' ({o['id']} beside {feat['id']}): a plant with no place "
+                         "of its own in a sparse room")
+    return out
 
 
 def _focal_rings(rels: list[Any], objs: list[dict[str, Any]], prior: Any, notes: list[str]) -> list[Any]:
