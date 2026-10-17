@@ -703,12 +703,16 @@ _TREE = """
 import bpy, bmesh, json, math, random
 from mathutils import Vector, Matrix
 cfg = json.loads({payload!r})
+from mathutils import noise
 rng = random.Random(cfg["seed"])
-H = cfg["dims"][2]
-RX, RY = cfg["dims"][0] / 2, cfg["dims"][1] / 2
-crown_lo = H * cfg.get("crown_start", 0.38)
+# every tree its own size and shape inside its placement box (park rows were clones)
+H = cfg["dims"][2] * rng.uniform(0.82, 1.0)
+RX, RY = cfg["dims"][0] / 2 * rng.uniform(0.85, 1.0), cfg["dims"][1] / 2 * rng.uniform(0.85, 1.0)
+# the crown starts low (28-36 % of the height): a full head on a short trunk, not a column of
+# balls on a pole (the aidb7 park's "lollipops")
+crown_lo = cfg.get("crown_start", H * rng.uniform(0.28, 0.36))
 cz = (crown_lo + H) / 2
-segs, tips = [], []
+segs, tips, shoots = [], [], []
 
 def jitter(s):
     return Vector((rng.uniform(-s, s), rng.uniform(-s, s), rng.uniform(-s, s)))
@@ -738,6 +742,8 @@ def grow(p, d, length, r, depth):
             grow(p, child, length * rng.uniform(0.6, 0.75), r * 0.62, depth + 1)
     if depth >= 2:
         tips.append(p.copy())
+    elif depth == 1:
+        shoots.append(p.copy())
 
 # trunk: slight lean and wobble up to the crown, then 3-4 limbs
 r0 = cfg.get("trunk_r", max(0.06, 0.035 * H))
@@ -748,10 +754,12 @@ for i in range(steps):
     segs.append((p.copy(), q.copy(), r0 * (1.35 if i == 0 else 1.0) * (1 - 0.06 * i), r0 * (1 - 0.06 * (i + 1))))
     p = q
 limb = (H - crown_lo) * 0.5
-for k in range(rng.choice((3, 3, 4))):
-    ang = k / 3.5 * math.tau + rng.uniform(-0.4, 0.4)
-    ld = Vector((math.cos(ang) * 1.1, math.sin(ang) * 1.1, 1.0)).normalized()
-    grow(p.copy(), ld, limb, r0 * 0.7, 1)
+nl = rng.choice((3, 4, 4, 5))
+for k in range(nl):  # spreading limbs: the branch structure shows under the crown
+    ang = k / nl * math.tau + rng.uniform(-0.35, 0.35)
+    spread = rng.uniform(1.0, 1.5)
+    ld = Vector((math.cos(ang) * spread, math.sin(ang) * spread, 1.0)).normalized()
+    grow(p.copy(), ld, limb * rng.uniform(0.85, 1.1), r0 * 0.7, 1)
 
 def skin(name, items, mat_slot=None):
     bm = bmesh.new()
@@ -774,14 +782,32 @@ root = bpy.data.objects.new(cfg["name"], None)
 bpy.context.scene.collection.objects.link(root)
 root["asset"] = cfg["name"]  # one asset: the validator checks its parts together, not against each other
 wood = bpy.data.objects.new(cfg["name"] + "_wood", skin(cfg["name"] + "_wood", segs))
-# leaf clumps at the tips: uneven sizes, a few gaps left on purpose
+# the crown: leaf masses of 2-4 irregular, flattened lobes round each twig end (the leaf cards of
+# the foliage pass cover them), a few big lobes filling the core so it reads as one crown with
+# a bumpy outline; nothing low in the crown, so the limbs show where they fork
 bm = bmesh.new()
-cr = max(0.14, 0.065 * H) * cfg.get("clump", 1.0)
-for t in tips:
-    if rng.random() < 0.2:  # gaps: sky and branches show through
+cr = max(0.18, 0.08 * min(RX, RY) * 2 + 0.03 * H) * cfg.get("clump", 1.0)
+floor_z = crown_lo + 0.15 * (H - crown_lo)
+
+def lobe(c, rad, flat):
+    m = Matrix.Translation(c) @ Matrix.Rotation(rng.uniform(0, math.tau), 4, "Z") @ Matrix.Diagonal((1.0, 1.0, flat, 1.0))
+    vs = bmesh.ops.create_icosphere(bm, subdivisions=2, radius=rad, matrix=m)["verts"]
+    off = Vector((rng.uniform(0, 50), rng.uniform(0, 50), rng.uniform(0, 50)))
+    for v in vs:  # lumpy, not a ball: coherent noise pushes the surface in and out
+        d = v.co - c
+        v.co = c + d * (1.0 + 0.32 * noise.noise(d / rad * 1.6 + off))
+
+anchors = [t for t in tips if t.z > floor_z] + [q for q in shoots if q.z > floor_z + 0.1 * (H - crown_lo)]
+for t in anchors:
+    if rng.random() < 0.15:  # gaps: sky and branches show through
         continue
-    s = cr * rng.uniform(0.7, 1.25)
-    bmesh.ops.create_icosphere(bm, subdivisions=2, radius=s, matrix=Matrix.Translation(t + jitter(s * 0.3)))
+    for _ in range(rng.choice((2, 3, 3, 4))):
+        rad = cr * rng.uniform(0.55, 1.0)
+        lobe(t + jitter(cr * 0.6) + Vector((0, 0, rad * 0.2)), rad, rng.uniform(0.6, 0.8))
+core = min(RX, RY, (H - crown_lo) / 2)
+for _ in range(rng.choice((3, 4, 5))):
+    c = Vector((rng.uniform(-0.35, 0.35) * RX, rng.uniform(-0.35, 0.35) * RY, cz + rng.uniform(0.0, 0.25) * (H - cz)))
+    lobe(c, core * rng.uniform(0.5, 0.65), rng.uniform(0.7, 0.85))
 me = bpy.data.meshes.new(cfg["name"] + "_leaves")
 bm.to_mesh(me)
 bm.free()
