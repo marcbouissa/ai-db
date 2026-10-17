@@ -22,6 +22,7 @@ from ai_db_scene.constants import (
     LAYOUT_DOOR_HEIGHT_M,
     SCENE_CAMERA_HEIGHT_M,
     SCENE_CAMERA_MAX_SHIFT,
+    SCENE_CAMERA_WATER_EYE_M,
     SCENE_CEILING,
     SCENE_EXPOSURE_INDOOR,
     SCENE_EXPOSURE_OUTDOOR,
@@ -1394,6 +1395,11 @@ def camera_poses(spec: SceneSpec, placements: list[Placement], off: tuple[float,
     h = spec.setting.bounds_m[2]
     indoor = spec.setting.kind == "indoor"
     eye = SCENE_CAMERA_HEIGHT_M if indoor else 2.5
+    if not indoor and spec.setting.water is not None:
+        # by the water a dune-top eye: the plants between the lens and the shore drop below the
+        # frame and the shallows show their colour (at 2.5 m the sea was a grey reflection of the
+        # sky and a bush filled the bottom corner: qwen aidb7 beach_cove)
+        eye = SCENE_CAMERA_WATER_EYE_M
     heights = [eye, round(min(eye + 0.8, h - 0.3), 2) if indoor else eye + 2.0]
     poses = []
     for height in dict.fromkeys(heights):

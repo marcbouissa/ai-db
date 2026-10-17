@@ -54,11 +54,20 @@ SENSOR_MM = 36.0
 TRUNKS = ("tree", "palm_tree", "street_lamp", "lamp_post_double", "signpost")
 CANOPIES = ("tree", "palm_tree")
 TRUNK_W = 1.5
+NEAR_TREE_W = 0.5  # per tree nearer than the aim (by its crown's angular size)
+TRUNK_HIDE_W = 1.5  # per main object (weight up to 1) with a trunk in front of it
+TRUNK_R_M = 0.3  # a trunk's half-width as seen (with a margin)
 CANOPY_CUT_W = 0.7
 OUTDOOR_TREE_W = 0.3
 OUTDOOR_BACK_M = 14.0
 #: a view toward the water (cosine with the way to it): lightning's aidb7 beach looked inland
 WATER_VIEW_W = 1.2
+#: by the water a view stands at least this far from the group (the eye is a dune top, 4 m up)
+WATER_MIN_DIST_M = 9.0
+#: by the water the frame reaches this far above the horizon (tan): the sea under a band of sky
+WATER_SKY_TAN = 0.1
+#: outdoors the lens starts from this (the group fills the frame; MIN_HFOV_DEG is a room photo)
+OUTDOOR_MIN_HFOV_DEG = 40.0
 #: outdoors the camera may step back this far beyond the setting's bounds (the ground goes on)
 OUTDOOR_REACH_M = 8.0
 _ASPECT = 16 / 9
@@ -161,6 +170,12 @@ def spots(spec: SceneSpec, placements: list[Placement]) -> list[tuple[float, flo
         fr = (0.0, 0.25, 0.5, 0.75, 1.0)
         out = [(i + (w - 2 * i) * f, y) for f in fr for y in (i, d - i)]
         out += [(x, i + (d - 2 * i) * f) for f in fr[1:-1] for x in (i, w - i)]
+    if st.kind == "outdoor" and st.water is not None:  # never a camera standing in the water
+        from ai_db_scene.terrain import terrain_of
+
+        ter = terrain_of(spec)
+        if ter is not None:
+            out = [p for p in out if ter.signed(p[0], p[1]) < ter.dry() - 0.5]
     solid = [p for p in placements if p.dims[2] > 0.05]
     clear = [s for s in out if all(_footprint_dist(s[0], s[1], p) >= _CLEAR_M for p in solid)]
     return clear or out
@@ -234,6 +249,7 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
     ``hfov_deg`` the lens is chosen to take in the focus objects (MIN..MAX_HFOV_DEG)."""
     by_id = {p.id: p for p in placements}
     weights = focus_weights(spec, placements)
+    auto_aim = aim is None
     aim = aim or _aim(by_id, weights)
     vx, vy = aim[0] - x, aim[1] - y
     dist = math.hypot(vx, vy) or 1e-6
@@ -246,10 +262,23 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
         off = math.atan2(vx * oy - vy * ox, vx * ox + vy * oy)  # signed angle from the view axis
         ang[k] = abs(off) + math.atan2(max(p.dims[0], p.dims[1]) / 2, r) * 0.6
     outdoor = spec.setting.kind == "outdoor"
+    water_scene = False
+    if outdoor:
+        from ai_db_scene.terrain import terrain_of
+
+        ter0 = terrain_of(spec)
+        water_scene = ter0 is not None and ter0.water is not None
     if hfov_deg is None:
         need = max((a for k, a in ang.items() if math.degrees(a) * 2 <= MAX_HFOV_DEG), default=0.0)
-        hfov_deg = max(MIN_HFOV_DEG, min(MAX_HFOV_DEG, math.degrees(need) * 2 + 8.0))
-        if outdoor:  # wide enough (up to the limit) for the canopies of the trees in frame
+        hfov_deg = max(MIN_HFOV_DEG if not outdoor else OUTDOOR_MIN_HFOV_DEG,
+                       min(MAX_HFOV_DEG, math.degrees(need) * 2 + 8.0))
+        if outdoor and auto_aim:
+            # frame the group from the ground at its near edge up to the tree tops (by the water:
+            # up past the horizon), the lens shift centring that band: the old frame centred on
+            # the group's middle height needed a 93 deg lens for the canopies, and the group
+            # filled 40 % of the picture over a foreground of empty grass (qwen aidb7 park)
+            hfov_deg, aim = _outdoor_frame(spec, placements, weights, x, y, z, aim, dist, hfov_deg, water_scene)
+        elif outdoor:  # wide enough (up to the limit) for the canopies of the trees in frame
             t0 = _shift_tan(aim, z, dist, hfov_deg)
             up = max((_top_tan(p, x, y, z) - t0 for p in placements if p.category in CANOPIES
                       and abs(_off_angle(p, x, y, vx, vy)) <= math.radians(hfov_deg) / 2), default=0.0)
@@ -299,7 +328,7 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
                                                 min_top=OUTDOOR_OCCLUDER_MIN_TOP_M if outdoor else OCCLUDER_MIN_TOP_M,
                                                 near_m=OUTDOOR_NEAR_M if outdoor else NEAR_M)
                 if f > COVER_MAX)
-    trunks = cut = water = 0.0
+    trunks = cut = water = hides = 0.0
     if outdoor:
         from ai_db_scene.terrain import terrain_of
 
@@ -307,16 +336,28 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
         if ter is not None and ter.water is not None:  # a beach photo looks across the shore to the water
             n = ter.to_water(x, y)
             water = vx * n[0] + vy * n[1]
+            if water < 0.3:
+                water -= 2.0  # along the shore or inland: the water is not the picture's background
+            if dist < WATER_MIN_DIST_M:  # from the dune top close up is a drone shot of the loungers
+                water -= (WATER_MIN_DIST_M - dist) / WATER_MIN_DIST_M * 2.0
         t_top = _shift_tan(aim, z, dist, hfov_deg) + math.tan(half) / _ASPECT
         for p in placements:
             if p.category not in TRUNKS:
                 continue
             off = _off_angle(p, x, y, vx, vy)
-            if abs(off) > half:
-                continue
             r = math.hypot(p.location[0] - x, p.location[1] - y)
+            crown = math.atan2(max(p.dims[0], p.dims[1]) / 2, max(r, 0.5)) if p.category in CANOPIES else 0.0
+            if abs(off) > half + crown:
+                continue  # (a palm whose crown reaches into the frame shows its trunk at the edge)
+            aoff = min(abs(off), half)
             if r < 0.75 * dist:  # a trunk nearer than the subject, the more the nearer the middle
-                trunks += (1.0 - abs(off) / half) * min(1.0, 4.0 / max(r, 1.0))
+                # (one near the lens at the edge of the frame still shows: a palm trunk down the side)
+                edge = 0.35 if r < 0.5 * dist else 0.0
+                trunks += max(1.0 - aoff / half, edge) * min(1.0, 4.0 / max(r, 1.0))
+            if p.category in CANOPIES and r < dist - 0.5:
+                # a tree on the near side of the group: its crown fills a side of the picture
+                trunks += NEAR_TREE_W * min(1.0, max(p.dims[0], p.dims[1]) / max(r, 1.0))
+            hides += _trunk_hides(p, x, y, r, off, by_id, weights, seen, vx, vy)
             if p.category in CANOPIES and _top_tan(p, x, y, z) > t_top:
                 cut += 1.0
     # room to step back: outdoors a park or beach is seen whole from further off (the qwen aidb7
@@ -324,8 +365,61 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
     back = 0.8 * min(dist, OUTDOOR_BACK_M) / OUTDOOR_BACK_M if outdoor else 0.4 * min(dist, 6.0) / 6.0
     score = (2.0 * framed + fronts / max(1.0, len(seen)) ** 0.5 + back + 0.8 * fill
              - (3.0 if clearance < _CLEAR_M else 0.0) - 1.0 * blocked - 6.0 * cover + facing_board
-             - TRUNK_W * trunks - CANOPY_CUT_W * cut + WATER_VIEW_W * water)
+             - TRUNK_W * trunks - CANOPY_CUT_W * cut + WATER_VIEW_W * water - TRUNK_HIDE_W * hides)
     return View(x, y, z, aim, hfov_deg, score, seen, fronts)
+
+
+def _trunk_hides(t: Placement, x: float, y: float, r: float, off: float, by_id: dict[str, Placement],
+                 weights: dict[str, float], seen: tuple[str, ...], vx: float, vy: float) -> float:
+    """How much a trunk (or lamp post) stands in front of the main objects in frame: a ring tree
+    between the lens and the fountain (qwen aidb7 park) cuts the picture in two."""
+    tw = math.atan2(TRUNK_R_M, max(r, 0.5))
+    out = 0.0
+    for k in seen:
+        p = by_id[k]
+        if p.category in TRUNKS or p.category in CANOPIES:
+            continue
+        rp = math.hypot(p.location[0] - x, p.location[1] - y)
+        if rp < r + 0.5:
+            continue  # the subject stands in front of the trunk
+        pw = math.atan2(max(p.dims[0], p.dims[1]) / 2, max(rp, 0.5))
+        if abs(_off_angle(p, x, y, vx, vy) - off) < pw + tw:
+            out += min(1.0, weights.get(k, 0.0))
+    return out
+
+
+def _outdoor_frame(spec: SceneSpec, placements: list[Placement], weights: dict[str, float], x: float, y: float,
+                   z: float, aim: tuple[float, float, float], dist: float, hfov_deg: float,
+                   water: bool) -> tuple[float, tuple[float, float, float]]:
+    """(hfov, aim) of an outdoor view: the vertical band from the ground at the near edge of the
+    focus group to the tops in frame (tree canopies, the parasol; past the horizon by the water),
+    centred by the lens shift, the lens just wide enough for the band and the group's width."""
+    vx, vy = (aim[0] - x) / dist, (aim[1] - y) / dist
+    lo = hi = None
+    for _ in range(2):  # the band depends on what is in frame, the frame on the band
+        half = math.radians(hfov_deg) / 2
+        inside = [p for p in placements if abs(_off_angle(p, x, y, vx, vy)) <= half and p.dims[2] > 0.05
+                  and (p.id in weights or p.category in CANOPIES)]
+        if not inside:
+            break
+        near = min(math.hypot(p.location[0] - x, p.location[1] - y) - max(p.dims[0], p.dims[1]) / 2
+                   for p in inside if p.id in weights) if any(p.id in weights for p in inside) else dist
+        lo = -z / max(near, 1.0)
+        hi = max(_top_tan(p, x, y, z) for p in inside)
+        if water:
+            hi = max(hi, WATER_SKY_TAN)  # the horizon and a band of sky over the water
+        span = (hi - lo) / 2 * 1.06
+        need = math.degrees(2 * math.atan(span * _ASPECT))
+        hfov_deg = max(hfov_deg, min(MAX_HFOV_DEG, need))
+    if lo is None or hi is None:
+        return hfov_deg, aim
+    # the frame's bottom edge at the near edge of the group: what the band leaves over goes to the
+    # sky and the trees, not to empty ground in front (lightning aidb7 beach: half the picture sand)
+    half_v = math.tan(math.radians(hfov_deg) / 2) / _ASPECT
+    centre = max((hi + lo) / 2, lo - 0.04 + half_v)
+    if water:  # the horizon no higher than a third from the top: the sea, not an empty sky
+        centre = min(centre, max((hi + lo) / 2, -half_v / 3))
+    return hfov_deg, (aim[0], aim[1], z + centre * dist)
 
 
 def _off_angle(p: Placement, x: float, y: float, vx: float, vy: float) -> float:
@@ -378,8 +472,8 @@ def near_spots(spec: SceneSpec, placements: list[Placement]) -> list[tuple[float
         # inland of the group, looking back across it at the water (the rings are too far apart
         # for a wide beach: lightning's 50 m cove had one spot left, looking along the shore)
         n = ter.to_water(ax, ay)
-        for dist in (6.0, 9.0, 13.0, 18.0, 24.0):
-            for t in (-30.0, -15.0, 0.0, 15.0, 30.0):
+        for dist in (6.0, 9.0, 11.0, 13.0, 15.0, 18.0, 24.0):
+            for t in (-60.0, -45.0, -30.0, -15.0, 0.0, 15.0, 30.0, 45.0, 60.0):  # (diagonals: along the beach)
                 c, sn = math.cos(math.radians(t)), math.sin(math.radians(t))
                 ux, uy = n[0] * c - n[1] * sn, n[0] * sn + n[1] * c
                 cands.append((ax - ux * dist, ay - uy * dist))
