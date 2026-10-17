@@ -239,6 +239,8 @@ def _normalize(d: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         seen.add(k)
     out = _rugs(out, ids, prior, notes)
     if indoor:
+        out = _desk_rows(d, out, setting, prior, notes)
+        objs = [o for o in d.get("objects") or [] if isinstance(o, dict)]
         out = _seating_group(out, objs, setting, notes)
     out = _seats(d, out, objs, notes)
     objs = [o for o in d.get("objects") or [] if isinstance(o, dict)]
@@ -358,6 +360,163 @@ def _rugs(rels: list[Any], ids: set[str], prior: Any, notes: list[str]) -> list[
             out[i] = {"a": rug, "rel": "centered_in", "b": x}
             notes.append(f"'{r['a']} {rel} {r['b']}' read as '{rug} centered_in {x}' (the rug lies under it)")
     return out
+
+
+#: what the students look at: desks in rows face it
+_BOARDS = ("whiteboard", "blackboard", "chalkboard", "projector_screen")
+#: desks that make rows, and how many copies make a block of rows
+_ROW_DESKS = ("desk",)
+_ROW_MIN = 4
+#: the board's end of the room kept free of student rows (board, teacher desk, aisle), m
+_FRONT_ZONE_M = 2.5
+#: a chair's depth behind its desk, added to the desk's depth for one row
+_SEAT_DEPTH_M = 0.6
+
+
+def _desk_rows(d: dict[str, Any], rels: list[Any], setting: dict[str, Any], prior: Any,
+               notes: list[str]) -> list[Any]:
+    """Student desks as a grid in rows facing the board.
+
+    Bench classroom: qwen aidb4/aidb5 declared student_desk_1 .. student_desk_12 chained by
+    ``beside`` (each with its own chair ``beside`` it) and the solver could not place the chain
+    (aidb5: 976x out of bounds); qwen aidb6 wrote one desk object with count 12 ``in_front_of``
+    the whiteboard and the copies stood scattered over the room. Four or more desks of one name
+    chained by beside / in_row, or one desk object with four or more copies that only faces the
+    board, become one grid of rows facing the board; per-desk chairs become one chair object
+    beside the block (``_seats`` then gives every desk its chair)."""
+    objs = [o for o in d.get("objects") or [] if isinstance(o, dict) and isinstance(o.get("id"), str)]
+    boards = [o["id"] for o in objs if o.get("category") in _BOARDS]
+    board_wall = next((r.get("b") for r in rels if isinstance(r, dict) and r.get("a") in boards
+                       and r.get("rel") == "against_wall"), None)
+    out = list(rels)
+    # 1. separate desks chained by beside: one block
+    single = [o["id"] for o in objs if o.get("category") in _ROW_DESKS and o.get("grid") is None and _n(o) == 1]
+    root = {i: i for i in single}
+
+    def find(i: str) -> str:
+        while root[i] != i:
+            i = root[i]
+        return i
+
+    for r in out:
+        if isinstance(r, dict) and r.get("rel") == "beside" and r.get("a") in root and r.get("b") in root:
+            root[find(r["a"])] = find(r["b"])
+    comps: dict[str, list[str]] = {}
+    for i in single:
+        comps.setdefault(find(i), []).append(i)
+    for comp in comps.values():
+        if len(comp) < _ROW_MIN:
+            continue
+        # the copies share a name (student_desk_1 .. 12); a teacher desk chained to them stays out
+        names: dict[str, list[str]] = {}
+        for i in comp:
+            m = _COPY.match(i)
+            names.setdefault(m.group(1) if m else i, []).append(i)
+        base, members = max(names.items(), key=lambda kv: len(kv[1]))
+        if len(members) < _ROW_MIN:
+            continue
+        out = _merge_block(d, out, base, members, boards, board_wall, setting, prior, notes)
+    # 2. one desk object with copies that only faces the board (or has no place at all)
+    for o in [o for o in d.get("objects") or [] if isinstance(o, dict)]:
+        oid = o.get("id")
+        if not boards or o.get("category") not in _ROW_DESKS or o.get("grid") is not None or _n(o) < _ROW_MIN:
+            continue
+        mine = [r for r in out if isinstance(r, dict) and r.get("a") == oid]
+        if any(r.get("rel") not in ("in_front_of", "facing") or r.get("b") not in boards for r in mine):
+            continue
+        out = _merge_block(d, out, str(oid), [str(oid)], boards, board_wall, setting, prior, notes)
+    return out
+
+
+def _merge_block(d: dict[str, Any], rels: list[Any], base: str, members: list[str], boards: list[str],
+                 board_wall: Any, setting: dict[str, Any], prior: Any, notes: list[str]) -> list[Any]:
+    objs = [o for o in d.get("objects") or [] if isinstance(o, dict)]
+    by_id = {o.get("id"): o for o in objs}
+    first = by_id[members[0]]
+    n = sum(_n(by_id[m]) for m in members)
+    block = base if base not in by_id or base in members else members[0]
+    p = prior(members[0])
+    dw, dd = (p.typical_m[0], p.typical_m[1]) if p is not None else (1.2, 0.6)
+    rows, cols = _rows_cols(n, setting, board_wall, dw, dd + _SEAT_DEPTH_M)
+    new = {k: v for k, v in first.items() if k != "count"}
+    new.update(id=block, grid={"rows": rows, "cols": cols})
+    keep = set(members)
+    d["objects"] = [new if o is first else o for o in d["objects"]
+                    if not (isinstance(o, dict) and o.get("id") in keep and o is not first)]
+    out: list[Any] = []
+    for r in rels:
+        if not isinstance(r, dict):
+            out.append(r)
+            continue
+        a, b = r.get("a"), r.get("b")
+        if a in keep and b in keep:
+            continue  # the chain itself: the grid's rows
+        r = {**r, "a": block if a in keep else a, "b": block if b in keep else b}
+        if r["a"] == block and r.get("rel") == "in_front_of" and r["b"] in boards:
+            r = {"a": block, "rel": "facing", "b": r["b"]}  # the board's front is the teacher's place
+        if r not in out:
+            out.append(r)
+    if boards and not any(r.get("a") == block and r.get("rel") == "facing" for r in out if isinstance(r, dict)):
+        out.append({"a": block, "rel": "facing", "b": boards[0]})
+    what = f"{len(members)} desks chained by beside" if len(members) > 1 else f"'{block}' ({n} copies)"
+    notes.append(f"{what} laid out as '{block}', a {rows}x{cols} grid in rows"
+                 + (f" facing '{boards[0]}'" if boards else ""))
+    return _block_chairs(d, out, block, n, boards, notes)
+
+
+def _block_chairs(d: dict[str, Any], rels: list[Any], block: str, n: int, boards: list[str],
+                  notes: list[str]) -> list[Any]:
+    """Per-desk chairs (student_chair_1 beside student_desk_1, ...) -> one chair object beside the
+    block, so ``_seats`` puts a chair at every desk of the grid."""
+    objs = [o for o in d.get("objects") or [] if isinstance(o, dict)]
+    groups: dict[str, list[dict[str, Any]]] = {}
+    loose: dict[str, int] = {}  # chairs with no relation at all (qwen aidb5): one per desk only
+    for o in objs:
+        oid = o.get("id")
+        if o.get("category") not in _SEAT_CATS or o.get("grid") is not None or _n(o) != 1:
+            continue
+        mine = [r for r in rels if isinstance(r, dict) and oid in (r.get("a"), r.get("b"))]
+        if not mine or (all(r.get("a") == oid and (r.get("b") == block or r.get("b") in boards) for r in mine)
+                        and any(r.get("b") == block for r in mine)):
+            groups.setdefault(o["category"], []).append(o)
+            loose[o["category"]] = loose.get(o["category"], 0) + (not mine)
+    for cat_, chairs in groups.items():
+        if len(chairs) < 2 or n % len(chairs) or (loose[cat_] and len(chairs) != n):
+            continue
+        ids = {c["id"] for c in chairs}
+        m = _COPY.match(chairs[0]["id"])
+        cid = m.group(1) if m and m.group(1) not in {o.get("id") for o in objs} else chairs[0]["id"]
+        merged = {**{k: v for k, v in chairs[0].items() if k != "count"}, "id": cid, "count": len(chairs)}
+        d["objects"] = [merged if o is chairs[0] else o for o in d["objects"]
+                        if not (isinstance(o, dict) and o.get("id") in ids and o is not chairs[0])]
+        rels = [r for r in rels if not (isinstance(r, dict) and r.get("a") in ids)]
+        rels.append({"a": cid, "rel": "beside", "b": block})
+        notes.append(f"{len(chairs)} {cat_}s for the desks merged into '{cid}' (count {len(chairs)}), beside '{block}'")
+    return rels
+
+
+def _rows_cols(n: int, setting: dict[str, Any], board_wall: Any, cell_w: float, cell_d: float) -> tuple[int, int]:
+    """(rows, cols) of ``n`` desks: the block fits the room in front of the board and keeps its
+    proportions (cols run along the board's wall)."""
+    bounds = setting.get("bounds_m")
+    w, dp = (float(bounds[0]), float(bounds[1])) if isinstance(bounds, list) and len(bounds) >= 2 \
+        and all(_num(v) for v in bounds[:2]) else (10.0, 8.0)
+    across, depth = (dp, w) if board_wall in ("wall_east", "wall_west") else (w, dp)
+    depth = max(depth - _FRONT_ZONE_M, 1.0)
+    from ai_db_scene.constants import LAYOUT_GRID_GAP_M
+
+    gx, gy = LAYOUT_GRID_GAP_M
+    best: tuple[tuple[bool, float], int, int] | None = None
+    for rows in range(1, n + 1):
+        if n % rows:
+            continue
+        cols = n // rows
+        bw, bd = cols * cell_w + (cols - 1) * gx, rows * cell_d + (rows - 1) * gy
+        score = (not (bw <= 0.85 * across and bd <= depth), abs(math.log((bw / bd) / (across / depth))))
+        if best is None or score < best[0]:
+            best = (score, rows, cols)
+    assert best is not None
+    return best[1], best[2]
 
 
 #: categories a ``seats`` table may have, and the seats it may get
