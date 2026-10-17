@@ -32,6 +32,9 @@ Checks:
   a park view, an armchair or plant at the lens); pieces lower than 0.85 m aside.
 * ``seating_fronts``: the camera sees the fronts of the main seating: of the seats of the main
   kind (sofa > bench > armchair > chairs), >= 1/3 turn their front toward the camera.
+* ``water_view`` (waterfront scenes: the scene has water and the brief names it): the water fills
+  >= 15 % of the camera's frame. The beach scores of aidb7 (100 before v3) did not see that the
+  camera looked inland along the sand, the sea a strip at the horizon.
 """
 
 from __future__ import annotations
@@ -69,6 +72,9 @@ OCCLUDER_MID_SHARE = 0.03  # of all rays, in the middle half of the frame's widt
 OCCLUDER_NEAR = 0.75  # nearer than this share of the subject's distance
 OCCLUDER_MIN_TOP_M = 0.85  # low pieces (a coffee table before the sofa) frame a view, they do not block it
 FRONTS_SHARE = 1 / 3
+#: what names the water in a brief and in a scene's object names
+WATER_WORDS = ("water", "sea", "ocean", "lagoon", "lake", "pond", "river", "waterfront", "shore", "bay")
+WATER_SHARE = 0.15  # of all rays through the frame
 FACING_SHARE = 0.75
 
 _WORDS: tuple[str, ...] = ()
@@ -130,8 +136,9 @@ def _faces(o: dict[str, Any], target: tuple[float, float]) -> bool:
     return (f[0] * dx + f[1] * dy) / n >= math.cos(math.radians(FACING_TOL_DEG))
 
 
-def check(inv: dict[str, Any]) -> dict[str, dict[str, Any]] | None:
-    """{check: {"pass": True | False | None, "why": str}}, or None for an inventory without layout."""
+def check(inv: dict[str, Any], brief: str | None = None) -> dict[str, dict[str, Any]] | None:
+    """{check: {"pass": True | False | None, "why": str}}, or None for an inventory without layout.
+    ``brief``: the brief's text (water_view applies only when it names the water)."""
     lay = inv.get("layout")
     if not lay or not lay.get("roots"):
         return None
@@ -157,7 +164,23 @@ def check(inv: dict[str, Any]) -> dict[str, dict[str, Any]] | None:
     low = {o["name"] for o in objs if o["box"][1][2] < OCCLUDER_MIN_TOP_M}
     out["no_occluder"] = _occluder(cam, {o["name"] for o in shell}, low)
     out["seating_fronts"] = _fronts(objs, cam)
+    out["water_view"] = _water_view(cam, list(lay["roots"]), brief)
     return out
+
+
+def _wet(text: str) -> bool:
+    return any(w in WATER_WORDS for w in re.split(r"[^a-z]+", text.lower()))
+
+
+def _water_view(cam: dict[str, Any] | None, names: list[str], brief: str | None) -> dict[str, Any]:
+    water = [n for n in names if _wet(n)]
+    if not water or not brief or not _wet(brief):
+        return {"pass": None, "why": "no water in the scene" if not water else "the brief names no water"}
+    if not cam or not cam.get("rays"):
+        return {"pass": False, "why": "no scene camera"}
+    share = sum(h[0] for k, h in cam["hits"].items() if k in water) / cam["rays"]
+    return {"pass": share >= WATER_SHARE,
+            "why": f"the water fills {share:.0%} of the frame (>= {WATER_SHARE:.0%} wanted: a waterfront view)"}
 
 
 def _focus(o: dict[str, Any], objs: list[dict[str, Any]]) -> dict[str, Any] | None:

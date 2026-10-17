@@ -12,7 +12,8 @@ empty scene passes most of them trivially).
   2 m of their table, benches within 3 m of their fountain), chairs_at_tables, fill_ratio
   (rooms: furniture footprint / floor 0.10-0.60), in_bounds (rooms), grounded (no floating
   objects), no_occluder (nothing in front of the subject fills the camera's frame),
-  seating_fronts (the camera sees the fronts of the main seating). It reads the inventory's
+  seating_fronts (the camera sees the fronts of the main seating), water_view (a scene with
+  water whose brief names it: the water fills >= 15 % of the camera's frame). It reads the inventory's
   layout data (root boxes and yaws, the scene camera and a grid of rays through its frame);
   `bench.py rescore --inventory` adds that data to older runs from their scene.blend.
 
@@ -116,7 +117,7 @@ def write(out: str) -> str:
           ("Quality (formula v3) = v2 x (1 - 0.25 x share of applicable layout-sanity checks failed) "
           "(seats face their table/TV/fountain, seat groups together, chairs at tables, room fill ratio 0.10-0.60, "
           "objects inside the room, nothing floating, no foreground occluder in the camera's frame, the camera sees "
-          "the fronts of the main seating; per-check pass/fail and reason in metrics.json quality.layout). "
+          "the fronts of the main seating, by the water the water fills >= 15% of the frame; per-check pass/fail and reason in metrics.json quality.layout). "
           "v2 = 40% brief checklist + 15% size plausibility + 10% mesh coverage + 25% "
           "validator (100 - 8/blocking - 2/warning) + 10% basics (camera, lights, materials). The checklist "
           "counts an object matched by name or category only for real geometry: an asset root with >= 2 mesh "

@@ -335,7 +335,7 @@ def score(brief: str, inv: dict[str, Any], validation: dict[str, Any]) -> dict[s
              + W_BASICS * basics)
     import layout_sanity
 
-    layout = layout_sanity.check(inv)
+    layout = layout_sanity.check(inv, briefs.BRIEFS.get(brief, {}).get("brief", brief))
     layout_pct = layout_sanity.score(layout)
     v2 = total
     if layout_pct is not None:  # a penalty, never a bonus: a near-empty scene passes most checks trivially

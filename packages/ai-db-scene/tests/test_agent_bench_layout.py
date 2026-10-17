@@ -120,3 +120,41 @@ def test_category_from_the_name(mods: tuple[Any, Any]) -> None:
     assert ls.category("Chair.001", "") == "chair"
     assert ls.category("benches", "") == "bench"
     assert ls.category("x", "sofa") == "sofa"
+
+
+def _beach(water_rays: int) -> dict[str, Any]:
+    roots = {"sand_ground": {**_root(0, 0, 40, 30, 0.1), "terrain": True},
+             "lagoon_water": {**_root(0, 20, 40, 10, 0.1), "terrain": True},
+             "parasol": _root(0, 5, 2.8, 2.8, 2.4), "lounger_1": _root(0.5, 5, 0.7, 1.9, 0.8)}
+    rest = 336 - water_rays - 20
+    cam = {"loc": [0, -8, 4], "dir": [0, 1, 0], "rays": 336, "median_m": 14.0,
+           "hits": {"sand_ground": [rest, 9.0, 40], "lagoon_water": [water_rays, 30.0, 50], "parasol": [12, 13.0, 12],
+                    "lounger_1": [8, 13.0, 8]}}
+    return _inv(roots, {"parasol": "parasol", "lounger_1": "sun_lounger"}, cam)
+
+
+def test_water_view_passes_when_the_water_fills_the_frame(mods):
+    _bench, ls = mods
+    res = ls.check(_beach(100), "A tropical beach cove: calm turquoise water, two sun loungers")
+    assert res["water_view"]["pass"] is True and "30%" in res["water_view"]["why"]
+
+
+def test_water_view_fails_for_a_camera_looking_inland(mods):
+    _bench, ls = mods
+    res = ls.check(_beach(20), "A tropical beach cove: calm turquoise water, two sun loungers")
+    assert res["water_view"]["pass"] is False
+
+
+def test_water_view_needs_water_in_the_scene_and_the_brief(mods):
+    _bench, ls = mods
+    assert ls.check(_beach(20), "A sandy desert with two loungers")["water_view"]["pass"] is None
+    assert ls.check(_beach(20))["water_view"]["pass"] is None
+    park = _inv({"fountain": _root(0, 0, 2, 2, 1)}, {"fountain": "fountain"},
+                {"loc": [0, -8, 2], "dir": [0, 1, 0], "rays": 336, "median_m": 8.0, "hits": {"fountain": [50, 8.0, 40]}})
+    assert ls.check(park, "A park by the lake")["water_view"]["pass"] is None
+
+
+def test_the_bench_score_passes_the_brief_text(mods):
+    bench, _ls = mods
+    q = bench.score("beach_cove", _beach(20), {"issues": []})
+    assert q["layout"]["water_view"]["pass"] is False
