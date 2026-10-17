@@ -1,0 +1,723 @@
+{
+ "source": "bench/<arm>/<brief>/aidb/scene_memory.db: last stored version (qwen3-14b-local; lead review 2026-10-17)",
+ "round_lobby": {
+  "source": "qwen3-14b-local-aidb7/round_lobby",
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     8.0,
+     8.0,
+     4.0
+    ],
+    "style": null,
+    "shape": "ellipse",
+    "floor_material": "marble",
+    "wall_material": "paint"
+   },
+   "objects": [
+    {
+     "id": "reception_desk",
+     "category": "reception_desk",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "grid": {
+      "rows": 1,
+      "cols": 1,
+      "gap_m": [
+       0.5,
+       0.5
+      ]
+     },
+     "material": "wood"
+    },
+    {
+     "id": "armchair",
+     "category": "armchair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "grid": {
+      "rows": 1,
+      "cols": 1,
+      "gap_m": [
+       0.5,
+       0.5
+      ]
+     },
+     "material": "velvet"
+    },
+    {
+     "id": "low_table",
+     "category": "coffee_table",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "grid": {
+      "rows": 1,
+      "cols": 1,
+      "gap_m": [
+       0.5,
+       0.5
+      ]
+     },
+     "material": "glass"
+    },
+    {
+     "id": "potted_plant",
+     "category": "potted_plant",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "grid": {
+      "rows": 1,
+      "cols": 1,
+      "gap_m": [
+       0.5,
+       0.5
+      ]
+     },
+     "material": "ceramic"
+    },
+    {
+     "id": "pendant_lamp",
+     "category": "pendant_lamp",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "grid": {
+      "rows": 1,
+      "cols": 1,
+      "gap_m": [
+       0.5,
+       0.5
+      ]
+     },
+     "material": "metal"
+    },
+    {
+     "id": "potted_plant_2",
+     "category": "potted_plant",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "ceramic"
+    },
+    {
+     "id": "armchair_2",
+     "category": "armchair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "velvet"
+    },
+    {
+     "id": "armchair_3",
+     "category": "armchair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "velvet"
+    },
+    {
+     "id": "armchair_4",
+     "category": "armchair",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "velvet"
+    }
+   ],
+   "relations": [
+    {
+     "a": "reception_desk",
+     "rel": "against_wall",
+     "b": "wall",
+     "at_deg": 90.0
+    },
+    {
+     "a": "armchair",
+     "rel": "around",
+     "b": "low_table",
+     "gap_m": 0.5
+    },
+    {
+     "a": "potted_plant",
+     "rel": "beside",
+     "b": "reception_desk",
+     "gap_m": 0.5
+    },
+    {
+     "a": "pendant_lamp",
+     "rel": "above",
+     "b": "low_table",
+     "gap_m": 1.5
+    },
+    {
+     "a": "low_table",
+     "rel": "in_front_of",
+     "b": "reception_desk",
+     "gap_m": 3.3
+    },
+    {
+     "a": "potted_plant_2",
+     "rel": "beside",
+     "b": "reception_desk",
+     "gap_m": 0.5
+    },
+    {
+     "a": "armchair_2",
+     "rel": "around",
+     "b": "low_table",
+     "gap_m": 0.5
+    },
+    {
+     "a": "armchair_3",
+     "rel": "around",
+     "b": "low_table",
+     "gap_m": 0.5
+    },
+    {
+     "a": "armchair_4",
+     "rel": "around",
+     "b": "low_table",
+     "gap_m": 0.5
+    }
+   ],
+   "lighting": {
+    "daylight": true,
+    "lamp": "pendant_lamp"
+   },
+   "camera": {
+    "position": [
+     4,
+     4,
+     2.5
+    ],
+    "rotation": [
+     0,
+     0,
+     0
+    ],
+    "fov": 75
+   }
+  }
+ },
+ "living_room": {
+  "source": "qwen3-14b-local-aidb6/living_room",
+  "spec": {
+   "setting": {
+    "kind": "indoor",
+    "bounds_m": [
+     6.0,
+     5.0,
+     3.0
+    ],
+    "style": "cozy",
+    "floor_material": "wood",
+    "wall_material": "paint"
+   },
+   "objects": [
+    {
+     "id": "sofa",
+     "category": "sofa",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "fabric"
+    },
+    {
+     "id": "tv_stand",
+     "category": "tv_stand",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "glass"
+    },
+    {
+     "id": "coffee_table",
+     "category": "coffee_table",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "rug",
+     "category": "rug",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "fabric:weave"
+    },
+    {
+     "id": "armchair1",
+     "category": "armchair",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "leather"
+    },
+    {
+     "id": "armchair2",
+     "category": "armchair",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "leather"
+    },
+    {
+     "id": "floor_lamp",
+     "category": "floor_lamp",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "tv",
+     "category": "tv",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "plastic"
+    }
+   ],
+   "relations": [
+    {
+     "a": "sofa",
+     "rel": "against_wall",
+     "b": "wall_south"
+    },
+    {
+     "a": "coffee_table",
+     "rel": "in_front_of",
+     "b": "sofa"
+    },
+    {
+     "a": "rug",
+     "rel": "centered_in",
+     "b": "coffee_table"
+    },
+    {
+     "a": "armchair1",
+     "rel": "beside",
+     "b": "coffee_table",
+     "gap_m": 0.35
+    },
+    {
+     "a": "armchair1",
+     "rel": "facing",
+     "b": "coffee_table"
+    },
+    {
+     "a": "armchair2",
+     "rel": "beside",
+     "b": "coffee_table",
+     "gap_m": 0.35
+    },
+    {
+     "a": "armchair2",
+     "rel": "facing",
+     "b": "coffee_table"
+    },
+    {
+     "a": "floor_lamp",
+     "rel": "beside",
+     "b": "sofa"
+    },
+    {
+     "a": "tv_stand",
+     "rel": "against_wall",
+     "b": "wall_north"
+    },
+    {
+     "a": "tv_stand",
+     "rel": "facing",
+     "b": "sofa"
+    },
+    {
+     "a": "tv",
+     "rel": "on",
+     "b": "tv_stand"
+    }
+   ],
+   "lighting": {
+    "daylight": true,
+    "lamp": "floor_lamp"
+   },
+   "camera": {
+    "position": [
+     2,
+     2,
+     1.5
+    ],
+    "target": [
+     0,
+     0,
+     0.5
+    ]
+   }
+  }
+ },
+ "park_corner": {
+  "source": "qwen3-14b-local-aidb7/park_corner",
+  "spec": {
+   "setting": {
+    "kind": "outdoor",
+    "bounds_m": [
+     20.0,
+     20.0,
+     5.0
+    ],
+    "style": null,
+    "floor_material": "concrete:#2f2f31",
+    "ground": "grass"
+   },
+   "objects": [
+    {
+     "id": "bench1",
+     "category": "bench",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "wood"
+    },
+    {
+     "id": "bench2",
+     "category": "bench",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "bench3",
+     "category": "bench",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "plastic"
+    },
+    {
+     "id": "fountain",
+     "category": "fountain",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "stone"
+    },
+    {
+     "id": "tree1",
+     "category": "tree",
+     "count": 1,
+     "hero": true,
+     "detail": "standard"
+    },
+    {
+     "id": "tree2",
+     "category": "tree",
+     "count": 1,
+     "hero": true,
+     "detail": "standard"
+    },
+    {
+     "id": "trash_bin",
+     "category": "trash_can",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "lamp1",
+     "category": "street_lamp",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "metal"
+    },
+    {
+     "id": "lamp2",
+     "category": "street_lamp",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "metal"
+    }
+   ],
+   "relations": [
+    {
+     "a": "bench1",
+     "rel": "around",
+     "b": "fountain",
+     "gap_m": 1.55
+    },
+    {
+     "a": "tree1",
+     "rel": "around",
+     "b": "fountain",
+     "gap_m": 1.1
+    },
+    {
+     "a": "bench2",
+     "rel": "around",
+     "b": "fountain",
+     "gap_m": 1.55
+    },
+    {
+     "a": "tree2",
+     "rel": "around",
+     "b": "fountain",
+     "gap_m": 1.1
+    },
+    {
+     "a": "bench3",
+     "rel": "around",
+     "b": "fountain",
+     "gap_m": 1.55
+    },
+    {
+     "a": "trash_bin",
+     "rel": "beside",
+     "b": "bench1"
+    },
+    {
+     "a": "lamp1",
+     "rel": "beside",
+     "b": "bench1"
+    },
+    {
+     "a": "lamp2",
+     "rel": "beside",
+     "b": "bench3"
+    }
+   ],
+   "lighting": {
+    "daylight": true,
+    "intensity": 1.2
+   },
+   "camera": {
+    "position": [
+     0,
+     0,
+     3
+    ],
+    "rotation": [
+     45,
+     0,
+     0
+    ],
+    "fov": 60
+   }
+  }
+ },
+ "beach_cove": {
+  "source": "qwen3-14b-local-aidb7/beach_cove",
+  "spec": {
+   "setting": {
+    "kind": "outdoor",
+    "bounds_m": [
+     28.8,
+     21.6,
+     5.0
+    ],
+    "style": "tropical",
+    "ground": "sand",
+    "water": {
+     "kind": "lagoon",
+     "side": "north",
+     "fraction": 0.3
+    }
+   },
+   "objects": [
+    {
+     "id": "palm1",
+     "category": "palm_tree",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "foliage:#4a7a3a"
+    },
+    {
+     "id": "palm2",
+     "category": "palm_tree",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "foliage:#4a7a3a"
+    },
+    {
+     "id": "palm3",
+     "category": "palm_tree",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "foliage:#4a7a3a"
+    },
+    {
+     "id": "palm4",
+     "category": "palm_tree",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "foliage:#4a7a3a"
+    },
+    {
+     "id": "palm5",
+     "category": "palm_tree",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "foliage:#4a7a3a"
+    },
+    {
+     "id": "bush1",
+     "category": "tropical_bush",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "paint:#4a7a3a"
+    },
+    {
+     "id": "bush2",
+     "category": "tropical_bush",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "paint:#4a7a3a"
+    },
+    {
+     "id": "boardwalk",
+     "category": "boardwalk",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "wood:pine:#b08a55"
+    },
+    {
+     "id": "lounger1",
+     "category": "sun_lounger",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "wood:pine:#b08a55"
+    },
+    {
+     "id": "lounger2",
+     "category": "sun_lounger",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "wood:pine:#b08a55"
+    },
+    {
+     "id": "parasol",
+     "category": "parasol",
+     "count": 1,
+     "hero": true,
+     "detail": "standard",
+     "material": "fabric:canvas:#f2f2f0"
+    },
+    {
+     "id": "rocks1",
+     "category": "rock",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "stone:#5f5b57",
+     "turn_deg": 180
+    },
+    {
+     "id": "fern1",
+     "category": "fern",
+     "count": 1,
+     "hero": false,
+     "detail": "standard",
+     "material": "paint:#4a7a3a"
+    }
+   ],
+   "relations": [
+    {
+     "a": "lounger1",
+     "rel": "under",
+     "b": "parasol"
+    },
+    {
+     "a": "lounger2",
+     "rel": "beside",
+     "b": "lounger1",
+     "gap_m": 0.15
+    },
+    {
+     "a": "palm1",
+     "rel": "beside",
+     "b": "palm2"
+    },
+    {
+     "a": "palm2",
+     "rel": "beside",
+     "b": "palm3"
+    },
+    {
+     "a": "palm3",
+     "rel": "beside",
+     "b": "palm4"
+    },
+    {
+     "a": "palm4",
+     "rel": "beside",
+     "b": "palm5"
+    },
+    {
+     "a": "boardwalk",
+     "rel": "starts_at",
+     "b": "bush1"
+    },
+    {
+     "a": "boardwalk",
+     "rel": "leads_to",
+     "b": "water"
+    },
+    {
+     "a": "bush1",
+     "rel": "back_of",
+     "b": "water"
+    },
+    {
+     "a": "bush2",
+     "rel": "back_of",
+     "b": "water"
+    },
+    {
+     "a": "rocks1",
+     "rel": "at_edge_of",
+     "b": "water"
+    },
+    {
+     "a": "fern1",
+     "rel": "back_of",
+     "b": "water"
+    }
+   ],
+   "lighting": {
+    "sun_angle": "45 degrees",
+    "intensity": 1.2
+   },
+   "camera": {
+    "position": [
+     10,
+     5,
+     3
+    ],
+    "rotation": [
+     0,
+     0,
+     0
+    ],
+    "type": "perspective"
+   }
+  }
+ }
+}

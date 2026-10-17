@@ -15,7 +15,7 @@ import math
 from pathlib import Path
 
 import pytest
-from ai_db_scene.camera import best_views, view_issue
+from ai_db_scene.camera import SEAT_NEAR_COVER, best_views, near_seating, view_issue
 from ai_db_scene.edits import apply_steps
 from ai_db_scene.normalize import room_shape_from_brief
 from ai_db_scene.repair import solve_with_repairs
@@ -67,13 +67,24 @@ def test_living_room_camera_faces_the_sofa_front(name):
 @pytest.mark.parametrize("name", sorted(LOBBIES))
 def test_lobby_camera_looks_from_the_open_side(name):
     spec, pls = _solve(LOBBIES[name], "A round hotel lobby")
-    v = best_views(spec, pls, 1.4)[0]
+    views = best_views(spec, pls, 1.4)
+    v = views[0]
     by = {p.id: p for p in pls}
     desk = by["reception_desk"]
-    assert _in_frustum(v, desk) and _sees_front(v, desk)  # the feature, from its front
     chairs = [p for p in pls if p.category == "armchair"]
-    assert all(_in_frustum(v, c) for c in chairs)
-    assert sum(_sees_front(v, c) for c in chairs) >= 2  # not from behind the ring
+
+    def clean(u):  # no armchair side filling the bottom of the picture (aidb7 lobby review)
+        return all(f <= SEAT_NEAR_COVER for _k, f in near_seating(pls, u.x, u.y, u.z, u.aim, u.hfov_deg))
+
+    def open_side(u):
+        return (_in_frustum(u, desk) and _sees_front(u, desk) and all(_in_frustum(u, c) for c in chairs)
+                and sum(_sees_front(u, c) for c in chairs) >= 2)
+
+    assert clean(v)
+    if any(clean(u) and open_side(u) for u in views):  # a room big enough for both
+        assert open_side(v)  # the feature from its front, not from behind the ring
+    else:  # a small round room: the clean view across the ring, still seeing fronts
+        assert sum(_sees_front(v, c) for c in chairs if c.id in v.seen) >= 1
     w, d, _h = spec.setting.bounds_m
     assert ((v.x - w / 2) / (w / 2)) ** 2 + ((v.y - d / 2) / (d / 2)) ** 2 < 1  # inside the round wall
 

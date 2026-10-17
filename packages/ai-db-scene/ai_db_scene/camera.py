@@ -70,6 +70,22 @@ WATER_SKY_TAN = 0.1
 OUTDOOR_MIN_HFOV_DEG = 40.0
 #: outdoors the camera may step back this far beyond the setting's bounds (the ground goes on)
 OUTDOOR_REACH_M = 8.0
+#: seating near the lens: the bottom of the picture filled by an armchair (qwen aidb7 lobby: the
+#: camera stood at the ring, an armchair 2 m off filled the lower left). Big seating nearer than
+#: SEAT_NEAR_M (footprint) covering more than SEAT_NEAR_COVER of the frame's lower third costs
+#: SEAT_NEAR_W per share above that (a small living room has seating within 2.5 m of every spot:
+#: an armchair at the edge of its photo is fine); a spot inside a seating ring (>= 3 seats facing
+#: one point) costs RING_INSIDE_W.
+SEAT_NEAR_M = 2.5
+SEAT_NEAR_COVER = 0.12
+SEAT_NEAR_W = 12.0
+SEAT_NEAR_FLAT = 2.0  # and this once per such seat: a clean view wins whenever the room has one
+RING_INSIDE_W = 8.0
+RING_MIN_SEATS = 3
+RING_MARGIN_M = 0.2
+#: the seating that fills a picture's bottom (dining and desk chairs are too small to: a cafe has one
+#: within 2.5 m of every spot)
+BIG_SEATING = ("sofa", "armchair", "bench", "bed")
 _ASPECT = 16 / 9
 _INSET_M = 0.45  # spots stand this far in from the walls
 _CLEAR_M = 0.35  # and at least this far from any furniture footprint
@@ -154,7 +170,7 @@ def spots(spec: SceneSpec, placements: list[Placement]) -> list[tuple[float, flo
     out: list[tuple[float, float]] = []
     if st.shape == "ellipse":
         a, b = w / 2 - i, d / 2 - i
-        out = [(w / 2 + a * math.cos(math.radians(t)), d / 2 + b * math.sin(math.radians(t))) for t in range(0, 360, 30)]
+        out = [(w / 2 + a * math.cos(math.radians(t)), d / 2 + b * math.sin(math.radians(t))) for t in range(0, 360, 15)]
     elif st.shape == "polygon" and len(st.points) >= 3:
         shape = RoomShape("polygon", w, d, tuple((float(p[0]), float(p[1])) for p in st.points))
         pts = list(st.points)
@@ -223,6 +239,68 @@ def foreground_cover(placements: list[Placement], x: float, y: float, z: float, 
         if h1 <= h0 or v1 <= v0:
             continue
         out.append((p.id, (h1 - h0) / (2 * th) * (v1 - v0) / (2 * tv)))
+    return out
+
+
+def seating_rings(placements: list[Placement]) -> list[tuple[float, float, float]]:
+    """(cx, cy, radius) of each ring of seating: >= RING_MIN_SEATS seats within 4 m of a point
+    (a table, or the seats' own centroid) whose fronts all face it (within ~25 deg). The radius
+    is the farthest seat's centre plus RING_MARGIN_M: standing between two armchairs of the ring
+    is inside it; the open side of a sofa-and-armchairs U (where a living-room photo stands) is not."""
+    seats = [p for p in placements if p.category in BIG_SEATING]
+    if len(seats) < RING_MIN_SEATS:
+        return []
+    cands = [(p.location[0], p.location[1]) for p in placements if p.category not in BIG_SEATING]
+    cands.append((sum(p.location[0] for p in seats) / len(seats), sum(p.location[1] for p in seats) / len(seats)))
+    rings: list[tuple[float, float, float]] = []
+    for cx, cy in cands:
+        members = []
+        for p in seats:
+            ox, oy = cx - p.location[0], cy - p.location[1]
+            r = math.hypot(ox, oy)
+            f = _front(p)
+            if 0.3 < r < 4.0 and (ox * f[0] + oy * f[1]) / r > 0.9:
+                members.append(r + RING_MARGIN_M)
+        if len(members) >= RING_MIN_SEATS and not any(math.hypot(cx - a, cy - b) < 0.5 for a, b, _r in rings):
+            rings.append((cx, cy, max(members)))
+    return rings
+
+
+def near_seating(placements: list[Placement], x: float, y: float, z: float, aim: tuple[float, float, float],
+                 hfov_deg: float, aspect: float = 16 / 9) -> list[tuple[str, float]]:
+    """(id, share of the frame's lower third it covers) of the big seating within SEAT_NEAR_M of the
+    camera, seen from its side or back: the arm of an armchair filling the bottom-left of the picture. In the image plane
+    like ``foreground_cover``: its box at the depth of its nearest face, the frame lens-shifted."""
+    from ai_db_scene.constants import SCENE_CAMERA_MAX_SHIFT
+
+    vx, vy = aim[0] - x, aim[1] - y
+    n = math.hypot(vx, vy) or 1e-6
+    vx, vy = vx / n, vy / n
+    th = math.tan(math.radians(hfov_deg) / 2)
+    tv = th / aspect
+    t0 = max(-2 * SCENE_CAMERA_MAX_SHIFT * th, min(2 * SCENE_CAMERA_MAX_SHIFT * th, (aim[2] - z) / max(n, 0.5)))
+    lo, hi = t0 - tv, t0 - tv / 3  # the lower third of the frame (tan of the angle below the axis)
+    out = []
+    for p in placements:
+        if p.category not in BIG_SEATING or _footprint_dist(x, y, p) >= SEAT_NEAR_M:
+            continue
+        ox, oy = p.location[0] - x, p.location[1] - y
+        ahead = ox * vx + oy * vy
+        span = max(p.dims[0], p.dims[1]) / 2
+        if ahead + span <= 0.1:
+            continue  # behind the lens
+        r = math.hypot(ox, oy) or 1e-6
+        f = _front(p)
+        if -(ox * f[0] + oy * f[1]) / r > 0.5:
+            continue  # seen from its front: the subject (the sofa of a living-room photo), not foreground
+        side = ox * -vy + oy * vx
+        depth = max(ahead - span, _footprint_dist(x, y, p), 0.25)
+        h0, h1 = max((side - span) / depth, -th), min((side + span) / depth, th)
+        bottom, top = p.location[2] - p.dims[2] / 2, p.location[2] + p.dims[2] / 2
+        v0, v1 = max((bottom - z) / depth, lo), min((top - z) / depth, hi)
+        if h1 <= h0 or v1 <= v0:
+            continue
+        out.append((p.id, (h1 - h0) / (2 * th) * (v1 - v0) / (hi - lo)))
     return out
 
 
@@ -360,12 +438,16 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
             hides += _trunk_hides(p, x, y, r, off, by_id, weights, seen, vx, vy)
             if p.category in CANOPIES and _top_tan(p, x, y, z) > t_top:
                 cut += 1.0
+    near_seats = near_seating(placements, x, y, z, aim, hfov_deg)
+    in_ring = any(math.hypot(x - cx, y - cy) < r for cx, cy, r in seating_rings(placements))
     # room to step back: outdoors a park or beach is seen whole from further off (the qwen aidb7
     # park view stood 4 m from the fountain with a 96 deg lens, the trees cut at the top)
     back = 0.8 * min(dist, OUTDOOR_BACK_M) / OUTDOOR_BACK_M if outdoor else 0.4 * min(dist, 6.0) / 6.0
     score = (2.0 * framed + fronts / max(1.0, len(seen)) ** 0.5 + back + 0.8 * fill
              - (3.0 if clearance < _CLEAR_M else 0.0) - 1.0 * blocked - 6.0 * cover + facing_board
-             - TRUNK_W * trunks - CANOPY_CUT_W * cut + WATER_VIEW_W * water - TRUNK_HIDE_W * hides)
+             - TRUNK_W * trunks - CANOPY_CUT_W * cut + WATER_VIEW_W * water - TRUNK_HIDE_W * hides
+             - sum(SEAT_NEAR_FLAT + SEAT_NEAR_W * (f - SEAT_NEAR_COVER) for _k, f in near_seats if f > SEAT_NEAR_COVER)
+             - (RING_INSIDE_W if in_ring else 0.0))
     return View(x, y, z, aim, hfov_deg, score, seen, fronts)
 
 
