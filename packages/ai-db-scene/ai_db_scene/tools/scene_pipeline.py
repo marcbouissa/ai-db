@@ -1362,31 +1362,44 @@ def lighting_commands(spec: SceneSpec, placements: list[Placement], off: tuple[f
     every lamp. A lone sun left interiors flat and dark (judges' second most common complaint),
     and window light alone does not reach the middle of a large room: indoors the exposure grows
     with the floor area and a soft ceiling area light (energy by floor area) fills the room."""
+    from ai_db_scene import daylight
+
     indoor = spec.setting.kind == "indoor"
     area = floor_area_m2(spec)
     if spec.setting.kind == "outdoor":
         return outdoor_lighting_commands(spec, placements, off)
+    # with windows the daylight comes in through them (daylight.py): the sun outside the main
+    # window wall, a sky glow in each opening, a weak ceiling bounce; without, the old rig
+    sun_az = daylight.sun_azimuth(placements) if indoor else None
+    daylit = sun_az is not None
     cmds: list[dict[str, Any]] = [{"type": "daylight_rig", "params": {
-        "sun_elevation": 40.0, "sun_azimuth": 135.0, "strength": SCENE_SUN_ENERGY, "sky": "nishita",
-        "window_portals": indoor, "sky_strength": 0.8, "name": "ai_db_daylight",
-        "exposure": indoor_exposure(area) if indoor else SCENE_EXPOSURE_OUTDOOR}}]
+        "sun_elevation": daylight.SUN_ELEVATION_DEG if daylit else 40.0,
+        "sun_azimuth": sun_az if daylit else 135.0, "strength": daylight.SUN_ENERGY if daylit else SCENE_SUN_ENERGY,
+        "sky": "nishita", "window_portals": indoor, "sky_strength": 0.8, "name": "ai_db_daylight",
+        "exposure": (indoor_exposure(area) + (daylight.DAYLIT_EXPOSURE_SHIFT if daylit else 0.0)) if indoor
+        else SCENE_EXPOSURE_OUTDOOR}}]
     if indoor:
         w, d, h = spec.setting.bounds_m
         lo, hi = SCENE_FILL_W_RANGE
+        per_m2 = daylight.DAYLIT_FILL_W_PER_M2 if daylit else SCENE_FILL_W_PER_M2
+        lo = lo * per_m2 / SCENE_FILL_W_PER_M2
         cx, cy = _room_centre(spec, off)
         cmds.append({"type": "add_light", "params": {
-            "light_type": "AREA", "name": "ai_db_fill", "energy": round(min(max(SCENE_FILL_W_PER_M2 * area, lo), hi), 1),
+            "light_type": "AREA", "name": "ai_db_fill", "energy": round(min(max(per_m2 * area, lo), hi), 1),
             "color": [1.0, 0.96, 0.9], "location": [cx, cy, h - SCENE_FILL_CEILING_GAP_M],
             "rotation": [0.0, 0.0, 0.0]}})  # shines along -Z: down
         cmds.append({"type": "run_code", "params": {"code": _AREA_SHAPE.format(
             name="ai_db_fill", sx=round(w * SCENE_FILL_SIZE_FRACTION, 3), sy=round(d * SCENE_FILL_SIZE_FRACTION, 3))}})
+        if daylit:
+            cmds += daylight.window_light_commands(placements, off)
     for pl in placements:
         watts = SCENE_LAMP_W.get(pl.category)
         if watts is None:
             continue
         x, y, z = _shift(pl.location, off)
         cmds.append({"type": "add_light", "params": {
-            "light_type": "POINT", "name": f"{pl.id}_light", "energy": watts, "color": [1.0, 0.82, 0.62],
+            "light_type": "POINT", "name": f"{pl.id}_light", "energy": round(watts * (daylight.LAMP_BOOST if daylit else 1.0), 1),
+            "color": [1.0, 0.82, 0.62],
             "location": [x, y, z + pl.dims[2] / 2 - 0.15]}})
     return cmds
 
