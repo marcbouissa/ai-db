@@ -399,11 +399,15 @@ for job in jobs:
         bm = bmesh.new()
         shp._sweep_into(bm, [Vector((x, y, job["z"])) for x, y in path], prof, closed)
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-        me = bpy.data.meshes.new(job["name"] + "_" + str(k))
+        nm = job["name"] + "_" + str(k)
+        stale = bpy.data.meshes.get(nm)
+        if stale is not None and stale.users == 0:  # a tidied rebuild's mesh: reuse the name
+            bpy.data.meshes.remove(stale)
+        me = bpy.data.meshes.new(nm)
         bm.to_mesh(me)
         bm.free()
         me.materials.append(mat)
-        obj = bpy.data.objects.new(me.name, me)
+        obj = bpy.data.objects.new(nm, me)
         bpy.context.scene.collection.objects.link(obj)
         obj["category"] = "trim"
         obj["moulding"] = job["kind"]
@@ -836,7 +840,8 @@ result = {{"segments": len(segs), "tips": len(tips)}}
 _TIDY = """
 import bpy, json
 ids = set(json.loads({payload!r}))
-ours = ("Room_", "floor_line_", "ground_beyond", "ai_db_fill", "Room_Planks", "ai_db_daylight", "Moulding_")
+ours = ("Room_", "floor_line_", "ground_beyond", "ai_db_fill", "Room_Planks", "ai_db_daylight", "Moulding_",
+        "grass_blades")
 lights = {{i + "_light" for i in ids}}
 gone = []
 
@@ -854,9 +859,15 @@ for o in list(bpy.context.scene.objects):
                     and all(abs(d - 2.0) < 1e-4 for d in o.dimensions) and o.location.length < 1e-4)
     # any root an earlier ai-db build tagged belongs to the scene being replaced; untagged
     # (user-made) objects are kept
+    window_glow = o.type == "LIGHT" and o.name.endswith("_daylight")  # daylight.py: a light in each window
     if factory_cube or o.name.startswith(ours) or o.name in lights or (o.get("ai_db_id") is not None and o.parent is None) \
-            or o.get("ai_db_terrain"):
+            or o.get("ai_db_terrain") or window_glow:
         drop(o)
+# their light data too: the daylight rig names a portal after its light data, and a leftover
+# "ai_db_daylight_Portal_<window>" made the next one "...<window>.001"
+for ld in list(bpy.data.lights):
+    if ld.users == 0 and ld.name.startswith(("ai_db_daylight", "ai_db_fill")):
+        bpy.data.lights.remove(ld)
 result = {{"removed": gone[:50], "count": len(gone)}}
 """
 

@@ -568,8 +568,10 @@ def test_live_final_render_with_sky(private_blender, mem, tmp_path, engine):
     from ai_db_scene.blender_client import BlenderClient
 
     target = tmp_path / f"final_{engine}.png"
+    # shell=false: the old rig's sun (40, 135); with the shell's windows the sun stands outside
+    # them (daylight.py, test_scene_daylight) and the sky follows it all the same
     res = sp._handle_build_scene({"spec": SPEC, "clear": True, "snapshot": False, "exposure_check": False,
-                                  "render": {"engine": engine, "samples": 4, "sky": True, "resolution": [160, 90],
+                                  "shell": False, "render": {"engine": engine, "samples": 4, "sky": True, "resolution": [160, 90],
                                              "path": str(target)}})
     fr = res["final_render"]
     assert "error" not in fr, fr
