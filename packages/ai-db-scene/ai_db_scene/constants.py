@@ -50,6 +50,7 @@ SCENE_FILL_CEILING_GAP_M = 0.05  # below the ceiling plane, so it is inside the 
 SCENE_LAMP_W = {"floor_lamp": 80.0, "table_lamp": 40.0, "pendant_lamp": 100.0, "ceiling_light": 150.0,
                 "wall_sconce": 40.0, "street_lamp": 300.0, "lamp_post_double": 500.0}  # a point light in each lamp object
 SCENE_CAMERA_HEIGHT_M = 1.4  # indoors (outdoors: 2.5 m); interior photographers shoot from 1.2-1.5 m
+SCENE_CAMERA_FACED_EYE_M = 1.7  # indoors when the seating faces a TV / fireplace the view must show
 SCENE_CAMERA_WATER_EYE_M = 4.0  # outdoors by the water (a dune top): over the shore plants, onto the shallows
 SCENE_CAMERA_MAX_SHIFT = 0.35  # lens shift that frames the subject while the camera stays level
 REPAIR_GROWTH = 1.2  # build_scene: room x/y growth per repair step

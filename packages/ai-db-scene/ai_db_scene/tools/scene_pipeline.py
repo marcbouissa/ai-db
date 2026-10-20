@@ -20,6 +20,7 @@ from ai_db_scene.build_report import present_build
 from ai_db_scene.constants import (
     FOLIAGE_CATEGORIES,
     LAYOUT_DOOR_HEIGHT_M,
+    SCENE_CAMERA_FACED_EYE_M,
     SCENE_CAMERA_HEIGHT_M,
     SCENE_CAMERA_MAX_SHIFT,
     SCENE_CAMERA_WATER_EYE_M,
@@ -1461,7 +1462,7 @@ def camera_poses(spec: SceneSpec, placements: list[Placement], off: tuple[float,
     seating looking at a blank wall (Marc's review of the aidb5 round lobby)."""
     import math
 
-    from ai_db_scene.camera import best_views
+    from ai_db_scene.camera import best_views, faced_features
 
     h = spec.setting.bounds_m[2]
     indoor = spec.setting.kind == "indoor"
@@ -1472,9 +1473,19 @@ def camera_poses(spec: SceneSpec, placements: list[Placement], off: tuple[float,
         # sky and a bush filled the bottom corner: qwen aidb7 beach_cove)
         eye = SCENE_CAMERA_WATER_EYE_M
     heights = [eye, round(min(eye + 0.8, h - 0.3), 2) if indoor else eye + 2.0]
+    faced_eye = None
+    if indoor and faced_features(placements):
+        # a living room shot to show the sofa AND the TV it faces stands in a corner of the TV
+        # wall, past the end of the group: the tripod goes up so the near armchair's back sits low
+        # in the frame instead of filling it (f7e0879 demo: the TV cut at the frame's edge)
+        eye_f = round(min(SCENE_CAMERA_FACED_EYE_M, h - 0.5), 2)
+        top = best_views(spec, placements, eye_f, faced=True)[:1]
+        if top and top[0].shows_faced and top[0].score > 0:  # (a cramped room may have no such view)
+            faced_eye = eye_f
+            heights.insert(0, eye_f)
     poses = []
     for height in dict.fromkeys(heights):
-        for v in best_views(spec, placements, height):
+        for v in best_views(spec, placements, height, faced=height == faced_eye):
             dx, dy, dz = v.aim[0] - v.x, v.aim[1] - v.y, v.aim[2] - height
             lens = round(max(v.lens_mm, 16.0) if indoor else max(v.lens_mm, 24.0), 1)
             # Level camera (pitch 90): verticals stay vertical (two-point perspective, as interior

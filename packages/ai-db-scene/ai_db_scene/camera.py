@@ -86,6 +86,22 @@ RING_MARGIN_M = 0.2
 #: the seating that fills a picture's bottom (dining and desk chairs are too small to: a cafe has one
 #: within 2.5 m of every spot)
 BIG_SEATING = ("sofa", "armchair", "bench", "bed")
+#: what the seating faces (the TV, the fireplace): a living-room photo shows the sofa's front AND what
+#: it looks at (qwen aidb7 living room, f7e0879 demo: from the open side of the U the TV stood beside
+#: the lens, cut by the frame's edge). A faced feature wholly in frame and seen from its front adds up
+#: to FACED_W; one cut by the frame's edge costs FACED_CUT_W; FACED_MARGIN of the half-angle is kept
+#: free at the edges.
+FACED = ("tv", "fireplace")
+FACED_W = 5.0
+FACED_CUT_W = 2.5
+FACED_MISS_W = 3.0  # what the seating faces left out of the picture (behind the lens)
+#: in such a view: the back of an armchair near the lens (the side-wall view across the group) and a
+#: lens wider than FACED_WIDE_DEG (the corners stretch) cost
+FACED_BACK_W = 25.0  # per share of the frame it covers
+FACED_BACK_M = 2.0
+FACED_WIDE_DEG = 82.0
+FACED_WIDE_W = 0.08  # per degree
+FACED_MARGIN = 0.92
 _ASPECT = 16 / 9
 _INSET_M = 0.45  # spots stand this far in from the walls
 _CLEAR_M = 0.35  # and at least this far from any furniture footprint
@@ -103,6 +119,7 @@ class View:
     score: float
     seen: tuple[str, ...]  # focus objects in frame
     fronts: float  # the front term alone (< 0: it mostly sees backs)
+    shows_faced: bool = False  # (faced mode) the TV / fireplace and a seat's front facing it in frame
 
     @property
     def yaw_deg(self) -> float:
@@ -304,6 +321,81 @@ def near_seating(placements: list[Placement], x: float, y: float, z: float, aim:
     return out
 
 
+def faced_features(placements: list[Placement]) -> list[tuple[Placement, list[Placement]]]:
+    """(feature, the seats facing it) of each TV / fireplace the sofa or armchairs face (a seat's
+    front within ~30 deg of it, 6 m)."""
+    seats = [p for p in placements if p.category in ("sofa", "armchair")]
+    out = []
+    for f in placements:
+        if f.category not in FACED:
+            continue
+        facing = []
+        for s in seats:
+            ox, oy = f.location[0] - s.location[0], f.location[1] - s.location[1]
+            r = math.hypot(ox, oy) or 1e-6
+            fr = _front(s)
+            if r < 6.0 and (ox * fr[0] + oy * fr[1]) / r > 0.85:
+                facing.append(s)
+        if facing:
+            out.append((f, facing))
+    return out
+
+
+def _sees_back(p: Placement, x: float, y: float) -> bool:
+    ox, oy = p.location[0] - x, p.location[1] - y
+    fr = _front(p)
+    return -(ox * fr[0] + oy * fr[1]) / (math.hypot(ox, oy) or 1e-6) < -0.3
+
+
+def _faced_term(placements: list[Placement], x: float, y: float, z: float, aim: tuple[float, float, float],
+                half: float, seen: tuple[str, ...]) -> tuple[float, bool]:
+    """+ FACED_W per faced feature wholly in frame together with a seat facing it seen from its
+    front (times how squarely the feature's front is seen), - FACED_CUT_W per one cut by the edge."""
+    faced = faced_features(placements)
+    if not faced:
+        return 0.0, False
+    shows = False
+    n = math.hypot(aim[0] - x, aim[1] - y) or 1e-6
+    vx, vy = (aim[0] - x) / n, (aim[1] - y) / n
+    out = -FACED_WIDE_W * max(0.0, math.degrees(2 * half) - FACED_WIDE_DEG)
+    backs = [p for p in placements if p.category in BIG_SEATING and _footprint_dist(x, y, p) < FACED_BACK_M
+             and _sees_back(p, x, y)]
+    out -= FACED_BACK_W * sum(f for _k, f in foreground_cover(backs, x, y, z, aim, math.degrees(2 * half),
+                                                              min_top=0.0, near_m=FACED_BACK_M))
+    for f, seats in faced:
+        if _in_frame(f, x, y, vx, vy, half) is None:
+            out -= FACED_MISS_W
+            continue
+        if not _in_frame(f, x, y, vx, vy, half * FACED_MARGIN) or _footprint_dist(x, y, f) < NEAR_M:
+            # cut by the frame's edge, or beside the lens (a TV at the camera fills a corner)
+            out -= FACED_CUT_W
+            continue
+        ox, oy = f.location[0] - x, f.location[1] - y
+        r = math.hypot(ox, oy) or 1e-6
+        fr = _front(f)
+        c = -(ox * fr[0] + oy * fr[1]) / r  # 1: its front square on, ~0: edge-on (a sliver of screen)
+        seat_c = 0.0
+        for s in seats:
+            if s.id in seen:  # (centre in frame, a long sofa's end may be cut)
+                sx, sy = s.location[0] - x, s.location[1] - y
+                sf = _front(s)
+                seat_c = max(seat_c, -(sx * sf[0] + sy * sf[1]) / (math.hypot(sx, sy) or 1e-6))
+        if c > -0.05:  # its front or edge-on (a TV on the wall by the lens is seen in profile)
+            shows = shows or seat_c > 0.2
+            out += FACED_W * (0.5 + 0.5 * min(1.0, max(c, 0.0) / 0.4)) * max(0.0, min(1.0, seat_c / 0.4))
+    return out, shows
+
+
+def _in_frame(p: Placement, x: float, y: float, vx: float, vy: float, half: float) -> bool | None:
+    """True: p wholly inside the horizontal angle ``half`` of the axis; False: partly; None: out."""
+    r = math.hypot(p.location[0] - x, p.location[1] - y) or 1e-6
+    off = abs(_off_angle(p, x, y, vx, vy))
+    w = math.atan2(max(p.dims[0], p.dims[1]) / 2, r)
+    if off - w > half:
+        return None
+    return off + w <= half
+
+
 def _audience(placements: list[Placement]) -> set[str]:
     """Desks and chairs that face a board (within 45 deg)."""
     boards = [p for p in placements if p.category in BOARDS]
@@ -322,7 +414,8 @@ def _audience(placements: list[Placement]) -> set[str]:
 
 
 def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float, z: float,
-               aim: tuple[float, float, float] | None = None, hfov_deg: float | None = None) -> View:
+               aim: tuple[float, float, float] | None = None, hfov_deg: float | None = None,
+               faced: bool = False) -> View:
     """Score a camera at (x, y, z) looking at ``aim`` (default: the focus centroid). With no
     ``hfov_deg`` the lens is chosen to take in the focus objects (MIN..MAX_HFOV_DEG)."""
     by_id = {p.id: p for p in placements}
@@ -439,16 +532,21 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
             if p.category in CANOPIES and _top_tan(p, x, y, z) > t_top:
                 cut += 1.0
     near_seats = near_seating(placements, x, y, z, aim, hfov_deg)
+    # a view of the sofa and the TV it faces judges the armchair backs near the lens by the share of
+    # the frame they cover (_faced_term), not by the flat near-seat cost: the TV-wall corner of a
+    # small living room always has the end armchair a step away
+    faced_w, shows_faced = _faced_term(placements, x, y, z, aim, half, seen) if faced and not outdoor else (0.0, False)
     in_ring = any(math.hypot(x - cx, y - cy) < r for cx, cy, r in seating_rings(placements))
     # room to step back: outdoors a park or beach is seen whole from further off (the qwen aidb7
     # park view stood 4 m from the fountain with a 96 deg lens, the trees cut at the top)
     back = 0.8 * min(dist, OUTDOOR_BACK_M) / OUTDOOR_BACK_M if outdoor else 0.4 * min(dist, 6.0) / 6.0
     score = (2.0 * framed + fronts / max(1.0, len(seen)) ** 0.5 + back + 0.8 * fill
-             - (3.0 if clearance < _CLEAR_M else 0.0) - 1.0 * blocked - 6.0 * cover + facing_board
+             - (3.0 if clearance < _CLEAR_M else 0.0) - 1.0 * blocked - (FACED_BACK_W if shows_faced else 6.0) * cover + facing_board
              - TRUNK_W * trunks - CANOPY_CUT_W * cut + WATER_VIEW_W * water - TRUNK_HIDE_W * hides
-             - sum(SEAT_NEAR_FLAT + SEAT_NEAR_W * (f - SEAT_NEAR_COVER) for _k, f in near_seats if f > SEAT_NEAR_COVER)
-             - (RING_INSIDE_W if in_ring else 0.0))
-    return View(x, y, z, aim, hfov_deg, score, seen, fronts)
+             - sum((0.0 if shows_faced else SEAT_NEAR_FLAT) + SEAT_NEAR_W * (f - SEAT_NEAR_COVER)
+                   for _k, f in near_seats if f > SEAT_NEAR_COVER)
+             - (RING_INSIDE_W if in_ring else 0.0) + faced_w)
+    return View(x, y, z, aim, hfov_deg, score, seen, fronts, shows_faced)
 
 
 def _trunk_hides(t: Placement, x: float, y: float, r: float, off: float, by_id: dict[str, Placement],
@@ -572,10 +670,27 @@ def near_spots(spec: SceneSpec, placements: list[Placement]) -> list[tuple[float
     return out
 
 
-def best_views(spec: SceneSpec, placements: list[Placement], eye_m: float) -> list[View]:
-    """Every candidate spot at eye height (by the walls, and round the focus in a big room), best first."""
-    views = [score_view(spec, placements, x, y, eye_m)
-             for x, y in dict.fromkeys(spots(spec, placements) + near_spots(spec, placements))]
+def best_views(spec: SceneSpec, placements: list[Placement], eye_m: float, faced: bool = False) -> list[View]:
+    """Every candidate spot at eye height (by the walls, and round the focus in a big room), best first.
+    ``faced``: a view must show the TV / fireplace the seating faces with the seating's fronts
+    (_faced_term), also aimed toward it."""
+    pts = list(dict.fromkeys(spots(spec, placements) + near_spots(spec, placements)))
+    views = [score_view(spec, placements, x, y, eye_m, faced=faced) for x, y in pts]
+    feats = faced_features(placements) if faced and spec.setting.kind != "outdoor" else []
+    if feats:
+        # also swung toward what the seating faces: the centroid aim of a corner by the TV wall
+        # left the TV cut at the edge of the picture
+        by_id = {p.id: p for p in placements}
+        ax, ay, az = _aim(by_id, focus_weights(spec, placements))
+        fx = sum(f.location[0] for f, _s in feats) / len(feats)
+        fy = sum(f.location[1] for f, _s in feats) / len(feats)
+        # level with the screen, not the seat: the lens shift drops less, the near armchair's back
+        # sinks below the frame instead of filling its bottom corner
+        fz = max(az, sum(f.location[2] for f, _s in feats) / len(feats) + 0.25)
+        for t in (0.15, 0.3, 0.5):
+            aim = (ax + (fx - ax) * t, ay + (fy - ay) * t, fz)
+            views += [score_view(spec, placements, x, y, eye_m, aim=aim, faced=True) for x, y in pts
+                      if math.hypot(aim[0] - x, aim[1] - y) > 1.5]
     return sorted(views, key=lambda v: -v.score)
 
 
