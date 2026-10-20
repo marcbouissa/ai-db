@@ -17,7 +17,11 @@ from pathlib import Path
 
 import pytest
 from ai_db_scene import camera, terrain
-from ai_db_scene.constants import BUILD_MAX_REPAIRS, SCENE_CAMERA_MAX_SHIFT, SCENE_CAMERA_WATER_EYE_M
+from ai_db_scene.constants import (
+    BUILD_MAX_REPAIRS,
+    SCENE_CAMERA_MAX_SHIFT,
+    SCENE_CAMERA_WATER_EYE_M,
+)
 from ai_db_scene.repair import solve_with_repairs
 from ai_db_scene.terrain import apply_brief_defaults, water_from_brief
 from ai_db_scene.tools import scene_pipeline as sp
