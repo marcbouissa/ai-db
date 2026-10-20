@@ -140,8 +140,8 @@ def _running_elsewhere(arm: str, brief: str) -> bool:
 def cmd_run(arm: str, brief: str) -> dict[str, Any]:
     photo = photo_exp.parse_arm(arm)  # oval-photo-<A|B|C>-<raw|aidb>-<model>-r<N>: photo + text, aidb7 hint
     model, mode = (photo["model"], "aidb7" if photo["with_aidb"] else "raw") if photo else arm.rsplit("-", 1)
-    if mode not in ("aidb", "aidb2", "aidb3", "aidb4", "aidb5", "aidb6", "aidb7", "raw"):
-        raise SystemExit(f"arm must end in -raw or -aidb, -aidb2 .. -aidb7: {arm}")
+    if mode not in ("aidb", "aidb2", "aidb3", "aidb4", "aidb5", "aidb6", "aidb7", "aidb8", "raw"):
+        raise SystemExit(f"arm must end in -raw or -aidb, -aidb2 .. -aidb8: {arm}")
     with_aidb = mode != "raw"
     # aidb3: the aidb2 prompt and tools on the later pipeline (styles, judge, doorways, recipes,
     # skill drafting); the arm's ai-db hash in metrics.json pins the code it ran on.
@@ -150,7 +150,9 @@ def cmd_run(arm: str, brief: str) -> dict[str, Any]:
     # aidb6 (2026-10-17): compact results (verdict/next first), brief passed to build_scene, ceiling
     # grid, seating group, tool names as the runner offers them. aidb7 (2026-10-17): aidb6's prompt on
     # the outdoor terrain, round rooms, open-side camera, classroom rows
-    version = {"aidb": 1, "raw": 1, "aidb5": 5, "aidb6": 6, "aidb7": 6}.get(mode, 2)
+    # aidb8 (2026-10-21): aidb6's prompt on the code since aidb7 (layout-sanity fixes, design
+    # families, park/beach looks, the living-room TV view, the beach shore framing)
+    version = {"aidb": 1, "raw": 1, "aidb5": 5, "aidb6": 6, "aidb7": 6, "aidb8": 6}.get(mode, 2)
     tools = briefs.AIDB_TOOLS if version == 1 else briefs.AIDB2_TOOLS
     rd = run_dir(arm, brief)
     if os.path.exists(os.path.join(rd, "metrics.json")):
