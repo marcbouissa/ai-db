@@ -66,6 +66,13 @@ WATER_VIEW_W = 1.2
 WATER_MIN_DIST_M = 9.0
 #: by the water the frame reaches this far above the horizon (tan): the sea under a band of sky
 WATER_SKY_TAN = 0.1
+#: by the water the shore group (loungers under a parasol) is the picture: SHORE_W when it spans
+#: SHORE_FILL of the frame's width (less, pro rata). The f7e0879 demo framed the whole cove with a
+#: 96 deg lens, the group a speck at the right edge.
+SHORE = ("sun_lounger", "parasol", "picnic_table")
+SHORE_FILL = 0.4
+SHORE_W = 6.0
+SHORE_REACH_M = 6.0
 #: outdoors the lens starts from this (the group fills the frame; MIN_HFOV_DEG is a room photo)
 OUTDOOR_MIN_HFOV_DEG = 40.0
 #: outdoors the camera may step back this far beyond the setting's bounds (the ground goes on)
@@ -499,7 +506,7 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
                                                 min_top=OUTDOOR_OCCLUDER_MIN_TOP_M if outdoor else OCCLUDER_MIN_TOP_M,
                                                 near_m=OUTDOOR_NEAR_M if outdoor else NEAR_M)
                 if f > COVER_MAX)
-    trunks = cut = water = hides = 0.0
+    trunks = cut = water = hides = shore = 0.0
     if outdoor:
         from ai_db_scene.terrain import terrain_of
 
@@ -509,6 +516,9 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
             water = vx * n[0] + vy * n[1]
             if water < 0.3:
                 water -= 2.0  # along the shore or inland: the water is not the picture's background
+            group = shore_group(placements)
+            if group and dist >= WATER_MIN_DIST_M:  # (nearer: a drone shot of the loungers)
+                shore = _shore_term(group, x, y, vx, vy, half)
             if dist < WATER_MIN_DIST_M:  # from the dune top close up is a drone shot of the loungers
                 water -= (WATER_MIN_DIST_M - dist) / WATER_MIN_DIST_M * 2.0
         t_top = _shift_tan(aim, z, dist, hfov_deg) + math.tan(half) / _ASPECT
@@ -542,11 +552,95 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
     back = 0.8 * min(dist, OUTDOOR_BACK_M) / OUTDOOR_BACK_M if outdoor else 0.4 * min(dist, 6.0) / 6.0
     score = (2.0 * framed + fronts / max(1.0, len(seen)) ** 0.5 + back + 0.8 * fill
              - (3.0 if clearance < _CLEAR_M else 0.0) - 1.0 * blocked - (FACED_BACK_W if shows_faced else 6.0) * cover + facing_board
-             - TRUNK_W * trunks - CANOPY_CUT_W * cut + WATER_VIEW_W * water - TRUNK_HIDE_W * hides
+             - TRUNK_W * trunks - CANOPY_CUT_W * cut + WATER_VIEW_W * water - TRUNK_HIDE_W * hides + shore
              - sum((0.0 if shows_faced else SEAT_NEAR_FLAT) + SEAT_NEAR_W * (f - SEAT_NEAR_COVER)
                    for _k, f in near_seats if f > SEAT_NEAR_COVER)
              - (RING_INSIDE_W if in_ring else 0.0) + faced_w)
     return View(x, y, z, aim, hfov_deg, score, seen, fronts, shows_faced)
+
+
+def shore_group(placements: list[Placement]) -> list[Placement]:
+    """The loungers / parasol / picnic table round the parasol (else the first of them), within
+    SHORE_REACH_M of it: the subject of a beach photo."""
+    items = [p for p in placements if p.category in SHORE]
+    if len(items) < 2:
+        return []
+    seed = next((p for p in items if p.category == "parasol"), items[0])
+    return [p for p in items if math.hypot(p.location[0] - seed.location[0], p.location[1] - seed.location[1])
+            <= SHORE_REACH_M]
+
+
+def _span(group: list[Placement], x: float, y: float, vx: float, vy: float) -> tuple[float, float]:
+    """(min, max) signed angle of the group's footprint corners from the view axis."""
+    angs = []
+    for p in group:
+        r = max(p.dims[0], p.dims[1]) / 2
+        for dx, dy in ((r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r)):
+            ox, oy = p.location[0] + dx - x, p.location[1] + dy - y
+            angs.append(math.atan2(vx * oy - vy * ox, vx * ox + vy * oy))
+    return min(angs), max(angs)
+
+
+def _shore_term(group: list[Placement], x: float, y: float, vx: float, vy: float, half: float) -> float:
+    lo, hi = _span(group, x, y, vx, vy)
+    if lo < -half or hi > half:
+        return -SHORE_W  # the group cut by the frame's edge
+    return SHORE_W * min(1.0, (hi - lo) / (2 * half) / SHORE_FILL) ** 2
+
+
+def _trunk_cuts(p: Placement, x: float, y: float, ux: float, uy: float, lo: float, hi: float, gd: float) -> bool:
+    r = math.hypot(p.location[0] - x, p.location[1] - y)
+    if r >= gd:
+        return False
+    m = (math.atan2(max(p.dims[0], p.dims[1]) / 2, max(r, 0.5)) if p.category in CANOPIES else 0.0) + 0.06
+    return lo - m <= _off_angle(p, x, y, ux, uy) <= hi + m
+
+
+def _shore_views(spec: SceneSpec, placements: list[Placement], eye_m: float) -> list[View]:
+    """Views of the shore group from inland, looking across it at the water: the lens just wide
+    enough for the group to span SHORE_FILL of the frame and for the band from the ground at its
+    near edge up past the horizon (the water's share), centred by the lens shift."""
+    from ai_db_scene.terrain import terrain_of
+
+    group = shore_group(placements)
+    ter = terrain_of(spec)
+    if not group or ter is None or ter.water is None:
+        return []
+    gx = sum(p.location[0] for p in group) / len(group)
+    gy = sum(p.location[1] for p in group) / len(group)
+    n = ter.to_water(gx, gy)
+    w, d, _h = spec.setting.bounds_m
+    solid = [p for p in placements if p.dims[2] > 0.05]
+    out = []
+    for dist in (WATER_MIN_DIST_M, 11.0, 13.0, 16.0):
+        for t in (-45.0, -30.0, -15.0, 0.0, 15.0, 30.0, 45.0):
+            c, sn = math.cos(math.radians(t)), math.sin(math.radians(t))
+            ux, uy = n[0] * c - n[1] * sn, n[0] * sn + n[1] * c
+            x, y = gx - ux * dist, gy - uy * dist
+            m = OUTDOOR_REACH_M
+            if not (-m <= x <= w + m and -m <= y <= d + m) or ter.signed(x, y) >= ter.dry() - 0.5:
+                continue
+            if any(_footprint_dist(x, y, p) < _CLEAR_M for p in solid):
+                continue
+            lo, hi = _span(group, x, y, ux, uy)
+            gd = math.hypot(gx - x, gy - y)
+            if any(_trunk_cuts(p, x, y, ux, uy, lo, hi, gd) for p in placements if p.category in TRUNKS):
+                continue  # a trunk between the lens and the group cuts it (a palm leans: its crown's reach)
+            hfov = math.degrees(max(-lo, hi) * 2) / SHORE_FILL
+            near = min(math.hypot(p.location[0] - x, p.location[1] - y) - max(p.dims[0], p.dims[1]) / 2 for p in group)
+            band_lo, band_hi = -eye_m / max(near, 1.0), WATER_SKY_TAN
+            hfov = max(hfov, math.degrees(2 * math.atan((band_hi - band_lo) / 2 * 1.06 * _ASPECT)))
+            hfov = max(OUTDOOR_MIN_HFOV_DEG, min(MAX_HFOV_DEG, hfov))
+            hh = math.radians(hfov) / 2
+            if any(math.hypot(p.location[0] - x, p.location[1] - y) < 0.85 * gd
+                   and abs(_off_angle(p, x, y, ux, uy)) < hh + 0.1 for p in placements if p.category in TRUNKS):
+                continue  # a trunk near the lens down the side of the picture (an occluder)
+            half_v = math.tan(math.radians(hfov) / 2) / _ASPECT
+            centre = max((band_hi + band_lo) / 2, band_lo - 0.04 + half_v)
+            centre = min(centre, max((band_hi + band_lo) / 2, -half_v / 3))
+            aim = (gx, gy, eye_m + centre * dist)
+            out.append(score_view(spec, placements, x, y, eye_m, aim=aim, hfov_deg=hfov))
+    return out
 
 
 def _trunk_hides(t: Placement, x: float, y: float, r: float, off: float, by_id: dict[str, Placement],
@@ -676,6 +770,8 @@ def best_views(spec: SceneSpec, placements: list[Placement], eye_m: float, faced
     (_faced_term), also aimed toward it."""
     pts = list(dict.fromkeys(spots(spec, placements) + near_spots(spec, placements)))
     views = [score_view(spec, placements, x, y, eye_m, faced=faced) for x, y in pts]
+    if spec.setting.kind == "outdoor" and spec.setting.water is not None:
+        views += _shore_views(spec, placements, eye_m)
     feats = faced_features(placements) if faced and spec.setting.kind != "outdoor" else []
     if feats:
         # also swung toward what the seating faces: the centroid aim of a corner by the TV wall
