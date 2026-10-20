@@ -470,11 +470,13 @@ def test_live_edit_of_a_version_saved_without_build_options_keeps_untouched_obje
     data = json.loads(row.read_text())
     data["prompt_context"]["metadata"].pop("build")
     row.write_text(json.dumps(data))
+    # since 867de57 the office chair 'in_front_of desk' is the desk's seat (no spec object of its
+    # own), so the edit recolours the shelf; the property is the same: nothing else moves
     edited = sp._handle_edit_scene({"scene_id": v1, "steps": [
-        {"op": "update_object", "id": "chair", "set": {"material": "velvet:#5b2a4a"}}]})
+        {"op": "update_object", "id": "shelf", "set": {"material": "velvet:#5b2a4a"}}]})
     assert edited["status"] == "built", edited
     assert "seed 4 inferred" in edited["build_inferred"] and "'generated'" in edited["build_inferred"]
     diff = memory.diff_scenes(v1, edited["scene_id"])
     assert not diff["added"] and not diff["removed"]
-    untouched = [c for c in diff["moved"] + diff["reshaped"] if not c["name"].startswith("chair")]
+    untouched = [c for c in diff["moved"] + diff["reshaped"] if not c["name"].startswith("shelf")]
     assert untouched == []
