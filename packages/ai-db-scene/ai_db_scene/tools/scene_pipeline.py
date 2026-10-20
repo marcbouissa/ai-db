@@ -1506,7 +1506,7 @@ def camera_poses(spec: SceneSpec, placements: list[Placement], off: tuple[float,
     seating looking at a blank wall (Marc's review of the aidb5 round lobby)."""
     import math
 
-    from ai_db_scene.camera import best_views, faced_features
+    from ai_db_scene.camera import best_views, faced_features, faces_a_board
 
     h = spec.setting.bounds_m[2]
     indoor = spec.setting.kind == "indoor"
@@ -1517,6 +1517,11 @@ def camera_poses(spec: SceneSpec, placements: list[Placement], off: tuple[float,
         # sky and a bush filled the bottom corner: qwen aidb7 beach_cove)
         eye = SCENE_CAMERA_WATER_EYE_M
     heights = [eye, round(min(eye + 0.8, h - 0.3), 2) if indoor else eye + 2.0]
+    if indoor and faces_a_board(placements):
+        # a classroom is shot from the back over the class: at eye height the rows of desks and
+        # chairs hid the teacher's desk from every back spot, and the check walked on to a spot on
+        # a side wall, the board on the side of the picture and the rows across it (qwen aidb8)
+        heights.reverse()
     faced_eye = None
     if indoor and faced_features(placements):
         # a living room shot to show the sofa AND the TV it faces stands in a corner of the TV

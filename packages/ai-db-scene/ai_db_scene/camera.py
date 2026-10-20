@@ -38,6 +38,9 @@ SUBJECTS = {"sun_lounger": 0.8, "parasol": 0.6, "boardwalk": 0.4, "picnic_table"
 #: what an audience faces: desks and chairs turned to one are seen from behind it (a classroom
 #: photo looks over the class at the board, not from the board at the class)
 BOARDS = ("whiteboard", "blackboard", "chalkboard", "projector_screen")
+#: score per unit of cos(view axis, the way the class faces): a back-centre view over the rows
+#: beats a back corner whose rows run diagonally across the picture
+AUDIENCE_ALIGN_W = 2.0
 _AUDIENCE = ("desk", "chair", "dining_chair", "office_chair")
 #: foreground occluders: anything nearer than this along the view and covering more of the
 #: frame than _COVER_MAX (aidb7: a plant, an armchair, a palm trunk filling a corner of the picture)
@@ -420,6 +423,11 @@ def _audience(placements: list[Placement]) -> set[str]:
     return out
 
 
+def faces_a_board(placements: list[Placement]) -> bool:
+    """A class: desks or chairs turned to a board (the view looks over them at it)."""
+    return bool(_audience(placements))
+
+
 def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float, z: float,
                aim: tuple[float, float, float] | None = None, hfov_deg: float | None = None,
                faced: bool = False) -> View:
@@ -487,6 +495,14 @@ def score_view(spec: SceneSpec, placements: list[Placement], x: float, y: float,
         # dead centre in the foreground, lightning aidb5's lobby ring seen along its axis)
         centre = max(0.0, 1.0 - ang[k] / half)
         fronts += wf * c * ((2.0 + 2.0 * centre) if c < 0 and p.category in SEATING and k not in audience else 1.0)
+    if audience:
+        # looking the way the class looks, the rows running into the picture: from a back corner
+        # (qwen / lightning aidb8) the rows ran diagonally across it and the board sat on a side
+        fx = sum(_front(by_id[k])[0] for k in audience)
+        fy = sum(_front(by_id[k])[1] for k in audience)
+        fn = math.hypot(fx, fy)
+        if fn > 1e-6:
+            facing_board += AUDIENCE_ALIGN_W * (vx * fx + vy * fy) / fn
     tot = sum(weights.values())
     framed = sum(weights[k] for k in seen) / tot
     solid = [p for p in placements if p.dims[2] > 0.05]
