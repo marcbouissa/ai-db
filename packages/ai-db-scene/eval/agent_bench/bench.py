@@ -28,6 +28,7 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(__file__))
 import blender
 import briefs
+import photo_exp  # registers the oval_photo brief (photo -> scene experiment)
 import run_claude
 
 REPO = run_claude.REPO
@@ -39,7 +40,9 @@ OPENCODE_UNAVAILABLE = ("exo-free", "ling-3.0-flash-fin-free", "ling-3.1-flash-f
 #: models served on this GPU by local_model.sh (vLLM, OpenAI-compatible), run by the Strata agent:
 #: OpenCode 2 reaches MCP tools only through Code Mode (JS in one `execute` tool, ~10k tokens of
 #: system prompt), which a 14B model with 32k context could not drive in the smoke test.
-LOCAL_MODELS = {"qwen3-14b-local": (os.environ.get("LOCAL_MODEL_BASE_URL", "http://127.0.0.1:8011/v1"), "qwen3-14b")}
+LOCAL_MODELS = {"qwen3-14b-local": (os.environ.get("LOCAL_MODEL_BASE_URL", "http://127.0.0.1:8011/v1"), "qwen3-14b"),
+                # the vision model of the photo arms (photo_exp.py; LOCAL_MODEL=qwen2.5-vl-7b local_model.sh start)
+                photo_exp.MODEL_KEY: (photo_exp.BASE_URL, photo_exp.SERVED)}
 TIMEOUT_S = 30 * 60
 USER_SKILLS = os.path.expanduser("~/.local/share/blender-ai/skills")
 
@@ -135,7 +138,8 @@ def _running_elsewhere(arm: str, brief: str) -> bool:
 
 
 def cmd_run(arm: str, brief: str) -> dict[str, Any]:
-    model, mode = arm.rsplit("-", 1)
+    photo = photo_exp.parse_arm(arm)  # oval-photo-<A|B|C>-<raw|aidb>-<model>-r<N>: photo + text, aidb7 hint
+    model, mode = (photo["model"], "aidb7" if photo["with_aidb"] else "raw") if photo else arm.rsplit("-", 1)
     if mode not in ("aidb", "aidb2", "aidb3", "aidb4", "aidb5", "aidb6", "aidb7", "raw"):
         raise SystemExit(f"arm must end in -raw or -aidb, -aidb2 .. -aidb7: {arm}")
     with_aidb = mode != "raw"
@@ -166,13 +170,15 @@ def cmd_run(arm: str, brief: str) -> dict[str, Any]:
     try:
         runner = ("strata" if model == "strata" or model in LOCAL_MODELS else
                   "claude" if model in run_claude.MODELS else "opencode")
-        prompt = briefs.prompt(brief, with_aidb, version, runner)
+        prompt = (photo_exp.prompt(photo["cell"], with_aidb, photo["repeat"]) if photo else
+                  briefs.prompt(brief, with_aidb, version, runner))
         if model == "strata" or model in LOCAL_MODELS:
             import strata_agent
             servers = run_claude.mcp_servers(port, rd, with_aidb, tools)
             base_url, served = LOCAL_MODELS.get(model, (None, None))
-            agent = strata_agent.run(prompt, servers, os.path.join(rd, "transcript.jsonl"), TIMEOUT_S,
-                                     base_url=base_url, model=served)
+            agent = strata_agent.run(prompt, servers, os.path.join(rd, "transcript.jsonl"),
+                                     photo_exp.TIMEOUT_S if photo else TIMEOUT_S, base_url=base_url, model=served,
+                                     image=photo_exp.IMAGE if photo else None)
         elif model in run_claude.MODELS:
             agent = run_claude.run(model, prompt, port, rd, with_aidb, tools, TIMEOUT_S)
         else:  # a free OpenCode model, e.g. big-pickle, mimo-v2.6-flash-free
@@ -201,13 +207,15 @@ def cmd_run(arm: str, brief: str) -> dict[str, Any]:
             raise RuntimeError(f"{arm}/{brief}: this run's Blender exited during the session (see blender.log)")
         t = time.monotonic()
         fin = blender.finish(port, rd)
+        if photo:  # the checklist's "oval room" item
+            fin["inventory"]["room_shape"] = photo_exp.probe_room_shape(blender.client(port))
         validation = blender.client(port).request("validate_scene", {}, timeout=300)
         harness_s = time.monotonic() - t
     finally:
         blender.stop(proc)
         release_port(port)
     quality = score(brief, fin["inventory"], validation)
-    metrics = {"arm": arm, "brief": brief, "model": model, "with_aidb": with_aidb, "port": port,
+    metrics = {"arm": arm, "brief": brief, "model": model, **({"photo": {**photo, "prompt": prompt}} if photo else {}), "with_aidb": with_aidb, "port": port,
                "harness": "strata-agent" if model == "strata" or model in LOCAL_MODELS else ("claude-cli" if model in run_claude.MODELS else "opencode"),
                "setup": setup, "blender_sandboxed": cloud_free, "aidb_version": aidb_version() if with_aidb else None, "agent": agent, "harness_s": round(harness_s, 1),
                "renders": fin["renders"], "inventory": fin["inventory"], "validation": validation,
@@ -287,6 +295,11 @@ def checklist(brief: str, inv: dict[str, Any]) -> list[dict[str, Any]]:
     counted = checklist_match.match(spec, roots, load_priors())
     out = []
     for (label, need, tokens), hits in zip(spec, counted, strict=True):
+        shapes = [t.split(":", 1)[1] for t in tokens if t.startswith("room_shape:")]
+        if shapes:  # the room's shape (photo_exp.room_shape in the inventory), not an object
+            ok = int((inv.get("room_shape") or {}).get("shape") in shapes)
+            out.append({"item": label, "need": need, "found": ok, "real": float(ok), "objects": [], "name_found": ok})
+            continue
         named = [o for o in roots if any(re.search(re.escape(t), f"{o['name']} {o['category']}".lower())
                                          for t in tokens)]
         out.append({"item": label, "need": need, "found": len(hits),

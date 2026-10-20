@@ -8,7 +8,9 @@ The model's context is 32k tokens, so old tool results are shortened as the hist
 
 from __future__ import annotations
 
+import base64
 import http.client
+import io
 import json
 import os
 import queue
@@ -32,6 +34,29 @@ MAX_TOKENS = 4096  # one reply, thinking included
 MAX_CONTINUE = 3  # replies in a row cut off while thinking (empty, no call) that get a "continue" nudge
 CONTINUE_NUDGE = ("Your reply ran out of room while thinking, before any answer or tool call. Continue: keep the "
                   "thinking short and call the next tool now, or reply DONE with the summary if the scene is complete.")
+
+
+IMAGE_MAX_SIDE = 1280  # a reference photo's long side as the (vision) model gets it
+
+
+def image_part(path: str, max_side: int = IMAGE_MAX_SIDE) -> dict[str, Any]:
+    """An OpenAI ``image_url`` content part: the image as a base64 JPEG data URL, scaled down so
+    its long side is at most ``max_side`` px (never up)."""
+    from PIL import Image
+
+    with Image.open(path) as im:
+        im = im.convert("RGB")
+        scale = max_side / max(im.size)
+        if scale < 1:
+            im = im.resize((max(1, round(im.width * scale)), max(1, round(im.height * scale))), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=90)
+    return {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()}}
+
+
+def user_content(prompt: str, image: str | None) -> str | list[dict[str, Any]]:
+    """The first user message's content: the prompt, after the image when there is one."""
+    return prompt if image is None else [image_part(image), {"type": "text", "text": prompt}]
 
 
 class ServerUnavailable(RuntimeError):
@@ -164,8 +189,9 @@ def _trim(messages: list[dict[str, Any]]) -> None:
 
 
 def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, timeout_s: float,
-        base_url: str | None = None, model: str | None = None) -> dict[str, Any]:
-    """One session against ``base_url``/``model`` (default: the Strata server)."""
+        base_url: str | None = None, model: str | None = None, image: str | None = None) -> dict[str, Any]:
+    """One session against ``base_url``/``model`` (default: the Strata server). ``image``: a
+    picture (path) sent with the prompt in the first user message (a vision model's reference)."""
     base_url, model = base_url or BASE_URL, model or MODEL
     clients = {name: MCPClient(s["command"], s["args"], s.get("env", {})) for name, s in servers.items()}
     route: dict[str, tuple[str, str]] = {}
@@ -179,7 +205,7 @@ def run(prompt: str, servers: dict[str, dict[str, Any]], transcript_path: str, t
                 "parameters": t.get("inputSchema") or {"type": "object", "properties": {}}}})
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": "You are a Blender scene-building agent. Use the tools; call them, do not describe them."},
-        {"role": "user", "content": prompt}]
+        {"role": "user", "content": user_content(prompt, image)}]
     per_call: list[dict[str, Any]] = []
     stats: dict[str, dict[str, float]] = {}
     t0 = time.monotonic()
