@@ -287,6 +287,10 @@ _MOULDING_PROFILES: dict[str, tuple[str, float, float, str]] = {
     "crown": ("crown_classic", 0.10, 0.12, "crown"),
     "chair_rail": ("chair_rail", 0.03, 0.08, "rail"),
     "baseboard": ("baseboard_classic", 0.02, 0.15, "floor"),
+    # the room shell's plain trim (shell.py): a square skirting with a bevelled top, a small
+    # ceiling cove; not spec values (setting.mouldings stays the classical set)
+    "skirting": ("dentil_block", 0.015, 0.09, "floor"),
+    "cove": ("cove", 0.045, 0.045, "crown"),
 }
 _MOULDING_GAP_M = 0.0015  # off the wall and floor, as the addon's trim: never coplanar
 _CHAIR_RAIL_Z_M = 0.9
@@ -408,11 +412,11 @@ result = {{"mouldings": made}}
 """
 
 
-def moulding_commands(spec: SceneSpec, placements: list[Placement]) -> list[dict[str, Any]]:
-    """run_code sweeping setting.mouldings (or the style's) along the room's inner outline, 1.5 mm
-    inside the walls, stopping at every opening whose height range it crosses (doors cut the
-    baseboard and chair rail, windows the chair rail when their sill is low)."""
-    kinds = spec.setting.moulding_list()
+def moulding_commands(spec: SceneSpec, placements: list[Placement], extra: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+    """run_code sweeping setting.mouldings (or the style's, plus the shell's ``extra`` trim) along the
+    room's inner outline, 1.5 mm inside the walls, stopping at every opening whose height range it
+    crosses (doors cut the baseboard and chair rail, windows the chair rail when their sill is low)."""
+    kinds = tuple(dict.fromkeys((*spec.setting.moulding_list(), *extra)))
     if not kinds or spec.setting.kind != "indoor":
         return []
     off = frame_offset(spec)
@@ -423,7 +427,7 @@ def moulding_commands(spec: SceneSpec, placements: list[Placement]) -> list[dict
     jobs = []
     for kind in kinds:
         profile, width, height, where = _MOULDING_PROFILES[kind]
-        if kind == "crown":
+        if kind in ("crown", "cove"):
             width, height = width * scale, height * scale
         z = {"floor": _MOULDING_GAP_M, "rail": _CHAIR_RAIL_Z_M - height / 2,
              "crown": h - height - _MOULDING_GAP_M}[where]
@@ -1071,6 +1075,7 @@ def _wear_command(wear: list[dict[str, Any]]) -> dict[str, Any]:
 def build_layout_commands(
     spec: SceneSpec, placements: list[Placement], asset_map: dict[str, Any] | None = None,
     geometry: str = "generated", providers: list[Any] | None = None, variation: list[Any] | None = None,
+    shell: Any = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Blender batch for room shell + one object per placement. Returns (commands, created names).
 
@@ -1078,9 +1083,13 @@ def build_layout_commands(
     a model file from an asset provider (see providers.py; none unless configured), parametric
     furniture for the categories in ``_GENERATED`` (unless a user recipe was saved for it with
     overwrite=true), a part recipe; else a textured box.
+
+    ``shell`` (shell.Shell, from shell.plan): the room's door, windows and trim, built as part of
+    the room; the camera still frames the spec's own objects.
     """
     import math
 
+    from ai_db_scene import shell as room_shell
     from ai_db_scene import terrain, vegetation
     from ai_db_scene.furniture_variants import CATEGORY_FAMILY, fit_command, uses_families
     from ai_db_scene.furniture_variants import piece as family_piece
@@ -1089,6 +1098,8 @@ def build_layout_commands(
     asset_map = asset_map or {}
     provided: dict[str, AssetFile | None] = {}
     placements = terrain.settle(spec, placements)  # on the shore slope objects stand on the ground
+    framed = placements  # what the camera frames: the spec's objects, not the shell's openings
+    spec, placements = room_shell.apply(spec, placements, shell)
 
     def provider_file(category: str) -> AssetFile | None:
         if geometry != "generated" or not providers:
@@ -1105,7 +1116,7 @@ def build_layout_commands(
     cmds = _room_commands(spec, placements) + _interior_wall_commands(spec)
     names = terrain.object_names(spec) or [c["params"].get("name", "room_shell") for c in cmds
                                            if c["type"] != "apply_material"]
-    cmds += moulding_commands(spec, placements)
+    cmds += moulding_commands(spec, placements, shell.trim if shell is not None else ())
     if placements:
         reserve = [pl.id for pl in placements] + [
             a["asset_name"] for pl in placements
@@ -1279,8 +1290,8 @@ def build_layout_commands(
         cmds.append({"type": "run_code", "params": {"code": _FOLIAGE.format(payload=json.dumps({
             "roots": plants, "density": SCENE_FOLIAGE_DENSITY, "max_leaves": SCENE_FOLIAGE_MAX_LEAVES,
             "leaf_m": SCENE_FOLIAGE_LEAF_M}))}})
-    cmds.append(camera_command(spec, placements, off))
-    shift_cmd = camera_shift_command(spec, placements, off)
+    cmds.append(camera_command(spec, framed, off))
+    shift_cmd = camera_shift_command(spec, framed, off)
     if shift_cmd:
         cmds.append(shift_cmd)
     return cmds, names
@@ -1851,8 +1862,15 @@ def _handle_apply_layout(args: dict[str, Any]) -> Any:
         providers = providers_from_config()
     except AiDbConfigError as e:  # a bad plugins.scene section: say so instead of ignoring it
         return _err(str(e))
+    shell = args.get("shell", True)  # the room's door, windows and trim (shell.py); false: a bare box
+    if shell is True:
+        from ai_db_scene import shell as room_shell
+
+        shell = room_shell.plan(spec, pls, args.get("brief"))
+    elif not shell or isinstance(shell, dict):
+        shell = None
     cmds, names = build_layout_commands(spec, pls, args.get("asset_map"), geometry, providers,
-                                        args.get("variation"))
+                                        args.get("variation"), shell=shell)
     try:
         results = BlenderClient().batch(cmds)
     except BlenderError as e:
@@ -1860,7 +1878,8 @@ def _handle_apply_layout(args: dict[str, Any]) -> Any:
     results = _retry_legacy_materials(cmds, results)
     failed = [{"index": i, "type": cmds[i]["type"], "message": r.get("message")}
               for i, r in enumerate(results) if not r.get("ok", r.get("status") == "success")]
-    return {"status": "partial" if failed else "success", "created": names, "commands": len(cmds), "failed": failed}
+    return {"status": "partial" if failed else "success", "created": names, "commands": len(cmds), "failed": failed,
+            **({"shell": shell.note} if shell is not None else {})}
 
 
 def _handle_record_run(args: dict[str, Any]) -> Any:
@@ -1997,9 +2016,14 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
                 [p.id for p in placements]))})
         except BlenderError:
             pass
+    from ai_db_scene import shell as room_shell
+
+    # the room's door, windows and trim (shell.py): planned from the placements, not stored in the spec
+    shell = room_shell.plan(spec, placements, args.get("brief") or args.get("prompt")) \
+        if args.get("shell", True) else None
     built = _handle_apply_layout({"spec": data, "placements": [placement_to_dict(p) for p in placements],
                                   "asset_map": args.get("asset_map"), "geometry": args.get("geometry", "generated"),
-                                  "variation": variation})
+                                  "variation": variation, "shell": shell or False})
     if built.get("status") not in ("success", "partial"):
         return {**built, "repairs": repairs, "spec": data}
     report = _handle_validate_scene({"spec": data})
@@ -2051,7 +2075,7 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
         left += ergonomics.check(spec, placements, centred=False)  # solver placements: x in [0, W]
         from ai_db_scene import realism
 
-        left += realism.check(spec, placements)
+        left += realism.check(*room_shell.apply(spec, placements, shell))  # the shell's windows count
         if args.get("brief"):
             left += realism.check_brief(str(args["brief"]), placements)
         left += count_issues(asked, placements)
@@ -2068,6 +2092,8 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
            "objects": len(placements), "created": built.get("created"), "failed_commands": built.get("failed"),
            "repairs": repairs, "fixes_applied": applied, "issues_found": len(first),
            "issues_left": left[:20], "spec": data if repairs else None, "spec_id": spec_id}
+    if shell is not None:
+        out["shell"] = shell.note
     if camera is not None:
         out["camera"] = camera
     if render_opts is not None:
@@ -2677,7 +2703,7 @@ def judge_render(path: Path) -> str:
 #: build_scene options a version stores so edit_scene rebuilds it the same way (a rebuild with
 #: another seed or geometry mode changed every untouched piece of furniture)
 #: build_scene arguments a version keeps: edit_scene rebuilds with them (the brief keeps its counts checked)
-_BUILD_OPTIONS = ("seed", "geometry", "asset_map", "poly_budget", "physics", "variation", "brief")
+_BUILD_OPTIONS = ("seed", "geometry", "asset_map", "poly_budget", "physics", "variation", "brief", "shell")
 
 
 def build_options(args: dict[str, Any]) -> dict[str, Any]:
@@ -2844,6 +2870,10 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
                                           "non-hero objects until the scene fits (report: polys)")},
           "physics": {"type": "boolean",
                       "description": "add rigid bodies: passive structure and furniture, active objects with dynamic: true"},
+          "shell": {"type": "boolean",
+                    "description": ("indoor rooms get a door, windows and skirting/ceiling trim, kept clear of the "
+                                    "furniture (default true; not when the spec has its own windows/doors, no windows "
+                                    "for a windowless brief); false: bare walls")},
           "judge": {"type": "boolean",
                     "description": ("render the build camera (render) and return a structured critique (validator issues, "
                                     "missing objects, repairs, failed commands) with suggested edit_scene steps")},

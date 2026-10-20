@@ -339,7 +339,8 @@ def test_live_poly_budget_decimates_heaviest_non_hero(private_blender, mem, monk
     res = sp._handle_build_scene({"spec": SPEC, "clear": True, "snapshot": False, "poly_budget": 10**9})
     polys = res["polys"]
     assert polys["decimated"] == [] and not polys["over_budget"], polys
-    assert set(polys["faces_per_object"]) == {"sofa", "table", "lamp"}
+    # the room shell's door and windows (shell.py) count too
+    assert {k for k in polys["faces_per_object"] if not k.startswith("shell_")} == {"sofa", "table", "lamp"}
     budget = polys["faces_total"] - polys["faces_per_object"]["table"] // 2
     cut = sp.poly_report(budget)
     assert cut["decimated"] and "sofa" not in {d["object"] for d in cut["decimated"]}, cut
