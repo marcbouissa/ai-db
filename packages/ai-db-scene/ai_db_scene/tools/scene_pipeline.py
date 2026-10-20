@@ -1967,6 +1967,14 @@ def lift_build_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     return {**out, "spec": spec}, lifted
 
 
+_SCENE_CAMERA = """
+import bpy, math
+cam = bpy.context.scene.camera
+result = {"location": list(cam.matrix_world.translation), "rotation": [math.degrees(a) for a in cam.rotation_euler]} \
+    if cam is not None else {}
+"""
+
+
 def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
     from ai_db_scene.constants import BUILD_FIX_ROUNDS, BUILD_MAX_REPAIRS
     from ai_db_scene.normalize import room_shape_from_brief, table_shape_from_brief
@@ -2117,6 +2125,19 @@ def _build_scene(args: dict[str, Any]) -> dict[str, Any]:
         out["shell"] = shell.note
     if camera is not None:
         out["camera"] = camera
+    if spec.setting.kind == "outdoor" and args.get("geometry", "generated") == "generated":
+        # grass blades (grass.py) last: 45k blades made the validator's and the camera check's
+        # ray casts take a minute; they change neither the layout nor the camera
+        try:
+            from ai_db_scene import grass
+
+            pose = BlenderClient().run_code(_SCENE_CAMERA)  # where the checked camera ended up
+            gcmds = grass.grass_commands(spec, placements, frame_offset(spec), pose or None)
+            if gcmds:
+                res = BlenderClient().batch(gcmds)
+                out["grass"] = (res[0].get("result") or {}).get("result", res[0]) if res else None
+        except (BlenderError, IndexError, KeyError, TypeError, ValueError) as e:
+            out["grass"] = {"error": str(e)}
     if render_opts is not None:
         try:
             out["final_render"] = final_render(render_opts)
