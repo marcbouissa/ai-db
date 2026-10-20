@@ -3,7 +3,9 @@
 qwen3-14b-local-aidb8 round_lobby (fixtures/bench_aidb8/qwen_round_lobby_calls.json): the first
 build_scene carried the brief "A round hotel lobby ..." and a spec without setting.kind (invalid);
 the retry resent only the fixed spec, so the lobby came out rectangular and the counts went
-unchecked. The brief now stays pending until a build succeeds.
+unchecked. The brief now stays pending until a build succeeds. (In that run the brief sat at the
+call level beside "arguments", so the bench runner's salvage of the text call dropped it; these
+tests send it inside the arguments, as a well-formed call does.)
 """
 
 from __future__ import annotations

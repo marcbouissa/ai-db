@@ -1961,9 +1961,11 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
 
 
 #: the brief of the scene being worked on: the last brief a build_scene / get_scene_spec_schema call
-#: passed, until a build succeeds. qwen3-14b-local-aidb8 round_lobby passed the brief ("A round hotel
-#: lobby ...") to a first build_scene that came back invalid (setting.kind missing) and resent only the
+#: passed, until a build succeeds. qwen3-14b-local-aidb8 round_lobby wrote the brief ("A round hotel
+#: lobby ...") on a first build_scene that came back invalid (setting.kind missing) and resent only the
 #: fixed spec: no brief, so no round room and no count check. The retry builds with the pending brief.
+#: (In that run the brief sat beside "arguments" in a text tool call, so the bench runner's salvage
+#: dropped it before it reached this server; a brief that does arrive is kept.)
 _PENDING_BRIEF: list[str] = []
 
 
