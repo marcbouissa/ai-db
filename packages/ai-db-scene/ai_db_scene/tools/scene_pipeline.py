@@ -1411,6 +1411,7 @@ def lighting_commands(spec: SceneSpec, placements: list[Placement], off: tuple[f
             name="ai_db_fill", sx=round(w * SCENE_FILL_SIZE_FRACTION, 3), sy=round(d * SCENE_FILL_SIZE_FRACTION, 3))}})
         if daylit:
             cmds += daylight.window_light_commands(placements, off)
+            cmds += daylight.window_view_commands()  # a light ground outside, not a navy band
     for pl in placements:
         watts = SCENE_LAMP_W.get(pl.category)
         if watts is None:
@@ -2718,13 +2719,18 @@ for kind in ("NISHITA", "MULTIPLE_SCATTERING", "SINGLE_SCATTERING"):
         break
     except (TypeError, ValueError):
         continue
-st.sun_elevation, st.sun_rotation = el, math.pi / 2 - az
-try:
-    st.sun_disc = False
-except AttributeError:
-    pass
-bg = next((n for n in nt.nodes if n.type == "BACKGROUND"), None)
-if bg is not None:
+for sky in [n for n in nt.nodes if n.type == "TEX_SKY"]:  # the window view's horizon sky too
+    if sky is not st:
+        try:
+            sky.sky_type = st.sky_type
+        except (TypeError, ValueError):
+            pass
+    sky.sun_elevation, sky.sun_rotation = el, math.pi / 2 - az
+    try:
+        sky.sun_disc = False
+    except AttributeError:
+        pass
+for bg in [n for n in nt.nodes if n.type == "BACKGROUND"]:
     bg.inputs["Strength"].default_value = max(bg.inputs["Strength"].default_value, {strength!r})
 result = {{"sky": st.sky_type.lower(), "sun_elevation": round(math.degrees(el), 1),
           "sun_azimuth": round(math.degrees(az), 1), "sun": sun.name if sun else None}}

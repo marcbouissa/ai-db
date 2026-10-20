@@ -148,3 +148,121 @@ if o is not None and o.type == "LIGHT" and o.data.type == "AREA":
     o.data.spread = 2.0  # radians: a soft window glow, not a beam
 result = {{"window_light": o.name if o else None}}
 """
+
+
+#: what the windows look out on. The Nishita sky is dark navy below the horizon (its ground has no
+#: albedo), so every window showed a "sea" band under a bright sky (aidb8 contact sheet). For camera
+#: rays only (the room's light is unchanged) the world below the horizon is now a light, sunlit
+#: ground - the sky's own horizon colour times a grass/pavement tint, hazing into the horizon - and
+#: a soft line of distant trees stands just above it. Both follow the rig's sun: they are made from
+#: a second sky texture sampled at the horizon with the same sun.
+#: the Nishita horizon is the sky's brightest band (radiance ~19 at sun 32 deg, the zenith ~7, the
+#: sky's "ground" ~0.2-0.4: the navy band); a light ground is about a third of the horizon
+VIEW_GROUND_TINT = (0.10, 0.13, 0.07, 1.0)  # muted grass/pavement against the horizon light
+VIEW_TREE_TINT = (0.05, 0.07, 0.04, 1.0)  # distant trees: hazed, a little darker than the ground
+VIEW_HAZE_Z = 0.03  # the ground hazes into the horizon over this much of the view direction z
+VIEW_TREE_MAX_Z = 0.045  # tallest distant tree line (direction z; ~2.6 deg above the horizon)
+
+
+def window_view_commands() -> list[dict[str, Any]]:
+    """The world's camera view: a light ground and distant trees instead of the navy band."""
+    return [{"type": "run_code", "params": {"code": _WINDOW_VIEW.format(
+        ground=VIEW_GROUND_TINT, trees=VIEW_TREE_TINT, haze=VIEW_HAZE_Z, tree_z=VIEW_TREE_MAX_Z)}}]
+
+
+_WINDOW_VIEW = """
+import bpy
+scene = bpy.context.scene
+world = scene.world
+nt = world.node_tree if world is not None and world.use_nodes else None
+sky = next((n for n in nt.nodes if n.type == "TEX_SKY" and not n.name.startswith("ai_db_view")), None) if nt else None
+bg = next((n for n in nt.nodes if n.type == "BACKGROUND" and not n.name.startswith("ai_db_view")), None) if nt else None
+out = next((n for n in nt.nodes if n.type == "OUTPUT_WORLD"), None) if nt else None
+if sky is None or bg is None or out is None:
+    result = {{"window_view": None}}
+else:
+    for n in [n for n in nt.nodes if n.name.startswith("ai_db_view")]:
+        nt.nodes.remove(n)
+
+    def node(kind, name, **inputs):
+        n = nt.nodes.new(kind)
+        n.name = "ai_db_view_" + name
+        for k, v in inputs.items():
+            n.inputs[k].default_value = v
+        return n
+
+    def math(op, a, b, name, clamp=False):
+        n = node("ShaderNodeMath", name)
+        n.operation = op
+        n.use_clamp = clamp
+        for i, v in enumerate((a, b)):
+            if isinstance(v, (int, float)):
+                n.inputs[i].default_value = v
+            else:
+                nt.links.new(v, n.inputs[i])
+        return n.outputs[0]
+
+    def mix(fac, a, b, name, blend="MIX"):
+        n = node("ShaderNodeMix", name)
+        n.data_type = "RGBA"
+        n.blend_type = blend
+        n.clamp_result = False  # sky radiance is ~5-20, not 0-1
+        ins = {{i.identifier: i for i in n.inputs}}
+        for sock, v in ((ins["Factor_Float"], fac), (ins["A_Color"], a), (ins["B_Color"], b)):
+            if isinstance(v, (int, float)) or (isinstance(v, tuple) and len(v) == 4):
+                sock.default_value = v
+            else:
+                nt.links.new(v, sock)
+        return next(o for o in n.outputs if o.identifier == "Result_Color")
+
+    tc = node("ShaderNodeTexCoord", "coord")
+    sep = node("ShaderNodeSeparateXYZ", "sep")
+    nt.links.new(tc.outputs["Generated"], sep.inputs[0])
+    flat = node("ShaderNodeCombineXYZ", "flat", Z=0.03)  # the direction's horizon point
+    nt.links.new(sep.outputs["X"], flat.inputs["X"])
+    nt.links.new(sep.outputs["Y"], flat.inputs["Y"])
+    hz = nt.nodes.new("ShaderNodeTexSky")
+    hz.name = "ai_db_view_horizon"
+    for attr in ("sky_type", "sun_elevation", "sun_rotation", "altitude", "air_density", "dust_density",
+                 "ozone_density", "sun_size", "sun_intensity"):
+        if hasattr(sky, attr):
+            try:
+                setattr(hz, attr, getattr(sky, attr))
+            except (AttributeError, TypeError, ValueError):
+                pass
+    try:
+        hz.sun_disc = False
+    except AttributeError:
+        pass
+    nt.links.new(flat.outputs[0], hz.inputs["Vector"])
+    horizon = hz.outputs["Color"]
+    ground = mix(1.0, horizon, {ground!r}, "ground", "MULTIPLY")
+    haze = node("ShaderNodeMapRange", "haze", **{{"From Min": -{haze!r}, "From Max": 0.0, "To Min": 0.0,
+                                                   "To Max": 1.0}})
+    nt.links.new(sep.outputs["Z"], haze.inputs["Value"])
+    below = mix(haze.outputs[0], ground, horizon, "below")
+    noise_at = node("ShaderNodeVectorMath", "noise_at")
+    noise_at.operation = "SCALE"
+    noise_at.inputs["Scale"].default_value = 6.0
+    nt.links.new(flat.outputs[0], noise_at.inputs[0])
+    noise = node("ShaderNodeTexNoise", "noise", Scale=5.0, Detail=8.0, Roughness=0.65)  # crowns, not hills
+    nt.links.new(noise_at.outputs[0], noise.inputs["Vector"])
+    height = node("ShaderNodeMapRange", "tree_height", **{{"From Min": 0.38, "From Max": 0.68, "To Min": 0.008,
+                                                          "To Max": {tree_z!r}}})
+    nt.links.new(noise.outputs["Fac"], height.inputs["Value"])
+    in_trees = math("LESS_THAN", sep.outputs["Z"], height.outputs[0], "in_trees")
+    trees = mix(1.0, horizon, {trees!r}, "trees", "MULTIPLY")
+    above = mix(in_trees, sky.outputs["Color"], trees, "above")
+    is_below = math("LESS_THAN", sep.outputs["Z"], 0.0, "is_below")
+    view = mix(is_below, above, below, "view")
+    vbg = node("ShaderNodeBackground", "background")
+    vbg.inputs["Strength"].default_value = bg.inputs["Strength"].default_value
+    nt.links.new(view, vbg.inputs["Color"])
+    path = node("ShaderNodeLightPath", "path")
+    pick = node("ShaderNodeMixShader", "pick")
+    nt.links.new(path.outputs["Is Camera Ray"], pick.inputs["Fac"])
+    nt.links.new(bg.outputs["Background"], pick.inputs[1])
+    nt.links.new(vbg.outputs["Background"], pick.inputs[2])
+    nt.links.new(pick.outputs[0], out.inputs["Surface"])
+    result = {{"window_view": pick.name}}
+"""
