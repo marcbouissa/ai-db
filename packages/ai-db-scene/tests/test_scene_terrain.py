@@ -287,8 +287,8 @@ def test_build_commands_terrain_plants_boardwalk_instead_of_flat_floor():
     assert any("_BOARDWALK" in c or '"posts"' in c for c in codes)
     applied = {c["params"]["name"] for c in cmds if c["type"] == "apply_material"}
     assert {"palms_1_trunk", "palms_1_leaves", "boardwalk_deck", "boardwalk_posts"} <= applied
-    rocks = [c["params"]["spec"] for c in cmds if c["type"] == "build_asset" and c["params"]["spec"]["category"] == "rock"]
-    assert len({str(r["parts"]) for r in rocks}) == 3  # every rock its own shape
+    rocks = [c["params"]["code"] for c in cmds if c["type"] == "run_code" and "convex_hull" in c["params"]["code"]]
+    assert len(set(rocks)) == 3  # every rock its own shape (rocks.py: a faceted boulder, seeded by its id)
     # a plain outdoor setting keeps its flat floor and the ground to the horizon
     park = _spec({"setting": {"kind": "outdoor", "bounds_m": [10, 10, 4]}, "objects": [{"id": "r", "category": "rock"}]})
     cmds, _ = sp.build_layout_commands(park, solve_layout(park))

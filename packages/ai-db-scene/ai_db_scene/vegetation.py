@@ -249,21 +249,25 @@ elif kind == "potted":
                           matrix=Matrix.Translation((0, 0, ph * 0.94)))
     parts.append(mesh_obj(name + "_soil", bsoil))
     bl, bs = bmesh.new(), bmesh.new()
-    nl = rng.randint(14, 20)
+    # a full crown (14-20 leaves left the pot and the soil showing through: Marc's review list,
+    # "fuller potted plants"): upright leaves in the middle, a ring arching out, and a low skirt of
+    # short leaves spilling over the rim
+    nl = rng.randint(28, 36)
     top = H - ph
     base = Vector((0, 0, ph * 0.95))
     for k in range(nl):  # stalks from the soil, upright in the middle, arching out at the edge;
         az = 2 * math.pi * k / nl * 2.618 + rng.uniform(-0.3, 0.3)  # every leaf its own size and shape
         inner = k % 3 == 0
-        elev = rng.uniform(1.15, 1.45) if inner else rng.uniform(0.7, 1.15)
-        stalk = top * (rng.uniform(0.45, 0.7) if inner else rng.uniform(0.25, 0.5))
+        low = k % 4 == 1 and not inner
+        elev = rng.uniform(1.15, 1.45) if inner else rng.uniform(0.3, 0.65) if low else rng.uniform(0.7, 1.15)
+        stalk = top * (rng.uniform(0.45, 0.7) if inner else rng.uniform(0.1, 0.22) if low else rng.uniform(0.25, 0.5))
         d = Vector((math.cos(elev) * math.cos(az), math.cos(elev) * math.sin(az), math.sin(elev)))
         start = base + Vector((rng.uniform(-0.3, 0.3) * pr, rng.uniform(-0.3, 0.3) * pr, 0))
         end = start + d * stalk
         tube(bs, [start, start.lerp(end, 0.5) + Vector((0, 0, 0.01 * H)), end], [0.012 * H, 0.009 * H, 0.007 * H], 5)
-        out = Vector((d.x, d.y, 0.55 if inner else 0.2)).normalized()
-        ln = top * rng.uniform(0.3, 0.5) * (0.8 if inner else 1.0)
-        blade(bl, end, out, ln, ln * rng.uniform(0.32, 0.62), ln * rng.uniform(0.15, 0.45))
+        out = Vector((d.x, d.y, 0.55 if inner else -0.05 if low else 0.2)).normalized()
+        ln = top * rng.uniform(0.3, 0.5) * (0.8 if inner else 0.75 if low else 1.0)
+        blade(bl, end, out, ln, ln * rng.uniform(0.38, 0.62), ln * rng.uniform(0.15, 0.45))
     parts.append(mesh_obj(name + "_leaves", bl))
     parts.append(mesh_obj(name + "_stems", bs))
 else:  # tropical_bush: broad leaves on stalks from one clump

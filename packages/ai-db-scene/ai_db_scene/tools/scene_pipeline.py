@@ -1089,8 +1089,8 @@ def build_layout_commands(
     """
     import math
 
+    from ai_db_scene import rocks, terrain, vegetation
     from ai_db_scene import shell as room_shell
-    from ai_db_scene import terrain, vegetation
     from ai_db_scene.furniture_variants import CATEGORY_FAMILY, fit_command, uses_families
     from ai_db_scene.furniture_variants import piece as family_piece
     from ai_db_scene.providers import AssetFile, find_asset
@@ -1190,6 +1190,14 @@ def build_layout_commands(
                 cmds += vegetation.plant_commands(pl.category, pl.id, pl.dims, [loc[0], loc[1], loc[2] - pl.dims[2] / 2],
                                                   pl.rotation_deg_z, seed, material_for(pl.category, chosen)
                                                   if chosen else None)
+            tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
+        elif geometry == "generated" and pl.category == "rock" and not user_overrides("rock"):
+            # a faceted boulder of its own shape (rocks.py), not a squashed dome of spheres
+            loc = _shift(pl.location, off)
+            chosen = materials.get(base)
+            cmds += rocks.rock_commands(pl.id, pl.dims, [loc[0], loc[1], loc[2] - pl.dims[2] / 2], pl.rotation_deg_z,
+                                        zlib.crc32(pl.id.encode()) % (2**31),
+                                        material_for("rock", chosen) if chosen and chosen != "stone" else None)
             tag.append({"name": pl.id, "location": loc, "rot_z": 0.0, "props": props})
         elif geometry == "generated" and pl.category in _GENERATED and not user_overrides(pl.category):
             loc = _shift(pl.location, off)
