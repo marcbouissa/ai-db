@@ -1,8 +1,8 @@
 """The benchmark briefs and their must-have checklists.
 
-A checklist item is (label, how many, name/category tokens): an object counts for the item
-when one of the tokens appears in its name or its ``category`` property. Counting by name
-works for every arm, including agents that never tag categories.
+A checklist item is (label, how many, name tokens). Which objects count is checklist_match's
+job: by ``category`` (checklist_match.ITEM_CATEGORIES) when the object has one, by the tokens in
+its name (gated by size) only for arms that never tag categories.
 """
 
 from __future__ import annotations

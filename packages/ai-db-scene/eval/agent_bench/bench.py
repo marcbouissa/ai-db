@@ -275,16 +275,23 @@ def size_plausible(size: list[float], prior: Any) -> bool:
 
 
 def checklist(brief: str, inv: dict[str, Any]) -> list[dict[str, Any]]:
-    """Per item: ``found`` = objects matching by name/category (the old count), ``real`` = the same
-    weighted by geometry_weight, and the matching root names (for the size check)."""
+    """Per item: ``found`` = objects that count for it (checklist_match: by category, by name only
+    for untagged objects, gated by size), ``real`` = the same weighted by geometry_weight, the
+    matching root names (for the size check), and ``name_found`` = the old plain name/category
+    token count (checklist_name_pct)."""
+    import checklist_match
+    from ai_db_scene.priors import load_priors
+
     roots = _roots(inv)
+    spec = briefs.BRIEFS[brief]["checklist"]
+    counted = checklist_match.match(spec, roots, load_priors())
     out = []
-    for label, need, tokens in briefs.BRIEFS[brief]["checklist"]:
-        hits = [o for o in roots if any(re.search(re.escape(t), f"{o['name']} {o['category']}".lower())
-                                        for t in tokens)]
+    for (label, need, tokens), hits in zip(spec, counted, strict=True):
+        named = [o for o in roots if any(re.search(re.escape(t), f"{o['name']} {o['category']}".lower())
+                                         for t in tokens)]
         out.append({"item": label, "need": need, "found": len(hits),
                     "real": round(sum(geometry_weight(inv, o) for o in hits), 2),
-                    "objects": [o["name"] for o in hits]})
+                    "objects": [o["name"] for o in hits], "name_found": len(named)})
     return out
 
 
@@ -307,7 +314,7 @@ def score(brief: str, inv: dict[str, Any], validation: dict[str, Any]) -> dict[s
     priors = load_priors()
     items = checklist(brief, inv)
     by_name = {o["name"]: o for o in inv["objects"]}
-    cover_name = 100 * sum(min(i["found"] / i["need"], 1.0) for i in items) / len(items)
+    cover_name = 100 * sum(min(i["name_found"] / i["need"], 1.0) for i in items) / len(items)
     cover = 100 * sum(min(i["real"] / i["need"], 1.0) for i in items) / len(items)
     sized = plausible = 0
     for name in sorted({n for i in items for n in i["objects"]}):  # once, even if two items match it
