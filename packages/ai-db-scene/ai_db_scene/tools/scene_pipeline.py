@@ -1807,6 +1807,7 @@ def _lesson_checklist(categories: set[str], brief: str, project: str) -> list[st
 
 
 def _handle_get_scene_spec_schema(args: dict[str, Any]) -> Any:
+    _remember_brief(args)
     priors = load_priors()
     exemplars: list[dict[str, Any]] = []
     try:
@@ -1957,6 +1958,35 @@ def _handle_build_scene(args: dict[str, Any]) -> Any:
     if lifted and isinstance(res.get("repairs"), list):
         res["repairs"] = [f"spec: {lifted} are build_scene arguments, not spec fields: read as such", *res["repairs"]]
     return present_build(res)
+
+
+#: the brief of the scene being worked on: the last brief a build_scene / get_scene_spec_schema call
+#: passed, until a build succeeds. qwen3-14b-local-aidb8 round_lobby passed the brief ("A round hotel
+#: lobby ...") to a first build_scene that came back invalid (setting.kind missing) and resent only the
+#: fixed spec: no brief, so no round room and no count check. The retry builds with the pending brief.
+_PENDING_BRIEF: list[str] = []
+
+
+def _remember_brief(args: dict[str, Any]) -> None:
+    if isinstance(args.get("brief"), str) and args["brief"].strip():
+        _PENDING_BRIEF[:] = [args["brief"]]
+
+
+def _handle_build_scene_call(args: dict[str, Any]) -> Any:
+    """The build_scene tool: ``_handle_build_scene`` with the pending brief when the call has none."""
+    lifted, _names = lift_build_args(args)  # a brief written inside the spec counts
+    carried = None
+    if not (lifted.get("brief") or lifted.get("prompt")) and _PENDING_BRIEF:
+        carried = _PENDING_BRIEF[0]
+        args = {**args, "brief": carried}
+    _remember_brief(lifted)
+    res = _handle_build_scene(args)
+    if isinstance(res, dict) and res.get("status") == "built":
+        _PENDING_BRIEF.clear()
+        if carried is not None and isinstance(res.get("repairs"), list):
+            res["repairs"] = [f"brief: none in this call; the earlier call's brief {carried[:80]!r} used",
+                              *res["repairs"]]
+    return res
 
 
 #: build_scene arguments a model put inside the spec (qwen3-14b-local-aidb6: brief, project,
@@ -2944,7 +2974,7 @@ PIPELINE_TOOLS: list[tuple[str, str, dict[str, Any], Any]] = [
           "exposure_check": {"type": "boolean",
                              "description": ("default true: a tiny probe render from the camera; the view exposure is "
                                              "adjusted until the image is neither black nor blown out (report: exposure)")}}},
-     _handle_build_scene),
+     _handle_build_scene_call),
     ("get_scene_spec_schema",
      "SceneSpec JSON schema + category vocabulary with typical dims + relations + up to 3 exemplar specs from past successful runs",
      {"type": "object", "properties": {"brief": {"type": "string", "description": "Brief, to retrieve similar exemplars"},
