@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from ai_db.constants import DAEMON_CLIENT_TIMEOUT_S
+from ai_db.constants import DAEMON_CLIENT_TIMEOUT_S, DAEMON_TOOL_CALL_TIMEOUT_S
 from ai_db.daemon._json import as_dict, as_list
 from ai_db.errors import AiDbDaemonError
 
@@ -23,6 +23,23 @@ except ImportError:
 
 # How long to wait for the progress stream to deliver "done" after the call returned.
 _PROGRESS_DRAIN_S = 5.0
+
+
+def describe_http_error(exc: httpx.HTTPError) -> str:
+    """``Type: message``. httpx timeouts often carry an empty message (``ReadTimeout('')``)."""
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else f"{type(exc).__name__} (no message)"
+
+
+def _error_detail(resp: httpx.Response) -> str:
+    """The ``detail`` of a JSON error body, else the raw body, never an empty string."""
+    try:
+        body = resp.json()
+    except ValueError:
+        body = None
+    detail = body.get("detail") if isinstance(body, dict) else None
+    text = str(detail) if detail else resp.text
+    return text.strip() or "(empty response body)"
 
 
 class DaemonClient:
@@ -39,10 +56,13 @@ class DaemonClient:
         timeout: float = DAEMON_CLIENT_TIMEOUT_S,
         api_key: str | None = None,
         admin_key: str | None = None,
+        tool_timeout: float = DAEMON_TOOL_CALL_TIMEOUT_S,
     ):
         self.base_url = base_url.rstrip("/")
         self.default_project = default_project
         self.timeout = timeout
+        # Read timeout of tool calls, which may run (or queue behind a sync) for minutes.
+        self.tool_timeout = tool_timeout
         self.api_key = api_key
         # Management routes (/projects, /metrics, /daemon/*) need the admin key.
         self.admin_key = admin_key or api_key
@@ -54,22 +74,31 @@ class DaemonClient:
         return {"Authorization": f"Bearer {key}"} if key else {}
 
     @contextlib.asynccontextmanager
-    async def _http(self, admin: bool = False) -> AsyncIterator[httpx.AsyncClient]:
-        async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers(admin)) as client:
+    async def _http(self, admin: bool = False,
+                    read_timeout: float | None = None) -> AsyncIterator[httpx.AsyncClient]:
+        timeout = httpx.Timeout(self.timeout, read=read_timeout if read_timeout else self.timeout)
+        async with httpx.AsyncClient(timeout=timeout, headers=self._headers(admin)) as client:
             yield client
 
-    async def _request(self, method: str, path: str, admin: bool = False, **kw: Any) -> Any:
+    async def _request(self, method: str, path: str, admin: bool = False,
+                       read_timeout: float | None = None, **kw: Any) -> Any:
+        url = f"{self.base_url}{path}"
         try:
-            async with self._http(admin) as client:
-                resp = await client.request(method, f"{self.base_url}{path}", **kw)
+            async with self._http(admin, read_timeout) as client:
+                resp = await client.request(method, url, **kw)
+        except httpx.TimeoutException as e:
+            limit = (self.timeout if isinstance(e, httpx.ConnectTimeout) or not read_timeout
+                     else read_timeout)
+            raise AiDbDaemonError(
+                f"daemon {method} {url} timed out ({describe_http_error(e)}, limit {limit:g}s); "
+                "the daemon may still be running the call: see `ai-db daemon status` "
+                "and the daemon log") from e
         except httpx.HTTPError as e:
-            raise AiDbDaemonError(f"daemon at {self.base_url} unreachable: {e}") from e
+            raise AiDbDaemonError(
+                f"daemon {method} {url} failed: {describe_http_error(e)}") from e
         if resp.is_error:
-            try:
-                detail = resp.json().get("detail", resp.text)
-            except ValueError:
-                detail = resp.text
-            raise AiDbDaemonError(f"daemon {method} {path} -> {resp.status_code}: {detail}")
+            raise AiDbDaemonError(
+                f"daemon {method} {path} -> HTTP {resp.status_code}: {_error_detail(resp)}")
         return resp.json()
 
     def _resolve_project(self, project: str | None) -> str:
@@ -120,7 +149,8 @@ class DaemonClient:
             listener = asyncio.create_task(listen(project, token, progress))
 
         try:
-            data = await self._request("POST", f"/projects/{project}/tools/call", json=payload)
+            data = await self._request("POST", f"/projects/{project}/tools/call",
+                                       read_timeout=self.tool_timeout, json=payload)
         finally:
             if listener is not None:
                 try:
@@ -192,7 +222,7 @@ class DaemonClient:
         payload = {"calls": [{**c, "arguments": {"cwd": cwd, **c.get("arguments", {})}}
                              for c in calls]}
         data = as_dict(await self._request("POST", f"/projects/{project}/tools/call/batch",
-                                           json=payload))
+                                           read_timeout=self.tool_timeout, json=payload))
         return [self._tool_result(r) for r in data["results"]]
 
     def close(self) -> None:
@@ -226,6 +256,7 @@ class DaemonClient:
         if projects:
             arguments["projects"] = projects
         data = asyncio.run(self._request("POST", "/query/cross-project", admin=True,
+                                         read_timeout=self.tool_timeout,
                                          json={"name": "query", "arguments": arguments}))
         return as_list(self._tool_result(as_dict(data)))
 

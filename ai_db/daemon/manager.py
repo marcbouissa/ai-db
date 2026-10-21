@@ -17,6 +17,7 @@ import httpx
 from ai_db.config import AppConfig, config_path, load_config
 from ai_db.constants import DAEMON_CLIENT_TIMEOUT_S, DAEMON_LOG_FILE
 from ai_db.daemon._json import as_dict
+from ai_db.daemon.client import describe_http_error
 from ai_db.errors import AiDbDaemonError
 
 _HEALTH_POLL_S = 0.5
@@ -185,8 +186,10 @@ class DaemonManager:
                 resp = client.get(f"{self.base_url}/health")
             result["health"] = (resp.json() if resp.status_code == 200
                                 else {"status": "unhealthy", "http_status": resp.status_code})
-        except (httpx.HTTPError, ValueError) as e:
-            result["health"] = {"status": "unreachable", "error": str(e)}
+        except httpx.HTTPError as e:
+            result["health"] = {"status": "unreachable", "error": describe_http_error(e)}
+        except ValueError as e:
+            result["health"] = {"status": "unhealthy", "error": f"/health is not JSON: {e}"}
         return result
 
     # --- projects --------------------------------------------------------------
@@ -197,8 +200,13 @@ class DaemonManager:
                 resp = client.request(method, f"{self.base_url}{path}", **kw)
                 resp.raise_for_status()
                 return as_dict(resp.json())
-        except (httpx.HTTPError, ValueError) as e:
-            raise AiDbDaemonError(f"Failed to {what}: {e}") from e
+        except httpx.HTTPStatusError as e:
+            raise AiDbDaemonError(f"Failed to {what}: HTTP {e.response.status_code}: "
+                                  f"{e.response.text.strip() or '(empty response body)'}") from e
+        except httpx.HTTPError as e:
+            raise AiDbDaemonError(f"Failed to {what}: {describe_http_error(e)}") from e
+        except ValueError as e:
+            raise AiDbDaemonError(f"Failed to {what}: response is not JSON: {e}") from e
 
     def _edit_config(self, edit: Callable[[dict[str, Any]], None]) -> None:
         """Apply ``edit`` to ``daemon.projects`` of the config file and write it back."""

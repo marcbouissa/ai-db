@@ -161,7 +161,9 @@ class ProjectPool:
         if not _PROJECT_NAME.match(name):
             raise UnknownProjectError(f"invalid project name {name!r}")
         if not self.is_known(name):
-            raise UnknownProjectError(f"project '{name}' is not registered (auto_discover is off)")
+            raise UnknownProjectError(
+                f"project '{name}' is not registered (daemon.auto_discover is off): register it "
+                f"with `ai-db daemon register {name} --db-path <db>` or set daemon.auto_discover")
         async with self._load_lock(name):
             if name not in self.projects:
                 cfg, db_path = self._project_config(name)

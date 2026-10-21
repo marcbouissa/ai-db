@@ -316,6 +316,11 @@ ai-db daemon stop
 ai-db daemon status
 ```
 
+**Long calls.** A tool call may run (or wait behind a running `sync` of the same project) for
+minutes, so its read timeout is `DAEMON_TOOL_CALL_TIMEOUT_S` (1 h); management requests keep
+`DAEMON_CLIENT_TIMEOUT_S` (30 s). A failed request names the exception, the limit, the
+HTTP status and the response body.
+
 **Features:**
 - **Your working directory**: the client sends its cwd with every call, so `sync .` and
   relative paths resolve where you ran the command, not where the daemon runs
