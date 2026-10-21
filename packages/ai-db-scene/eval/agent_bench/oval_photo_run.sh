@@ -19,6 +19,7 @@ export LOCAL_MODEL=qwen2.5-vl-7b HERE
 PORT=${LOCAL_MODEL_PORT:-8011}
 
 if docker ps --format '{{.Names}}' | grep -qx aidb-bench-vllm; then echo "refused: aidb-bench-vllm is running"; exit 1; fi
+if docker ps --format '{{.Names}}' | grep -qE 'stage_ov-sim|isaac'; then echo "refused: a simulation container is running"; exit 1; fi
 mem=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1)
 if [ "$mem" -ge 2048 ]; then echo "refused: ${mem} MiB of GPU memory in use"; exit 1; fi
 if pgrep -f 'agent_bench/bench\.py run' >/dev/null; then echo "refused: a bench.py run is in progress"; exit 1; fi

@@ -44,6 +44,11 @@ dns() {
 case "${1:-}" in
   start)
     if docker ps --format '{{.Names}}' | grep -qx "$NAME"; then echo "already running"; exit 0; fi
+    # never share the GPU with an Isaac Sim / stage_ov run (it records and can run out of memory)
+    sim=$(docker ps --format '{{.Names}}' | grep -E 'stage_ov-sim|isaac' || true)
+    if [ -n "$sim" ] && [ -z "${AIDB_ALLOW_WITH_SIM:-}" ]; then
+      echo "refused: simulation container running ($sim); set AIDB_ALLOW_WITH_SIM=1 to override" >&2; exit 1
+    fi
     docker rm -f "$NAME" >/dev/null 2>&1 || true
     docker run -d --name "$NAME" --runtime nvidia --gpus all --ipc=host \
       --dns "$(dns)" -p "127.0.0.1:$PORT:8000" \
