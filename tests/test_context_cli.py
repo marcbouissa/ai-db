@@ -1,11 +1,13 @@
 """`ai-db context` from the CLI: one task per --tasks, large notes intact, daemon-less path."""
 
 import json
+import socket
 
 import pytest
 
 from ai_db import cli
 from ai_db.daemon import server
+from ai_db.errors import AiDbDaemonUnavailableError
 
 MARC_TASK = ("Record v9: place p1 then p2 (guard on, watchdog off TEMP, "
              "holding_threshold 0.65 TEMP)")
@@ -73,3 +75,34 @@ def test_large_notes_round_trip_through_the_daemon(tmp_path, monkeypatch):
         is_error, text = _text(_call(daemon, "context_recall", {"list": True}))
         [row] = json.loads(text)
         assert row["notes_chars"] == len(notes)
+
+
+def _closed_port_url() -> str:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return f"http://127.0.0.1:{s.getsockname()[1]}"
+
+
+def test_context_and_sync_run_locally_when_the_daemon_cannot_start(db, tmp_path, monkeypatch,
+                                                                   capsys):
+    """AI_DB_DAEMON_AUTOSTART=0 (conftest) stands in for an auto-start that failed."""
+    monkeypatch.setenv("AI_DB_DAEMON_URL", _closed_port_url())
+    assert _run(["context", "save", "s1", "--summary", "sum", "--project", "p", "--db", db,
+                 "--tasks", MARC_TASK]) == 0
+    captured = capsys.readouterr()
+    assert "without the daemon, directly on the local database" in captured.err
+    assert "ai-db daemon start" in captured.err
+    _run(["context", "get", "s1", "--project", "p", "--db", db, "--format", "json"])
+    assert json.loads(capsys.readouterr().out)["open_tasks"] == [MARC_TASK]
+
+    notes = tmp_path / "notes"  # not a project: no .git, no marker file
+    notes.mkdir()
+    (notes / "a.md").write_text("# hello\n")
+    assert _run(["sync", str(notes), "--db", db]) == 0
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "+1 ~0 -0 =0"
+
+
+def test_other_commands_fail_with_how_to_start(db, monkeypatch):
+    monkeypatch.setenv("AI_DB_DAEMON_URL", _closed_port_url())
+    with pytest.raises(AiDbDaemonUnavailableError, match="ai-db daemon start"):
+        cli._main(["query", "x", "--db", db])

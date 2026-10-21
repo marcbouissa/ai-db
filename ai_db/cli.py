@@ -755,6 +755,10 @@ def _main(argv: list[str] | None = None) -> int:
         # Get API key from environment
         api_key = os.environ.get("AI_DB_API_KEY")
         dispatcher = create_daemon_client(daemon_url, project=project, api_key=api_key)
+        from ai_db.daemon.fallback import local_if_daemon_down
+        dispatcher, daemon_url = local_if_daemon_down(
+            args.command, dispatcher, daemon_url,
+            lambda: ServiceDispatcher(db_path=args.db, config=cfg))
     else:
         dispatcher = ServiceDispatcher(db_path=args.db, config=cfg)
 

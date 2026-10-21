@@ -324,6 +324,15 @@ so; the daemon logs to `~/.local/state/ai-db/daemon.log`. A remote daemon is nev
 and `AI_DB_DAEMON_AUTOSTART=0` turns auto-start off. If it cannot be started, the error
 says why (exit code, log path) and how to start it by hand.
 
+`sync`, `context` (save/get/list/query/forget) and `remember` then run **without the
+daemon**, directly on the local SQLite DB, with a notice on stderr. This is not a second
+implementation: the CLI calls the same `ServiceDispatcher` handlers the daemon runs for
+these tools, on the same DB (`storage.options.path` or the default DB). Other commands
+(`query`, `investigate`, ...) fail instead: run locally they would load the embedding and
+rerank models in every CLI call, which is what the daemon exists to avoid. `context` is not
+always local, because the daemon may hold recall providers (`recall.providers`) that index
+each saved context.
+
 **Long calls.** A tool call may run (or wait behind a running `sync` of the same project) for
 minutes, so its read timeout is `DAEMON_TOOL_CALL_TIMEOUT_S` (1 h); management requests keep
 `DAEMON_CLIENT_TIMEOUT_S` (30 s). A failed request names the exception, the limit, the
@@ -786,7 +795,6 @@ ai-db context save auth-refactor \
   --tasks "Implement token refresh" \
   --tasks "Add unit tests for expired token (401, not 500)"
 # One --tasks flag is one task; commas in it are kept. --files is still comma-separated.
-
 
 # Instant context recall in a fresh chat session (/remember)
 ai-db remember
