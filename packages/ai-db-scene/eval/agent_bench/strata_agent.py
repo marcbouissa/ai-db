@@ -176,6 +176,10 @@ def _salvage_call(content: str, n: int) -> dict[str, Any] | None:
     if body[end:].strip(" \n\t}") or not isinstance(call, dict) or not isinstance(call.get("name"), str):
         return None
     args = call.get("arguments", {})
+    if isinstance(args, dict):
+        # keys the model closed ``arguments`` too early for ({"name", "arguments": {"spec"}, "brief"}}):
+        # they are arguments, not call fields (qwen aidb8 round_lobby lost its brief this way)
+        args = {**{k: v for k, v in call.items() if k not in ("name", "arguments", "id", "type")}, **args}
     return {"id": f"salvaged-{n}", "type": "function",
             "function": {"name": call["name"], "arguments": json.dumps(args)}}
 
