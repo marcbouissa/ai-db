@@ -212,3 +212,20 @@ def test_vl_template_without_tools_keeps_the_vl_default():
                            None)
     assert out.startswith("<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n"
                           "<|vision_start|><|image_pad|><|vision_end|>hi<|im_end|>")
+
+
+def test_opencode_photo_arms_and_prompts(mods, tmp_path, monkeypatch):
+    """OpenCode photo arms: the model part is the OpenCode model id, the tool names are OpenCode's
+    (<server>_<tool>) and the B brief lives in the model's own deepen file."""
+    pe = mods["photo_exp"]
+    m = "longcat-2.5-preview-free"
+    assert pe.parse_arm(f"oval-photo-C-raw-{m}-r1") == {
+        "cell": "C", "mode": "raw", "with_aidb": False, "model": m, "repeat": 1}
+    assert not pe.is_local(m) and pe.is_local(pe.MODEL_KEY)
+    assert pe.builds(1, m)[0] == f"oval-photo-A-raw-{m}-r1"
+    c_aidb = pe.prompt("C", True, 1, PROMPTS, model=m)
+    assert "blender_discover_servers / blender_discover_tools" in c_aidb and "START HERE: aidb_build_scene" in c_aidb
+    monkeypatch.setattr(pe, "PHOTO_DIR", str(tmp_path))
+    assert pe.deepen_path(1, m).endswith(f"deepen_{m}_r1.json") and pe.deepen_path(1).endswith("deepen_r1.json")
+    (tmp_path / f"deepen_{m}_r1.json").write_text(json.dumps({"text": "A cream oval room ..."}))
+    assert "A cream oval room ..." in pe.prompt("B", False, 1, PROMPTS, model=m)

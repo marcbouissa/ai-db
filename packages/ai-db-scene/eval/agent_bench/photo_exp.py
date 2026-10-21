@@ -15,8 +15,8 @@ are ``oval-photo-<cell>-<raw|aidb>-qwen2.5vl-7b-r<N>``, the brief is ``oval_phot
 from prompts.json; the "oval room" item is the room's shape, see room_shape), so a scene is
 ``bench.py run <arm> oval_photo`` like any other and ``bench.py rescore`` scores it.
 
-    python photo_exp.py deepen <repeat>              the B brief of a repeat (server running)
-    python photo_exp.py run [--repeats N] [--workers N] [--last-start HH:MM]
+    python photo_exp.py deepen <repeat> [model]      the B brief of a repeat (local: server running)
+    python photo_exp.py run [--repeats N] [--workers N] [--last-start HH:MM] [--model M]
                                                      deepen calls first, then every build not yet done
 """
 
@@ -48,7 +48,11 @@ CELLS = ("A", "B", "C")
 MODES = ("raw", "aidb")
 TIMEOUT_S = 20 * 60  # per build (the standard bench gives 30)
 DEEPEN_MAX_TOKENS = 1024
-_ARM = re.compile(r"^oval-photo-([ABC])-(raw|aidb)-(" + re.escape(MODEL_KEY) + r")-r(\d+)$")
+_ARM = re.compile(r"^oval-photo-([ABC])-(raw|aidb)-([a-z0-9][a-z0-9.\-]*?)-r(\d+)$")
+#: OpenCode photo arms (2026-10-21 evening, Marc's choice for that run): a free OpenCode model with
+#: image input builds, the photo attached by the harness (``opencode run -f``), never read through
+#: a tool; the lockdown of run_opencode is unchanged. The arm's model part is the OpenCode model id.
+OPENCODE_TIMEOUT_S = 15 * 60
 
 PHOTO_NOTE = "The photo attached to this message is the reference: recreate what it shows."
 
@@ -67,8 +71,13 @@ def register(path: str = PROMPTS) -> None:
                                "checklist": [(label, int(n), tuple(toks)) for label, n, toks in p["checklist"]]}
 
 
-def arm_name(cell: str, mode: str, repeat: int) -> str:
-    return f"oval-photo-{cell}-{mode}-{MODEL_KEY}-r{repeat}"
+def arm_name(cell: str, mode: str, repeat: int, model: str = MODEL_KEY) -> str:
+    return f"oval-photo-{cell}-{mode}-{model}-r{repeat}"
+
+
+def is_local(model: str) -> bool:
+    """The local VL model (Strata agent); any other model part is a free OpenCode model."""
+    return model == MODEL_KEY
 
 
 def parse_arm(arm: str) -> dict[str, Any] | None:
@@ -80,20 +89,20 @@ def parse_arm(arm: str) -> dict[str, Any] | None:
             "repeat": int(m.group(4))}
 
 
-def deepen_path(repeat: int) -> str:
-    return os.path.join(PHOTO_DIR, f"deepen_r{repeat}.json")
+def deepen_path(repeat: int, model: str = MODEL_KEY) -> str:
+    return os.path.join(PHOTO_DIR, f"deepen_r{repeat}.json" if is_local(model) else f"deepen_{model}_r{repeat}.json")
 
 
-def build_text(cell: str, repeat: int, prompts: dict[str, Any] | None = None) -> str:
+def build_text(cell: str, repeat: int, prompts: dict[str, Any] | None = None, model: str = MODEL_KEY) -> str:
     """The text that comes with the photo in a cell."""
     p = prompts or load_prompts()
     if cell == "A":
         return p["basic"]
     if cell == "C":
         return p["lead_deep"]
-    path = deepen_path(repeat)
+    path = deepen_path(repeat, model)
     if not os.path.exists(path):
-        raise SystemExit(f"cell B needs {path}: run `photo_exp.py deepen {repeat}` first")
+        raise SystemExit(f"cell B needs {path}: run `photo_exp.py deepen {repeat} [model]` first")
     with open(path, encoding="utf-8") as f:
         text = json.load(f)["text"].strip()
     if not text:
@@ -101,13 +110,16 @@ def build_text(cell: str, repeat: int, prompts: dict[str, Any] | None = None) ->
     return text
 
 
-def prompt(cell: str, with_aidb: bool, repeat: int, prompts: dict[str, Any] | None = None) -> str:
-    """The bench's aidb6/aidb7 prompt (strata runner names) with the photo line before the task."""
-    text = PHOTO_NOTE + "\n\n" + briefs.TASK.format(brief=build_text(cell, repeat, prompts)) + "\n\n"
-    b = [briefs.tool_name("blender", t, "strata") for t in ("discover_servers", "discover_tools", "get_tool_schema",
-                                                             "invoke_tool")]
+def prompt(cell: str, with_aidb: bool, repeat: int, prompts: dict[str, Any] | None = None,
+           model: str = MODEL_KEY) -> str:
+    """The bench's aidb6..aidb8 prompt (tool names as the runner offers them: strata for the local
+    model, opencode's ``<server>_<tool>`` otherwise) with the photo line before the task."""
+    runner = "strata" if is_local(model) else "opencode"
+    text = PHOTO_NOTE + "\n\n" + briefs.TASK.format(brief=build_text(cell, repeat, prompts, model)) + "\n\n"
+    b = [briefs.tool_name("blender", t, runner) for t in ("discover_servers", "discover_tools", "get_tool_schema",
+                                                           "invoke_tool")]
     text += f"Blender tools are reached through {' / '.join(b)}."
-    return text + (" " + briefs.hint_aidb6("strata") if with_aidb else "")
+    return text + (" " + briefs.hint_aidb6(runner) if with_aidb else "")
 
 
 def _post(base_url: str, body: dict[str, Any], timeout: float = 600) -> dict[str, Any]:
@@ -142,6 +154,38 @@ def deepen(repeat: int, base_url: str = BASE_URL, model: str = SERVED, image: st
            "words": len((choice["message"].get("content") or "").split()),
            "at": time.strftime("%Y-%m-%d %H:%M:%S")}
     os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(rec, f, indent=1)
+    return rec
+
+
+def deepen_opencode(repeat: int, model: str, image: str = IMAGE, prompts: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Cell B's first step for an OpenCode model: one session under run_opencode's lockdown with no
+    MCP server at all (every tool denied), the photo attached by the harness (``-f``)."""
+    import run_opencode
+
+    p = prompts or load_prompts()
+    out = deepen_path(repeat, model)
+    if os.path.exists(out):
+        with open(out, encoding="utf-8") as f:
+            return json.load(f)
+    user = p["basic"] + "\n\n" + p["deepen_instruction"]
+    rd = os.path.join(PHOTO_DIR, f"deepen_{model}_r{repeat}")
+    os.makedirs(rd, exist_ok=True)
+    res = run_opencode.run(model, user, 0, rd, False, "", 10 * 60, files=[image], servers={})
+    text = ""  # the session's last text in full (summarize keeps only its tail)
+    with open(os.path.join(rd, "transcript.jsonl"), encoding="utf-8") as f:
+        for line in f:
+            d = json.loads(line)
+            if d.get("type") == "assistant":
+                for item in d.get("content", []):
+                    if item.get("type") == "text" and (item.get("text") or "").strip():
+                        text = item["text"]
+    rec = {"repeat": repeat, "model": model, "prompt": user, "text": text.strip(),
+           "finish_reason": res.get("outcome"), "seconds": res["wall_s"],
+           "tokens": {"input": res["tokens"]["input"] + res["tokens"]["cache_read"], "output": res["tokens"]["output"]},
+           "tools": res["tools"], "denied": res["denied"], "mcp_ready": res.get("mcp_ready"),
+           "words": len(text.split()), "at": time.strftime("%Y-%m-%d %H:%M:%S")}
     with open(out, "w", encoding="utf-8") as f:
         json.dump(rec, f, indent=1)
     return rec
@@ -290,7 +334,7 @@ def probe_room_shape(client: Any) -> dict[str, Any]:
 # --- the experiment's runner -----------------------------------------------------------------------
 
 
-def builds(repeats: int) -> list[str]:
+def builds(repeats: int, model: str = MODEL_KEY) -> list[str]:
     """Every build, repeat by repeat, cells interleaved and raw/aidb alternated, so parallel
     slots mix arms (no cell gets all the contention)."""
     out = []
@@ -298,7 +342,7 @@ def builds(repeats: int) -> list[str]:
         order = [(c, m) for c in CELLS for m in MODES]
         if r % 2 == 0:
             order = order[::-1]
-        out += [arm_name(c, m, r) for c, m in order]
+        out += [arm_name(c, m, r, model) for c, m in order]
     return out
 
 
@@ -320,12 +364,40 @@ def _past(hhmm: str | None) -> bool:
     return (now.tm_hour, now.tm_min) >= (h, m) and now.tm_hour < 12  # an early-morning deadline
 
 
-def run_all(repeats: int = 2, workers: int = 3, last_start: str | None = None) -> None:
+#: a stage_ov simulation (Isaac Sim) on the GPU: Blender renders must wait for it
+_SIM = re.compile(r"stage_ov-sim|isaac", re.IGNORECASE)
+SIM_WAIT_MAX_S = 30 * 60
+
+
+def sim_running() -> bool:
+    try:
+        out = subprocess.run(["docker", "ps", "--format", "{{.Names}} {{.Image}}"], capture_output=True, text=True,
+                             timeout=30, check=False).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return bool(_SIM.search(out))
+
+
+def wait_for_gpu() -> bool:
+    """False when a simulation still holds the GPU after SIM_WAIT_MAX_S (no new build then)."""
+    t0 = time.monotonic()
+    if not sim_running():
+        return True
+    _log("paused: a stage_ov-sim/isaac container is running")
+    while time.monotonic() - t0 < SIM_WAIT_MAX_S:
+        time.sleep(30)
+        if not sim_running():
+            _log("resumed: the simulation container is gone")
+            return True
+    return False
+
+
+def run_all(repeats: int = 2, workers: int = 3, last_start: str | None = None, model: str = MODEL_KEY) -> None:
     for r in range(1, repeats + 1):
-        if not os.path.exists(deepen_path(r)):
-            rec = deepen(r)
-            _log(f"deepen r{r}: {rec['seconds']} s, {rec['tokens']}, {rec['words']} words")
-    todo = [a for a in builds(repeats) if not _done(a)]
+        if not os.path.exists(deepen_path(r, model)):
+            rec = deepen(r) if is_local(model) else deepen_opencode(r, model)
+            _log(f"deepen {model} r{r}: {rec['seconds']} s, {rec['tokens']}, {rec['words']} words")
+    todo = [a for a in builds(repeats, model) if not _done(a)]
     py = os.path.join(REPO, ".venv", "bin", "python")
     running: dict[str, subprocess.Popen] = {}
     while todo or running:
@@ -336,6 +408,10 @@ def run_all(repeats: int = 2, workers: int = 3, last_start: str | None = None) -
         while todo and len(running) < workers:
             if _past(last_start):
                 _log(f"not started (past {last_start}): {todo}")
+                todo = []
+                break
+            if not wait_for_gpu():
+                _log(f"not started (simulation still running after {SIM_WAIT_MAX_S} s): {todo}")
                 todo = []
                 break
             arm = todo.pop(0)
@@ -349,7 +425,8 @@ def run_all(repeats: int = 2, workers: int = 3, last_start: str | None = None) -
 
 def main(argv: list[str]) -> int:
     if argv and argv[0] == "deepen":
-        print(json.dumps(deepen(int(argv[1])), indent=1))
+        m = argv[2] if len(argv) > 2 else MODEL_KEY
+        print(json.dumps(deepen(int(argv[1])) if is_local(m) else deepen_opencode(int(argv[1]), m), indent=1))
         return 0
     if argv and argv[0] == "run":
         args = argv[1:]
@@ -357,7 +434,8 @@ def main(argv: list[str]) -> int:
         def opt(name: str, default: str | None) -> str | None:
             return args[args.index(name) + 1] if name in args else default
 
-        run_all(int(opt("--repeats", "2") or 2), int(opt("--workers", "3") or 3), opt("--last-start", None))
+        run_all(int(opt("--repeats", "2") or 2), int(opt("--workers", "3") or 3), opt("--last-start", None),
+                opt("--model", MODEL_KEY) or MODEL_KEY)
         return 0
     raise SystemExit(__doc__)
 

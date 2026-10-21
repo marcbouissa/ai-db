@@ -138,7 +138,7 @@ def _running_elsewhere(arm: str, brief: str) -> bool:
 
 
 def cmd_run(arm: str, brief: str) -> dict[str, Any]:
-    photo = photo_exp.parse_arm(arm)  # oval-photo-<A|B|C>-<raw|aidb>-<model>-r<N>: photo + text, aidb7 hint
+    photo = photo_exp.parse_arm(arm)  # oval-photo-<A|B|C>-<raw|aidb>-<model>-r<N>: photo + text, aidb6..8 hint
     model, mode = (photo["model"], "aidb7" if photo["with_aidb"] else "raw") if photo else arm.rsplit("-", 1)
     if mode not in ("aidb", "aidb2", "aidb3", "aidb4", "aidb5", "aidb6", "aidb7", "aidb8", "raw"):
         raise SystemExit(f"arm must end in -raw or -aidb, -aidb2 .. -aidb8: {arm}")
@@ -172,7 +172,7 @@ def cmd_run(arm: str, brief: str) -> dict[str, Any]:
     try:
         runner = ("strata" if model == "strata" or model in LOCAL_MODELS else
                   "claude" if model in run_claude.MODELS else "opencode")
-        prompt = (photo_exp.prompt(photo["cell"], with_aidb, photo["repeat"]) if photo else
+        prompt = (photo_exp.prompt(photo["cell"], with_aidb, photo["repeat"], model=model) if photo else
                   briefs.prompt(brief, with_aidb, version, runner))
         if model == "strata" or model in LOCAL_MODELS:
             import strata_agent
@@ -192,7 +192,10 @@ def cmd_run(arm: str, brief: str) -> dict[str, Any]:
                 with open(attempts_file, encoding="utf-8") as f:
                     attempt = int(f.read() or 0)
             try:
-                agent = run_opencode.run(model, prompt, port, rd, with_aidb, tools, TIMEOUT_S)
+                # a photo arm: the photo attached by the harness (opencode run -f), never read by a tool
+                agent = run_opencode.run(model, prompt, port, rd, with_aidb, tools,
+                                         photo_exp.OPENCODE_TIMEOUT_S if photo else TIMEOUT_S,
+                                         files=[photo_exp.IMAGE] if photo else None)
             except run_opencode.ModelUnavailable as e:
                 if e.started:
                     attempt += 1
