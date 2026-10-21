@@ -316,6 +316,14 @@ ai-db daemon stop
 ai-db daemon status
 ```
 
+**When the daemon is down.** Clients (`ai-db` commands with `AI_DB_DAEMON_URL` /
+`--daemon-url`, and `ai-db mcp`) start it on demand: a request that cannot connect to a
+daemon on this machine (loopback URL) runs `ai-db daemon start --foreground` detached, waits
+up to 60 s for `/health` (`DAEMON_AUTOSTART_WAIT_S`), then retries. A notice on stderr says
+so; the daemon logs to `~/.local/state/ai-db/daemon.log`. A remote daemon is never started,
+and `AI_DB_DAEMON_AUTOSTART=0` turns auto-start off. If it cannot be started, the error
+says why (exit code, log path) and how to start it by hand.
+
 **Long calls.** A tool call may run (or wait behind a running `sync` of the same project) for
 minutes, so its read timeout is `DAEMON_TOOL_CALL_TIMEOUT_S` (1 h); management requests keep
 `DAEMON_CLIENT_TIMEOUT_S` (30 s). A failed request names the exception, the limit, the
@@ -437,7 +445,13 @@ Then configure your AI client (Claude Desktop, Cursor, etc.) to use the `ai-db m
 
 #### One daemon for every Claude Code session
 
-Run the daemon as a systemd user service, so it starts at login and restarts if it crashes:
+Run the daemon as a systemd user service, so it starts at login and restarts if it crashes.
+`ai-db daemon install-service` writes `~/.config/systemd/user/ai-db-daemon.service` (pinned to
+this venv's Python and the active config; `--force` overwrites) and prints the command to
+enable it; it never runs `systemctl` itself. It warns if another unit already runs an ai-db
+daemon. `Restart=on-failure` does not restart a daemon that exited cleanly (e.g. after
+`ai-db daemon stop`); the next client call starts one again (see "When the daemon is down").
+A hand-written unit looks like this:
 
 ```ini
 # ~/.config/systemd/user/ai-db.service

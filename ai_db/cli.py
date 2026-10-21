@@ -321,8 +321,12 @@ def _cmd_daemon(args: argparse.Namespace, cfg: AppConfig) -> int:
             print(f"Error: {e}", file=sys.stderr)
             return 1
 
+    if args.daemon_action == "install-service":
+        from ai_db.daemon.autostart import print_service_install
+        return print_service_install(manager.host, manager.port, args.force)
+
     # No action provided
-    print("Usage: ai-db daemon {start,stop,status,register,unregister,reload}")
+    print("Usage: ai-db daemon {start,stop,status,register,unregister,reload,install-service}")
     return 1
 
 
@@ -442,6 +446,9 @@ def _main(argv: list[str] | None = None) -> int:
 
     daemon_sub.add_parser("unregister", help="Unregister project from daemon")
     daemon_sub.add_parser("reload", help="Reload daemon configuration")
+    service_p = daemon_sub.add_parser(
+        "install-service", help="Write a systemd user unit for the daemon (does not enable it)")
+    service_p.add_argument("--force", action="store_true", help="Overwrite an existing unit file")
 
     # sync-all
     syncall_p = subparsers.add_parser("sync-all", help="Sync all repositories registered in config.json")

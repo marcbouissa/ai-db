@@ -30,6 +30,13 @@ class AiDbDaemonError(AiDbError):
     """The daemon could not be reached, or rejected a management request."""
 
 
+class AiDbDaemonUnavailableError(AiDbDaemonError):
+    """Nothing answers at the daemon URL and it could not be started automatically.
+
+    The request never reached a daemon, so a caller may run it locally instead.
+    """
+
+
 class UnknownToolError(AiDbError, KeyError):
     """No tool is registered under the requested name.
 

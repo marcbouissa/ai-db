@@ -84,8 +84,16 @@ class DaemonClient:
                        read_timeout: float | None = None, **kw: Any) -> Any:
         url = f"{self.base_url}{path}"
         try:
-            async with self._http(admin, read_timeout) as client:
-                resp = await client.request(method, url, **kw)
+            try:
+                async with self._http(admin, read_timeout) as client:
+                    resp = await client.request(method, url, **kw)
+            except httpx.ConnectError as e:
+                # Nothing listening: the request never reached a daemon, so start the
+                # local one (raises AiDbDaemonUnavailableError if it cannot) and retry.
+                from ai_db.daemon.autostart import ensure_daemon
+                await asyncio.to_thread(ensure_daemon, self.base_url, describe_http_error(e))
+                async with self._http(admin, read_timeout) as client:
+                    resp = await client.request(method, url, **kw)
         except httpx.TimeoutException as e:
             limit = (self.timeout if isinstance(e, httpx.ConnectTimeout) or not read_timeout
                      else read_timeout)

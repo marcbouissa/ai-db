@@ -184,6 +184,8 @@ DAEMON_CLIENT_TIMEOUT_S = 30.0  # HTTP timeout of DaemonClient / DaemonManager r
 # Read timeout of a tool call: a full sync or a call queued behind one (calls to a project
 # are serialised) runs for minutes; 30 s cut a 108 s `sync` off with an empty httpx.ReadTimeout.
 DAEMON_TOOL_CALL_TIMEOUT_S = 3600.0
+DAEMON_AUTOSTART_WAIT_S = 60.0  # auto-started daemon: wait this long for /health (model warm-up)
+DAEMON_HEALTH_PROBE_S = 2.0  # timeout of one /health probe
 DAEMON_WATCH_DEBOUNCE_MS = 300  # daemon.watch_sync_paths: changes batched over this window
 DAEMON_STATUS_REFRESH_S = 5  # GET /status/html reloads itself this often
 STATE_DIR = os.path.join(

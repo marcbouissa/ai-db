@@ -30,6 +30,9 @@ _SESSION_GUARD_DB = os.path.join(_SESSION_GUARD_DIR, "session_guard.db")
 for _var in ("AI_DB_DAEMON_URL", "AI_DB_API_KEY", "AI_DB_ADMIN_KEY", "AI_DB_API_KEYS",
              "AI_DB_SCENE_MEMORY", "AI_DB_SCENE_LESSONS", "AI_DB_DEVICE", "AI_DB_CPU_THREADS"):
     os.environ.pop(_var, None)
+# A DaemonClient that cannot connect starts a local daemon (ai_db/daemon/autostart.py);
+# tests that point a client at a closed port must get the error, not a spawned daemon.
+os.environ["AI_DB_DAEMON_AUTOSTART"] = "0"
 os.environ.setdefault("AI_DB_PATH", _SESSION_GUARD_DB)
 os.environ.setdefault("AI_DB_CONFIG", os.path.join(_SESSION_GUARD_DIR, "config.json"))
 os.environ.setdefault("AI_DB_SKILL_DIRS", os.path.join(_SESSION_GUARD_DIR, "skills"))
