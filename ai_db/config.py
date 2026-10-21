@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from ai_db.constants import DEFAULT_DOC_WEIGHT, DEFAULT_RERANK_TOP_N
+from ai_db.constants import DEFAULT_DAEMON_PID_FILE, DEFAULT_DOC_WEIGHT, DEFAULT_RERANK_TOP_N
 from ai_db.errors import AiDbConfigError
 from ai_db.parser.languages import SUPPORTED_LANGUAGES, validate_languages
 
@@ -122,7 +122,7 @@ class DaemonConfig:
     enabled: bool = False
     host: str = "127.0.0.1"
     port: int = 8080
-    pid_file: str = "~/.config/ai-db/daemon.pid"
+    pid_file: str = DEFAULT_DAEMON_PID_FILE  # $XDG_RUNTIME_DIR/ai-db: gone after a reboot
     projects: dict[str, DaemonProjectConfig] = field(default_factory=dict)
     auto_discover: bool = True
     shutdown_timeout: float = 30.0
@@ -436,7 +436,7 @@ def parse_config(raw: Any, check_env: bool = True, source_path: str | None = Non
     daemon_port = daemon_raw.get("port", 8080)
     if not isinstance(daemon_port, int) or not (1 <= daemon_port <= 65535):
         raise AiDbConfigError("'daemon.port' must be an integer between 1 and 65535")
-    daemon_pid_file = daemon_raw.get("pid_file", "~/.config/ai-db/daemon.pid")
+    daemon_pid_file = daemon_raw.get("pid_file", DEFAULT_DAEMON_PID_FILE)
     if not isinstance(daemon_pid_file, str):
         raise AiDbConfigError("'daemon.pid_file' must be a string")
     daemon_auto_discover = bool(daemon_raw.get("auto_discover", True))

@@ -23,6 +23,23 @@ from ai_db.errors import AiDbDaemonError
 _HEALTH_POLL_S = 0.5
 
 
+def is_daemon_process(pid: int) -> bool:
+    """Whether ``pid`` runs ai-db (``.../python -m ai_db.cli daemon start`` or ``ai-db daemon``).
+
+    A pid file that outlives the daemon (a crash, a reboot with a pid file outside
+    $XDG_RUNTIME_DIR) names whatever process got that pid later; `daemon start` then
+    refused to start ("already running") and `daemon status` reported a dead daemon as up.
+    """
+    if not sys.platform.startswith("linux"):
+        return True  # no /proc: signal 0 (in is_running) is the only check available
+    try:
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except FileNotFoundError:
+        return False  # exited between the signal-0 check and here
+    words = [os.path.basename(a.decode(errors="replace")) for a in argv]
+    return any(w in ("ai_db.cli", "ai-db", "ai_db") for w in words) and "daemon" in words
+
+
 class DaemonManager:
     """Manages daemon lifecycle."""
 
@@ -61,9 +78,11 @@ class DaemonManager:
             return False
         try:
             os.kill(pid, 0)  # signal 0 only checks existence
-            return True
-        except OSError:
+        except ProcessLookupError:
             return False
+        except PermissionError:
+            return False  # another user's process: never our daemon
+        return is_daemon_process(pid)
 
     async def _wait_for_health(self, timeout: float = 10.0) -> bool:
         start = time.time()
@@ -134,7 +153,10 @@ class DaemonManager:
         try:
             uvicorn.run(app, host=self.host, port=self.port, log_level="info")
         finally:
-            self.pid_file.unlink(missing_ok=True)
+            # A second daemon that lost the port race exits here: it must not delete
+            # the pid file the running one rewrote.
+            if self.get_pid() == os.getpid():
+                self.pid_file.unlink(missing_ok=True)
         return 0
 
     def stop(self, force: bool = False) -> bool:

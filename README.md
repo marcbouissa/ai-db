@@ -321,6 +321,14 @@ minutes, so its read timeout is `DAEMON_TOOL_CALL_TIMEOUT_S` (1 h); management r
 `DAEMON_CLIENT_TIMEOUT_S` (30 s). A failed request names the exception, the limit, the
 HTTP status and the response body.
 
+**Pid file.** The default is `$XDG_RUNTIME_DIR/ai-db/daemon.pid` (emptied at reboot; the state
+dir `~/.local/state/ai-db` without a login session). It used to be `~/.config/ai-db/daemon.pid`,
+which survived reboots: a pid reused by another process then made `daemon start` refuse
+("already running") and `daemon status` report a dead daemon. `is_running` now also checks
+that the pid runs `ai-db ... daemon`. *Migration:* a config that sets `daemon.pid_file`
+explicitly keeps that path; delete the key to use the new default (stop the daemon first, so
+`ai-db daemon stop` still finds the old file).
+
 **Features:**
 - **Your working directory**: the client sends its cwd with every call, so `sync .` and
   relative paths resolve where you ran the command, not where the daemon runs

@@ -186,8 +186,15 @@ DAEMON_CLIENT_TIMEOUT_S = 30.0  # HTTP timeout of DaemonClient / DaemonManager r
 DAEMON_TOOL_CALL_TIMEOUT_S = 3600.0
 DAEMON_WATCH_DEBOUNCE_MS = 300  # daemon.watch_sync_paths: changes batched over this window
 DAEMON_STATUS_REFRESH_S = 5  # GET /status/html reloads itself this often
-DAEMON_LOG_FILE = os.path.join(
-    os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "ai-db", "daemon.log")
+STATE_DIR = os.path.join(
+    os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "ai-db")
+DAEMON_LOG_FILE = os.path.join(STATE_DIR, "daemon.log")
+# Pid file and start lock: per boot, so $XDG_RUNTIME_DIR (a tmpfs emptied at logout/reboot).
+# Without it (no systemd login session) the state dir is used; a stale pid there is
+# recognised by checking the process's command line (DaemonManager.is_running).
+RUNTIME_DIR = os.path.join(os.environ["XDG_RUNTIME_DIR"], "ai-db") if os.environ.get(
+    "XDG_RUNTIME_DIR") else STATE_DIR
+DEFAULT_DAEMON_PID_FILE = os.path.join(RUNTIME_DIR, "daemon.pid")
 INDEX_LANGUAGES_STATE_KEY = "index_languages"  # session_state key: grammars the index was built with
 
 # Recall extensions (ai_db/ext/recall.py, built-in "vectors" in ai_db/ext/vector_recall.py)
