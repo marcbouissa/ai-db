@@ -783,7 +783,10 @@ ai-db context save auth-refactor \
   --title "JWT Migration" \
   --summary "Migrating authentication service from cookie sessions to JWT" \
   --files "src/services/auth.py,src/models/user.py" \
-  --tasks "Implement token refresh,Add unit tests for expired token"
+  --tasks "Implement token refresh" \
+  --tasks "Add unit tests for expired token (401, not 500)"
+# One --tasks flag is one task; commas in it are kept. --files is still comma-separated.
+
 
 # Instant context recall in a fresh chat session (/remember)
 ai-db remember

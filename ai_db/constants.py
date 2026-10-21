@@ -210,6 +210,7 @@ RECALL_EMBED_BATCH = 64  # texts per embed_documents call when backfilling
 SKILL_W_RECALL = 5.0  # weight of a recall provider's similarity in route_skills (same scale as BM25)
 SKILL_RECALL_MIN_SIM = 0.3  # similarities at or below this add nothing (unrelated skills)
 CONTEXT_RECALL_CANDIDATES = 20  # contexts per ranking (BM25, each provider) before RRF fusion
+CONTEXT_NOTES_PREVIEW_CHARS = 80  # `context list`: first line of the notes, cut to this width
 
 # Command-output filter (ai_db/output_filter.py): `ai-db run` / `ai-db filter` / MCP filter_output
 OUTPUT_BUDGET_TOKENS = 1200  # default size of the filtered result

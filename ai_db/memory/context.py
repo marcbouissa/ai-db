@@ -2,10 +2,16 @@ import os
 import time
 from typing import Any
 
-from ai_db.constants import CONTEXT_RECALL_CANDIDATES, RRF_K
+from ai_db.constants import CONTEXT_NOTES_PREVIEW_CHARS, CONTEXT_RECALL_CANDIDATES, RRF_K
 from ai_db.ext.recall import RecallProvider
 from ai_db.storage.models import ContextRecord
 from ai_db.utils import get_allowed_projects
+
+
+def notes_preview(notes: str) -> dict[str, Any]:
+    """Size and first non-empty line of a context's notes, for listings."""
+    first = next((line.strip() for line in notes.splitlines() if line.strip()), "")
+    return {"notes_chars": len(notes), "notes_first_line": first[:CONTEXT_NOTES_PREVIEW_CHARS]}
 
 
 class ContextMemory:
@@ -120,6 +126,7 @@ class ContextMemory:
                 "open_tasks": ot,
                 "active_files_count": len(af),
                 "open_tasks_count": len(ot),
+                **notes_preview(r.get("full_notes") or ""),
                 "timestamp": r["timestamp"]
             })
         return results

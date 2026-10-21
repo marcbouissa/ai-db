@@ -255,13 +255,14 @@ class MemoryRepository(SQLiteRepository):
 
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         cur.execute(
-            f"SELECT session_id, project, title, summary, timestamp, active_files, open_tasks FROM contexts {where} ORDER BY timestamp DESC",
+            f"SELECT session_id, project, title, summary, timestamp, active_files, open_tasks, zcontent FROM contexts {where} ORDER BY timestamp DESC",
             params
         )
         results = []
         for r in cur.fetchall():
             af = _loads(r["active_files"], "context.active_files") if r["active_files"] else []
             ot = _loads(r["open_tasks"], "context.open_tasks") if r["open_tasks"] else []
+            notes = _decompress(r["zcontent"], f"context {r['session_id']}")
             results.append({
                 "session_id": r["session_id"],
                 "project": r["project"],
@@ -269,7 +270,8 @@ class MemoryRepository(SQLiteRepository):
                 "summary": r["summary"],
                 "timestamp": r["timestamp"],
                 "active_files": af,
-                "open_tasks": ot
+                "open_tasks": ot,
+                "full_notes": notes,
             })
         return results
 

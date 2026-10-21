@@ -479,7 +479,8 @@ def _main(argv: list[str] | None = None) -> int:
     ctx_save.add_argument("--summary", "-s", required=True, help="Summary of session state, goals, and decisions")
     ctx_save.add_argument("--title", "-t", default=None, help="Title for this session context")
     ctx_save.add_argument("--files", "-f", action="append", default=[], help="Active files in session (repeatable)")
-    ctx_save.add_argument("--tasks", action="append", default=[], help="Open pending tasks (repeatable)")
+    ctx_save.add_argument("--tasks", action="append", default=[],
+                          help="One open task per flag, repeat for more (commas are kept)")
     ctx_save.add_argument("--notes", default=None, help="Detailed markdown notes/decisions (defaults to summary)")
     ctx_save.add_argument("--project", default=None, help="Project scope (default: auto-detected)")
     ctx_save.add_argument("--db", default=None, help="SQLite path override (default: storage.options.path)")
@@ -977,9 +978,8 @@ def _main(argv: list[str] | None = None) -> int:
             files_list = []
             for f in args.files:
                 files_list.extend([x.strip() for x in f.split(",") if x.strip()])
-            tasks_list = []
-            for t in args.tasks:
-                tasks_list.extend([x.strip() for x in t.split(",") if x.strip()])
+            # One --tasks value is one task: task text routinely contains commas.
+            tasks_list = [t.strip() for t in args.tasks if t.strip()]
 
             context_save_args = {
                 "session_id": args.session_id,
@@ -1044,7 +1044,10 @@ def _main(argv: list[str] | None = None) -> int:
             else:
                 for c in contexts:
                     date_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(c["timestamp"]))
-                    print(f"[{c['project']}] {c['session_id']} ({date_str}) - {c['title']} ({c['active_files_count']} files, {c['open_tasks_count']} tasks)")
+                    # A daemon still running older code sends no notes_* keys.
+                    notes = (f", notes {c['notes_chars']} chars: {c['notes_first_line']}"
+                             if "notes_chars" in c else "")
+                    print(f"[{c['project']}] {c['session_id']} ({date_str}) - {c['title']} ({c['active_files_count']} files, {c['open_tasks_count']} tasks{notes})")
 
         elif args.ctx_action == "query":
             hits = dispatcher.execute("context_recall", {
