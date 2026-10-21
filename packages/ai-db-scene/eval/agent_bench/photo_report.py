@@ -3,6 +3,7 @@ anonymised contact sheet the lead judges blind against the photo.
 
     python photo_report.py tables        markdown tables of every finished build (stdout)
     python photo_report.py sheet         blind_sheet.png + blind_key.json (random S01..S12 order)
+    python photo_report.py report        REPORT.md (the tables; qualitative notes are added by hand)
 """
 
 from __future__ import annotations
@@ -209,11 +210,30 @@ def sheet(repeats: int = 2) -> str:
     return path
 
 
+def report(repeats: int = 2) -> str:
+    p = photo_exp.load_prompts()
+    need = sum(int(n) for label, n, _t in p["checklist"] if label != "oval room")
+    text = ("# Oval Office photo -> scene (Qwen2.5-VL-7B-AWQ, local)\n\n"
+            "Cells: A = photo + basic request; B = photo + a brief the model wrote first from the photo "
+            "(deepen call, its time and tokens counted in B's totals); C = photo + the lead's brief. Each raw "
+            "(Blender tools only) vs aidb (Blender + ai-db, aidb7 hint). 20 min cap per build, fresh Blender per "
+            f"scene. The photo has ~{need} checklist objects (objects column: scene roots without shell/lights). "
+            "Room: shape of the built room's walls (else floor) in plan: ellipse / rect / polygon / none.\n\n"
+            + tables(repeats) + "\n## Qualitative notes\n\n(to be written after looking at the renders)\n")
+    path = os.path.join(photo_exp.PHOTO_DIR, "REPORT.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return path
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    n = int(sys.argv[2]) if len(sys.argv) > 2 else 2
     if cmd == "tables":
-        print(tables())
+        print(tables(n))
     elif cmd == "sheet":
-        print(sheet())
+        print(sheet(n))
+    elif cmd == "report":
+        print(report(n))
     else:
         raise SystemExit(__doc__)
